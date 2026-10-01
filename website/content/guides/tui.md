@@ -340,6 +340,11 @@ on the default right side.
 
 ## Herdr compatibility
 
+In the prompt editor, Option/Alt+Left and Right move by word, including inside
+Herdr, whether forwarded as Alt arrows or Kitty Alt+b/Alt+f. Alt+b/Alt+f also
+move by word. Add Shift to arrows to select by word. No macOS Ctrl-arrow shortcut changes are
+needed. Existing Ctrl-arrow and terminal Esc+b/Esc+f navigation still work.
+
 When Tau detects that its TUI is running inside Herdr, it defaults Textual to
 cell-coordinate mouse input and standard terminal resize signals. This avoids a
 Herdr 0.9.0 interoperability bug that can collapse clicks, hover, selection, and

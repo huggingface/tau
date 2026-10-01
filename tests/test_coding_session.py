@@ -6321,8 +6321,9 @@ async def test_session_set_model_preserves_newer_provider_file_changes(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("owns_initial_provider", [False, True])
 async def test_session_new_session_uses_default_provider_model(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owns_initial_provider: bool
 ) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     current_record = manager.create_session(
@@ -6355,15 +6356,18 @@ async def test_session_new_session_uses_default_provider_model(
         credential_store: FileCredentialStore | None = None,
         model: str | None = None,
         thinking_level: str | None = None,
+        inference_provider: str | None = None,
     ) -> SwitchableFakeProvider:
-        del credential_store, thinking_level
+        del credential_store, thinking_level, inference_provider
         created.append((provider_config.name, model))  # type: ignore[attr-defined]
         return SwitchableFakeProvider(provider_config)
 
     monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    old_provider = SwitchableFakeProvider(settings.get_provider("openrouter"))
     session = await CodingSession.load(
         CodingSessionConfig(
-            provider=FakeProvider([]),
+            provider=old_provider,
+            owns_initial_provider=owns_initial_provider,
             model="openai/gpt-5.5",
             system="You are Tau.",
             storage=JsonlSessionStorage(current_record.path),
@@ -6384,6 +6388,8 @@ async def test_session_new_session_uses_default_provider_model(
     assert session.model == "gpt-5"
     assert manager.get_session(session.session_id) is None
     assert created == [("openai", "gpt-5")]
+    assert session.provider is not old_provider
+    assert session.provider.config.name == "openai"
 
 
 @pytest.mark.anyio

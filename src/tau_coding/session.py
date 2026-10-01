@@ -2970,7 +2970,11 @@ class CodingSession:
         replacement = await type(self).load(
             replace(
                 self._config,
-                provider=(None if dynamic_provider is not None else self._harness.config.provider),
+                # The old runtime may belong to a different provider. Stage a
+                # fresh runtime for the new session's default provider/model.
+                provider=(
+                    self._harness.config.provider if self._provider_settings is None else None
+                ),
                 model=record.model or model,
                 cwd=record.cwd,
                 storage=jsonl_session_storage(record.path),
@@ -2984,7 +2988,7 @@ class CodingSession:
                 provider_settings=self._durable_provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 dynamic_provider=dynamic_provider,
-                owns_initial_provider=dynamic_provider is not None,
+                owns_initial_provider=False,
                 defer_authoritative_writes=dynamic_provider is not None,
                 thinking_level=thinking_level,
                 index_on_first_persist=True,
@@ -4610,7 +4614,7 @@ async def _prepare_provider_selection(
         inference_provider,
     )
     try:
-        runtime = create_model_provider(
+        runtime = _create_runtime_provider(
             selection.provider,
             credential_store=credential_store,
             model=selection.model,
@@ -4771,7 +4775,7 @@ def _state_thinking_level(
 def _create_runtime_provider(
     provider: ProviderConfig,
     *,
-    credential_store: FileCredentialStore,
+    credential_store: FileCredentialStore | None,
     model: str,
     thinking_level: ThinkingLevel | None,
     inference_provider: str | None,

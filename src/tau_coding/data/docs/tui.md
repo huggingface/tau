@@ -79,8 +79,14 @@ counts, while the session-column header shows the selected project's full path.
 Its shell opens immediately, then the current project and other project indexes
 load in the background. Press Left to
 select the project column, Up/Down to choose a project, and Right to return to
-its sessions. Enter resumes the selected session. Search filters names and
-models within the selected project.
+its sessions. Enter resumes the selected session. Ctrl+Enter archives the
+highlighted session, or the whole project when the project column is active.
+Choose the Archived tab to review hidden sessions and projects; F2 opens that
+tab. Enter restores
+the highlighted session, or every session in the highlighted project. Restored
+items appear in the Active tab. Archiving and restoring never delete session
+files or project directories. Search filters names and models within the
+selected project.
 
 ## `/local`
 
@@ -118,6 +124,11 @@ deletion is separately confirmed. Tau never stops the external server or
 deletes model files. See `local-inference.md` and `security.md`.
 
 ## Herdr compatibility
+
+In the prompt editor, Option/Alt+Left and Right move by word, including when
+Herdr forwards them as Alt-arrow sequences or Kitty Alt+b/Alt+f.
+Alt+b/Alt+f also move by word. Add Shift to arrows to select by word.
+Existing Ctrl-arrow and terminal Esc+b/Esc+f word navigation still work.
 
 Herdr 0.9.0 can advertise SGR pixel mouse support while forwarding cell
 coordinates. Textual then interprets those coordinates as pixels, collapsing

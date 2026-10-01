@@ -971,7 +971,7 @@ def test_session_sidebar_brand_includes_current_version() -> None:
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.4.5" in console.export_text()
+    assert "τ = 2π  0.4.7" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -7045,6 +7045,125 @@ async def test_tui_app_session_picker_resumes_selected_session() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_session_picker_archives_selected_session() -> None:
+    session = FakeSession()
+    record = CodingSessionRecord(
+        id="session-1",
+        path=Path("/tmp/session-1.jsonl"),
+        cwd=Path("/workspace/project"),
+        model="fake-model",
+        title="Session",
+        created_at=1.0,
+        updated_at=2.0,
+    )
+    manager = _FakeSessionManager([record])
+    session.session_manager = manager
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+        assert isinstance(app.screen, SessionPickerScreen)
+        search = app.screen.query_one("#session-picker-search", Input)
+        assert search.has_focus
+        search.value = "session"
+        await pilot.pause()
+        await pilot.press("ctrl+enter")
+        await pilot.pause()
+
+        assert manager.archived_session_ids == ["session-1"]
+        assert search.value == "session"
+        assert app.screen.query_one("#session-picker-list", OptionList).option_count == 0
+
+
+@pytest.mark.anyio
+async def test_tui_app_session_picker_archives_selected_project() -> None:
+    session = FakeSession()
+    first = CodingSessionRecord(
+        id="session-1",
+        path=Path("/tmp/session-1.jsonl"),
+        cwd=Path("/workspace/first"),
+        model="fake-model",
+        title="First",
+        created_at=1.0,
+        updated_at=3.0,
+    )
+    second = CodingSessionRecord(
+        id="session-2",
+        path=Path("/tmp/session-2.jsonl"),
+        cwd=Path("/workspace/second"),
+        model="other-model",
+        title="Second",
+        created_at=1.0,
+        updated_at=2.0,
+    )
+    manager = _FakeSessionManager([first, second])
+    session.session_manager = manager
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+        assert isinstance(app.screen, SessionPickerScreen)
+        await pilot.press("left", "down", "ctrl+enter")
+        await pilot.pause()
+
+        assert manager.archived_project_cwds == [first.cwd]
+        project_options = app.screen.query_one("#session-picker-project-list", OptionList)
+        assert project_options.option_count == 2
+
+
+@pytest.mark.anyio
+async def test_tui_app_session_picker_archived_tab_restores_session_and_project() -> None:
+    session = FakeSession()
+    active = CodingSessionRecord(
+        id="active",
+        path=Path("/tmp/active.jsonl"),
+        cwd=Path("/workspace/project"),
+        model="fake-model",
+        title="Active",
+        created_at=1.0,
+        updated_at=3.0,
+    )
+    archived_session = CodingSessionRecord(
+        id="archived-session",
+        path=Path("/tmp/archived-session.jsonl"),
+        cwd=Path("/workspace/project"),
+        model="fake-model",
+        title="Archived session",
+        created_at=1.0,
+        updated_at=2.0,
+    )
+    archived_project = CodingSessionRecord(
+        id="archived-project",
+        path=Path("/tmp/archived-project.jsonl"),
+        cwd=Path("/workspace/archived"),
+        model="other-model",
+        title="Archived project",
+        created_at=1.0,
+        updated_at=1.0,
+    )
+    manager = _FakeSessionManager([active], [archived_session, archived_project])
+    session.session_manager = manager
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert isinstance(app.screen, SessionPickerScreen)
+        await pilot.press("f2")
+        assert app.screen.showing_archived is True
+        assert app.screen.query_one("#session-picker-list", OptionList).option_count == 1
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert manager.restored_session_ids == ["archived-session"]
+
+        await pilot.press("left", "down", "enter")
+        await pilot.pause()
+        assert manager.restored_project_cwds == [archived_project.cwd]
+        assert app.screen.query_one("#session-picker-list", OptionList).option_count == 0
+
+
+@pytest.mark.anyio
 async def test_tui_app_session_picker_shows_human_readable_session_metadata() -> None:
     updated_at = datetime(2026, 6, 19, 14, 30).timestamp()
     session = FakeSession()
@@ -11429,12 +11548,64 @@ async def test_run_tui_app_ignores_uncredentialed_provider_when_matching_resume_
 
 
 class _FakeSessionManager:
-    def __init__(self, records: list[CodingSessionRecord]) -> None:
+    def __init__(
+        self,
+        records: list[CodingSessionRecord],
+        archived_records: list[CodingSessionRecord] | None = None,
+    ) -> None:
         self._records = records
+        self._archived_records = archived_records or []
+        self.archived_session_ids: list[str] = []
+        self.archived_project_cwds: list[Path] = []
+        self.restored_session_ids: list[str] = []
+        self.restored_project_cwds: list[Path] = []
 
     def list_sessions(self, cwd: Path | None = None) -> list[CodingSessionRecord]:
         del cwd
         return self._records
+
+    def list_archived_sessions(self, cwd: Path | None = None) -> list[CodingSessionRecord]:
+        del cwd
+        return self._archived_records
+
+    def archive_session(self, session_id: str) -> bool:
+        self.archived_session_ids.append(session_id)
+        moved = [record for record in self._records if record.id == session_id]
+        self._records = [record for record in self._records if record.id != session_id]
+        self._archived_records.extend(moved)
+        return bool(moved)
+
+    def archive_project(self, cwd: Path) -> bool:
+        resolved = Path(cwd).resolve()
+        self.archived_project_cwds.append(Path(cwd))
+        before = len(self._records)
+        moved = [record for record in self._records if Path(record.cwd).resolve() == resolved]
+        self._records = [
+            record for record in self._records if Path(record.cwd).resolve() != resolved
+        ]
+        self._archived_records.extend(moved)
+        return len(self._records) != before
+
+    def unarchive_session(self, session_id: str) -> bool:
+        self.restored_session_ids.append(session_id)
+        moved = [record for record in self._archived_records if record.id == session_id]
+        self._archived_records = [
+            record for record in self._archived_records if record.id != session_id
+        ]
+        self._records.extend(moved)
+        return bool(moved)
+
+    def unarchive_project(self, cwd: Path) -> bool:
+        resolved = Path(cwd).resolve()
+        self.restored_project_cwds.append(Path(cwd))
+        moved = [
+            record for record in self._archived_records if Path(record.cwd).resolve() == resolved
+        ]
+        self._archived_records = [
+            record for record in self._archived_records if Path(record.cwd).resolve() != resolved
+        ]
+        self._records.extend(moved)
+        return bool(moved)
 
 
 # --- component seam pilot tests ---------------------------------------------
