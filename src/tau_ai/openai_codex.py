@@ -390,13 +390,15 @@ class _ToolCallBuilder:
         """Build a complete Tau tool call."""
         arguments_text = "".join(self.arguments_parts)
         arguments = _loads_object(arguments_text) if arguments_text else {}
+        malformed = arguments_text if arguments is None else None
         if arguments is None:
-            arguments = {"_raw_arguments": arguments_text}
+            arguments = {}
         item_id = self.item_id or f"fc_{self.call_id}"
         return ToolCall(
             id=f"{self.call_id}|{item_id}",
             name=self.name,
             arguments=arguments,
+            malformed_arguments_text=malformed,
         )
 
 

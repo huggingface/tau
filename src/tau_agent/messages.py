@@ -120,6 +120,7 @@ class ToolCall(WireModel):
     name: str
     arguments: dict[str, JSONValue] = Field(default_factory=dict)
     thought_signature: str | None = None
+    malformed_arguments_text: str | None = Field(default=None, exclude=True)
 
 
 type UserContent = str | list[TextContent | ImageContent]
