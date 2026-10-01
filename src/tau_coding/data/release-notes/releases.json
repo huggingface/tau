@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.4.7",
+    "date": "2026-10-01",
+    "sections": {
+      "New": [
+        "Archive sessions or whole projects from /resume with Ctrl+Enter without deleting files; use the Archived tab (F2) and Enter to restore them."
+      ],
+      "Fixed": [
+        "Restore Option/Alt-arrow word navigation in the prompt inside Herdr, including Kitty Alt+b/Alt+f forwarding; Shift+Option/Alt-arrows select by word.",
+        "Create a fresh provider runtime when a new session selects a different provider instead of reusing the previous session's runtime.",
+        "Handle Delete correctly in the /resume search field."
+      ]
+    }
+  },
+  {
     "version": "0.4.6",
     "date": "2026-09-29",
     "sections": {
