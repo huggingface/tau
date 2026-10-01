@@ -19,6 +19,8 @@ from tau_coding.tui.app import PromptInput
         ("\x1b[1;4C", "alt+shift+right"),
         ("\x1bb", "ctrl+left"),
         ("\x1bf", "ctrl+right"),
+        ("\x1b[98;3u", "alt+b"),
+        ("\x1b[102;3u", "alt+f"),
         ("\x1b[1;5D", "ctrl+left"),
         ("\x1b[1;5C", "ctrl+right"),
         ("\x1b[D", "left"),
@@ -34,8 +36,17 @@ def test_terminal_word_navigation_decoding(sequence: str, key: str) -> None:
     assert messages[0].key == key
 
 
-@pytest.mark.parametrize("select", [False, True])
-def test_option_arrows_move_prompt_by_word(select: bool) -> None:
+@pytest.mark.parametrize(
+    ("left", "right", "select"),
+    [
+        ("\x1b[1;3D", "\x1b[1;3C", False),
+        ("\x1b[1;4D", "\x1b[1;4C", True),
+        ("\x1b[98;3u", "\x1b[102;3u", False),
+        ("\x1bb", "\x1bf", False),
+        ("\x1b[1;5D", "\x1b[1;5C", False),
+    ],
+)
+def test_option_arrows_move_prompt_by_word(left: str, right: str, select: bool) -> None:
     class EditorApp(App[None]):
         def compose(self) -> ComposeResult:
             yield PromptInput()
@@ -47,9 +58,8 @@ def test_option_arrows_move_prompt_by_word(select: bool) -> None:
             prompt.text = "one two three"
             prompt.cursor_position = len(prompt.text)
             prompt.focus()
-            modifier = 4 if select else 3
-            for direction, position in [("D", 8), ("D", 4), ("C", 7)]:
-                messages = list(XTermParser().feed(f"\x1b[1;{modifier}{direction}"))
+            for sequence, position in [(left, 8), (left, 4), (right, 7)]:
+                messages = list(XTermParser().feed(sequence))
                 assert len(messages) == 1
                 app.post_message(messages[0])
                 await pilot.pause()

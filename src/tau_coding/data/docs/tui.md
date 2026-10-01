@@ -126,7 +126,8 @@ deletes model files. See `local-inference.md` and `security.md`.
 ## Herdr compatibility
 
 In the prompt editor, Option/Alt+Left and Right move by word, including when
-Herdr forwards them as Alt-arrow sequences. Add Shift to select by word.
+Herdr forwards them as Alt-arrow sequences or Kitty Alt+b/Alt+f.
+Alt+b/Alt+f also move by word. Add Shift to arrows to select by word.
 Existing Ctrl-arrow and terminal Esc+b/Esc+f word navigation still work.
 
 Herdr 0.9.0 can advertise SGR pixel mouse support while forwarding cell
