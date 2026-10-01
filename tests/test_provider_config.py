@@ -105,6 +105,7 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
         "cerebras",
         "nvidia",
         "openrouter",
+        "orcarouter",
         "zai",
         "mistral",
         "minimax",
@@ -151,6 +152,7 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
     settings = ProviderSettings()
     openai = settings.get_provider("openai")
     openrouter = settings.get_provider("openrouter")
+    orcarouter = settings.get_provider("orcarouter")
     huggingface = settings.get_provider("huggingface")
     codex = settings.get_provider("openai-codex")
     anthropic = settings.get_provider("anthropic")
@@ -189,6 +191,26 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
     )
     assert (
         provider_thinking_unavailable_reason(openrouter, model="anthropic/claude-sonnet-4.6")
+        is None
+    )
+    assert orcarouter.context_windows["openai/gpt-5.4"] == 1_050_000
+    assert provider_thinking_levels(orcarouter, model="openai/gpt-5.4") == (
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+    )
+    assert provider_thinking_unavailable_reason(orcarouter, model="openai/gpt-5.4") is None
+    assert provider_thinking_levels(orcarouter, model="anthropic/claude-sonnet-4.6") == (
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+    )
+    assert (
+        provider_thinking_unavailable_reason(orcarouter, model="anthropic/claude-sonnet-4.6")
         is None
     )
     assert provider_thinking_levels(huggingface, model="MiniMaxAI/MiniMax-M2.7") == (
