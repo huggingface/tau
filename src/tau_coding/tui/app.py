@@ -9,7 +9,7 @@ import stat
 import tempfile
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
-from contextlib import suppress
+from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum, auto
@@ -287,6 +287,10 @@ class _TuiExtensionUiBridge:
     def notify(self, message: str, level: str = "info") -> None:
         """Show an extension notification through the app's dedupe path."""
         self._app._notify(message, severity=self._SEVERITIES.get(level, "information"))
+
+    def suspend(self) -> AbstractContextManager[None]:
+        """Pause the Textual app so an external program can use the terminal."""
+        return self._app.suspend()
 
     async def select(
         self,
