@@ -714,7 +714,10 @@ class _ToolCallBuilder:
             return
 
         name = function.get("name")
-        if isinstance(name, str):
+        # Some OpenAI-compatible providers repeat ``"name": ""`` on every
+        # argument chunk; an empty name must not overwrite the real one that
+        # typically arrives on the first chunk.
+        if isinstance(name, str) and name:
             self.name = name
 
         arguments = function.get("arguments")
