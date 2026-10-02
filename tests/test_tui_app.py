@@ -3526,7 +3526,10 @@ async def test_tui_sidebar_context_file_opens_in_main_editor_and_saves(tmp_path:
 
         editor_input.text = "Updated context.\n"
         await pilot.press("ctrl+s")
-        await pilot.pause()
+        for _ in range(20):
+            await pilot.pause()
+            if editor._saved_source == "Updated context.\n":
+                break
 
         assert context_path.read_text(encoding="utf-8") == "Updated context.\n"
         assert editor.query_one("#sidebar-file-editor-status", Static).render().plain == (
