@@ -68,6 +68,8 @@ class BuildSystemPromptOptions:
     append_sections: Sequence[PromptSection] = field(default_factory=tuple)
     extra_sections: Sequence[PromptSection] = field(default_factory=tuple)
     custom_prompt_source: str | None = None
+    learned_context: str | None = None
+    """Frozen learned-memory/lessons section appended near the prompt tail."""
 
 
 def build_system_prompt(options: BuildSystemPromptOptions) -> str:
@@ -133,6 +135,16 @@ def build_system_prompt_inspection(options: BuildSystemPromptOptions) -> SystemP
 
     add_sections(append_sections, "append")
     add_sections(options.extra_sections, "extension")
+
+    if options.learned_context is not None:
+        sources.append(
+            SystemPromptSource(
+                kind="append",
+                label="Learned memory",
+                source="tau learning loop",
+                content=f"\n\n{options.learned_context}",
+            )
+        )
 
     sources.extend(_project_context_sources(options.context_files))
     if _has_tool(options.tools, "read"):

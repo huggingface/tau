@@ -68,6 +68,7 @@ to search and run them. Common ones:
 - `/model` — pick the active model
 - `/tools` — search active tools by origin and open their full descriptions
 - `/compact` — summarize and shrink the context
+- `/learn` — review the settled session and save durable memory entries and lessons for future sessions
 - `/resume`, `/tree` — open previous sessions or branch from history
 - `/prompts` — search prompt templates, insert an invocation, or edit the template file with **Ctrl+E**
 - `/hotkeys` — show the keyboard shortcuts
