@@ -50,9 +50,7 @@ def _text_update(text: str, *, content_index: int = 0) -> MessageUpdateEvent:
 def _thinking_update(thinking: str, *, content_index: int = 0) -> MessageUpdateEvent:
     """Build a cumulative thinking snapshot update, as real providers emit."""
     partial = AssistantMessage(content=[ThinkingContent(thinking=thinking)])
-    return _update(
-        ThinkingDeltaEvent(content_index=content_index, delta=thinking, partial=partial)
-    )
+    return _update(ThinkingDeltaEvent(content_index=content_index, delta=thinking, partial=partial))
 
 
 def test_tui_adapter_tracks_running_state() -> None:
@@ -180,9 +178,7 @@ def test_tui_adapter_update_adopts_cumulative_snapshot_exactly() -> None:
             TextContent(text="second"),
         ]
     )
-    adapter.apply(
-        _update(TextDeltaEvent(content_index=3, delta="second", partial=snapshot))
-    )
+    adapter.apply(_update(TextDeltaEvent(content_index=3, delta="second", partial=snapshot)))
 
     assert state.active_assistant is not None
     assert state.active_assistant.message is snapshot
@@ -234,9 +230,7 @@ def test_tui_adapter_bare_agent_end_flushes_unfinished_draft_once() -> None:
     partial = AssistantMessage(
         content=[ThinkingContent(thinking="plan"), TextContent(text="partial answer")]
     )
-    adapter.apply(
-        _update(TextDeltaEvent(content_index=1, delta="partial answer", partial=partial))
-    )
+    adapter.apply(_update(TextDeltaEvent(content_index=1, delta="partial answer", partial=partial)))
 
     adapter.apply(AgentEndEvent())
     adapter.apply(AgentSettledEvent())

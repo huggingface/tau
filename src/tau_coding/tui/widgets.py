@@ -551,9 +551,7 @@ class _ActiveAssistantRender:
     def ordered_widgets(
         self,
     ) -> list[TranscriptMessageWidget | StreamingTranscriptMessageWidget]:
-        return [
-            self.widgets[block.key] for block in self.blocks if block.key in self.widgets
-        ]
+        return [self.widgets[block.key] for block in self.blocks if block.key in self.widgets]
 
 
 class TranscriptWindowBoundary(Static):
@@ -1741,9 +1739,7 @@ class TranscriptView(VerticalScroll):
                 self._item_widgets[id(item)] = widget
         else:
             if render is not None:
-                stale = [
-                    widget for widget in render.ordered_widgets() if widget.parent is self
-                ]
+                stale = [widget for widget in render.ordered_widgets() if widget.parent is self]
                 if stale:
                     self.remove_children(stale)
             for item_id, widget in tuple(self._item_widgets.items()):

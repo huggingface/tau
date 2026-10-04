@@ -6480,9 +6480,7 @@ async def test_tui_mid_run_custom_follow_up_renders_card_not_raw_content() -> No
 async def test_structured_assistant_redraw_preserves_extension_custom_card() -> None:
     raw = "<task-notification>agent-1 completed</task-notification>"
     thinking = AssistantMessage(content=[ThinkingContent(thinking="plan")])
-    answer = AssistantMessage(
-        content=[ThinkingContent(thinking="plan"), TextContent(text="done")]
-    )
+    answer = AssistantMessage(content=[ThinkingContent(thinking="plan"), TextContent(text="done")])
     final = AssistantMessage(content=[ThinkingContent(thinking="plan"), TextContent(text="done")])
     session = FakeSession(
         events=[
@@ -7008,9 +7006,7 @@ async def test_interleaved_thinking_text_stream_matches_final_canonical_order() 
         await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
         stages = [
             AssistantMessage(content=[ThinkingContent(thinking="plan")]),
-            AssistantMessage(
-                content=[ThinkingContent(thinking="plan"), TextContent(text="first")]
-            ),
+            AssistantMessage(content=[ThinkingContent(thinking="plan"), TextContent(text="first")]),
             AssistantMessage(
                 content=[
                     ThinkingContent(thinking="plan"),
@@ -7383,9 +7379,7 @@ async def test_stale_write_from_replaced_stream_cannot_resurrect_output() -> Non
             await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
             await pilot.pause()
             replacement = AssistantMessage(content=[TextContent(text="new text")])
-            await _apply_tui_stream_event(
-                app, _text_snapshot_update(replacement, content_index=0)
-            )
+            await _apply_tui_stream_event(app, _text_snapshot_update(replacement, content_index=0))
 
             release.set()
             await pending
