@@ -13,7 +13,7 @@ from typing import IO, Literal, Protocol, cast
 import anyio
 from pydantic import BaseModel
 
-from tau_agent.messages import AssistantMessage, CustomMessage, UserMessage
+from tau_agent.messages import AssistantMessage, UserMessage
 from tau_agent.session import JsonlSessionStorage
 from tau_agent.session.entries import SessionEntry
 from tau_agent.types import JSONValue
@@ -133,7 +133,7 @@ class RpcSession(Protocol):
         self, command: str, *, add_to_context: bool
     ) -> TerminalCommandResult: ...
 
-    def set_session_name(self, name: str) -> None: ...
+    async def set_session_name(self, name: str) -> str: ...
 
     async def emit_pending_session_start(self) -> None: ...
 
@@ -442,7 +442,7 @@ class RpcServer:
                 await self._response(request_id, command_type, {"text": text})
                 return
             if command_type == "set_session_name":
-                self._session.set_session_name(_required_string(command, "name"))
+                await self._session.set_session_name(_required_string(command, "name"))
                 await self._response(request_id, command_type)
                 return
             if command_type == "fork":
@@ -688,16 +688,15 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
         "timestamp": timestamp.isoformat().replace("+00:00", "Z"),
     }
     if entry.type == "message":
-        if isinstance(entry.message, CustomMessage):
-            return {
-                **base,
-                "type": "custom_message",
-                "customType": entry.message.custom_type,
-                "content": _jsonable(entry.message.content),
-                "details": entry.message.details,
-                "display": entry.message.display,
-            }
         return {**base, "message": _jsonable(entry.message)}
+    if entry.type == "custom_message":
+        return {
+            **base,
+            "customType": entry.custom_type,
+            "content": _jsonable(entry.content),
+            "details": entry.details,
+            "display": entry.display,
+        }
     if entry.type == "model_change":
         return {
             **base,
@@ -714,7 +713,7 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
                 "customType": "tau.compaction",
                 "data": {
                     "summary": entry.summary,
-                    "replacesEntryIds": list(entry.replaces_entry_ids),
+                    **({"usage": _jsonable(entry.usage)} if entry.usage is not None else {}),
                 },
             }
         return {
@@ -722,19 +721,21 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
             "summary": entry.summary,
             "firstKeptEntryId": entry.first_kept_entry_id,
             "tokensBefore": entry.tokens_before,
-            "details": {"tauReplacedEntryIds": list(entry.replaces_entry_ids)},
+            **({"usage": _jsonable(entry.usage)} if entry.usage is not None else {}),
+            "details": {},
         }
     if entry.type == "branch_summary":
         return {
             **base,
             "fromId": entry.branch_root_id or entry.parent_id or entry.id,
             "summary": entry.summary,
+            **({"usage": _jsonable(entry.usage)} if entry.usage is not None else {}),
             "details": {},
         }
     if entry.type == "custom":
         return {**base, "customType": entry.namespace, "data": entry.data}
     if entry.type == "label":
-        return {**base, "targetId": entry.parent_id or entry.id, "label": entry.label}
+        return {**base, "targetId": entry.target_id, "label": entry.label}
     if entry.type == "session_info":
         return {**base, "name": entry.title}
     raise AssertionError(f"Unhandled Tau session entry: {entry.type}")

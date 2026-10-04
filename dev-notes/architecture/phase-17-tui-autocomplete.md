@@ -60,7 +60,10 @@ Accepting a skill completion preserves the rest of the request:
 
 The prompt input handles:
 
-- `Tab` to accept the selected completion
+- `Tab` to accept any selected completion
+- `Enter` to accept selected slash-command, skill, prompt-template, argument,
+  and shell-path completions; for `@` file references, Enter instead submits
+  the raw prompt text without applying the suggestion
 - `Down` to select the next completion
 - `Up` to select the previous completion
 
@@ -97,4 +100,5 @@ The tests verify:
 - `/skill:` suggestions
 - preserving request text after skill completion
 - completion selection wrapping
-- TUI completion acceptance
+- context-dependent Enter acceptance versus raw `@` file-reference submission
+- Tab acceptance for every completion kind

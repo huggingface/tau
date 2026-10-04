@@ -91,15 +91,19 @@ async def canonicalize_provider_stream(
     api: str,
     provider: str,
     model: str,
+    independent_channels: bool = False,
 ) -> AsyncIterator[AssistantMessageEvent]:
     """Canonicalize one old internal parser stream.
 
     Provider parsers remain isolated behind this private bridge while they are
     migrated incrementally. The public provider protocol exposes only Pi events.
+    Chat Completions uses independent channels: a channel switch does not end
+    either block. Other transports preserve their sequential block ordering.
     """
     partial = AssistantMessage(api=api, provider=provider, model=model)
     active_index: int | None = None
     active_kind: str | None = None
+    channel_indices: dict[str, int] = {}
     started = False
     terminal = False
 
@@ -119,12 +123,17 @@ async def canonicalize_provider_stream(
             yield AssistantStartEvent(partial=_snapshot(partial))
 
         if isinstance(event, ProviderTextDeltaEvent):
+            if independent_channels:
+                active_index = channel_indices.get("text")
+                active_kind = "text" if active_index is not None else None
             if active_kind != "text":
-                async for end_event in _end_active_block(partial, active_index):
-                    yield end_event
+                if not independent_channels:
+                    async for end_event in _end_active_block(partial, active_index):
+                        yield end_event
                 active_index = len(partial.content)
                 active_kind = "text"
                 partial.content.append(TextContent(text=""))
+                channel_indices["text"] = active_index
                 yield TextStartEvent(content_index=active_index, partial=_snapshot(partial))
             assert active_index is not None
             block = partial.content[active_index]
@@ -136,12 +145,17 @@ async def canonicalize_provider_stream(
                 partial=_snapshot(partial),
             )
         elif isinstance(event, ProviderThinkingDeltaEvent):
+            if independent_channels:
+                active_index = channel_indices.get("thinking")
+                active_kind = "thinking" if active_index is not None else None
             if active_kind != "thinking":
-                async for end_event in _end_active_block(partial, active_index):
-                    yield end_event
+                if not independent_channels:
+                    async for end_event in _end_active_block(partial, active_index):
+                        yield end_event
                 active_index = len(partial.content)
                 active_kind = "thinking"
                 partial.content.append(ThinkingContent(thinking=""))
+                channel_indices["thinking"] = active_index
                 yield ThinkingStartEvent(
                     content_index=active_index,
                     partial=_snapshot(partial),
@@ -156,8 +170,11 @@ async def canonicalize_provider_stream(
                 partial=_snapshot(partial),
             )
         elif isinstance(event, ProviderToolCallEvent):
-            async for end_event in _end_active_block(partial, active_index):
-                yield end_event
+            indices = list(channel_indices.values()) if independent_channels else [active_index]
+            for index in indices:
+                async for end_event in _end_active_block(partial, index):
+                    yield end_event
+            channel_indices.clear()
             active_index = None
             active_kind = None
             index = len(partial.content)
@@ -169,8 +186,11 @@ async def canonicalize_provider_stream(
                 partial=_snapshot(partial),
             )
         elif isinstance(event, ProviderResponseEndEvent):
-            async for end_event in _end_active_block(partial, active_index):
-                yield end_event
+            indices = list(channel_indices.values()) if independent_channels else [active_index]
+            for index in indices:
+                async for end_event in _end_active_block(partial, index):
+                    yield end_event
+            channel_indices.clear()
             active_index = None
             active_kind = None
 

@@ -15,7 +15,7 @@ from tau_agent import (
     ToolExecutionUpdateEvent,
 )
 from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
-from tau_coding.events import AutoRetryStartEvent, QueueUpdateEvent
+from tau_coding.events import AutoRetryEndEvent, AutoRetryStartEvent, QueueUpdateEvent
 from tau_coding.rendering import FinalTextRenderer, JsonEventRenderer, TranscriptRenderer
 
 
@@ -140,6 +140,21 @@ def test_transcript_renderer_fails_on_assistant_error(
     captured = capsys.readouterr()
     assert renderer.finish() is False
     assert "Error: provider failed" in captured.err
+
+
+@pytest.mark.parametrize(
+    "renderer_type",
+    [TranscriptRenderer, FinalTextRenderer, JsonEventRenderer],
+)
+def test_renderers_finish_successfully_after_recovered_auto_retry(
+    renderer_type: type[TranscriptRenderer] | type[FinalTextRenderer] | type[JsonEventRenderer],
+) -> None:
+    renderer = renderer_type()
+
+    renderer.render(_error_end("provider failed"))
+    renderer.render(AutoRetryEndEvent(success=True, attempt=1))
+
+    assert renderer.finish() is True
 
 
 def test_final_text_renderer_prints_only_final_message(

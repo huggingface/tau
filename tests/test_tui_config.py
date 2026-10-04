@@ -26,6 +26,7 @@ def test_load_tui_settings_returns_defaults_when_file_is_missing(tmp_path: Path)
     paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
 
     assert load_tui_settings(paths) == TuiSettings()
+    assert load_tui_settings(paths).keybindings.model_cycle_reverse == "ctrl+shift+p"
     assert load_tui_settings(paths).keybindings.quit == "ctrl+d"
 
 
@@ -40,9 +41,11 @@ def test_load_tui_settings_reads_keybindings(tmp_path: Path) -> None:
             "command_palette": "ctrl+j",
             "session_picker": "ctrl+y",
             "queue_follow_up": "f5",
+            "insert_newline": "f7",
             "accept_completion": "f2",
             "thinking_cycle": "f3",
             "model_cycle": "f6",
+            "model_cycle_reverse": "shift+f6",
             "toggle_thinking": "f4",
             "copy_message": "ctrl+b"
           },
@@ -57,11 +60,13 @@ def test_load_tui_settings_reads_keybindings(tmp_path: Path) -> None:
     assert settings.keybindings.command_palette == "ctrl+j"
     assert settings.keybindings.session_picker == "ctrl+y"
     assert settings.keybindings.queue_follow_up == "f5"
+    assert settings.keybindings.insert_newline == "f7"
     assert settings.keybindings.toggle_tool_results == "ctrl+o"
     assert settings.keybindings.toggle_thinking == "f4"
     assert settings.keybindings.accept_completion == "f2"
     assert settings.keybindings.thinking_cycle == "f3"
     assert settings.keybindings.model_cycle == "f6"
+    assert settings.keybindings.model_cycle_reverse == "shift+f6"
     assert settings.keybindings.copy_message == "ctrl+b"
     assert settings.keybindings.cancel == "escape"
     assert settings.theme == "high-contrast"
@@ -166,9 +171,11 @@ def test_tui_keybindings_serialize_to_json() -> None:
             command_palette="ctrl+j",
             session_picker="ctrl+y",
             queue_follow_up="f5",
+            insert_newline="f7",
             accept_completion="f2",
             thinking_cycle="f3",
             model_cycle="f6",
+            model_cycle_reverse="shift+f6",
             toggle_thinking="f4",
             copy_message="ctrl+b",
         ),
@@ -178,11 +185,13 @@ def test_tui_keybindings_serialize_to_json() -> None:
     assert settings.to_json()["keybindings"]["command_palette"] == "ctrl+j"
     assert settings.to_json()["keybindings"]["session_picker"] == "ctrl+y"
     assert settings.to_json()["keybindings"]["queue_follow_up"] == "f5"
+    assert settings.to_json()["keybindings"]["insert_newline"] == "f7"
     assert settings.to_json()["keybindings"]["toggle_tool_results"] == "ctrl+o"
     assert settings.to_json()["keybindings"]["toggle_thinking"] == "f4"
     assert settings.to_json()["keybindings"]["accept_completion"] == "f2"
     assert settings.to_json()["keybindings"]["thinking_cycle"] == "f3"
     assert settings.to_json()["keybindings"]["model_cycle"] == "f6"
+    assert settings.to_json()["keybindings"]["model_cycle_reverse"] == "shift+f6"
     assert settings.to_json()["keybindings"]["copy_message"] == "ctrl+b"
     assert settings.to_json()["theme"] == "high-contrast"
     assert settings.to_json()["auto_copy_selection"] is False

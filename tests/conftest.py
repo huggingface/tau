@@ -16,7 +16,14 @@ def prevent_browser_open(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def isolate_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Point home-directory lookups at the pytest temp directory."""
+    monkeypatch.delenv("TAU_HOME", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     # Path.home() resolves via USERPROFILE on Windows, so HOME alone does not
     # isolate tests from the developer's real ~/.tau settings.
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+
+@pytest.fixture(autouse=True)
+def prevent_user_home_writes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep every test away from the developer's real home configuration."""
+    isolate_home(monkeypatch, tmp_path)

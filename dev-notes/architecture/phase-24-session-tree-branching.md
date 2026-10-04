@@ -8,22 +8,27 @@ mutation, not a transcript edit.
 
 ## What Changed
 
-`/tree` opens a modal tree picker for the active session. The picker lists
-branchable conversation entries near their parent branch point, with small
-indentation only where the session history has diverged into alternate branches,
-marks the active leaf, and supports two actions:
+`/tree` opens a modal tree picker for the active session. The picker keeps each
+branch's entries together and uses the child with the longest history as the
+main branch. It places shorter alternatives immediately after their parent,
+indented at the branch point, before continuing the unindented main history. It
+marks the active leaf and supports two actions:
 
 - `Enter` moves the active leaf to the selected entry.
 - `S` moves the active leaf through a new `branch_summary` entry.
 - `Ctrl+T` toggles tool-call entries on or off for easier navigation in
   tool-heavy histories.
 
-Both actions preserve all existing JSONL entries. Tau records navigation by
-appending a new `leaf` entry, so reopening the session restores the selected
-branch. The picker intentionally hides metadata entries such as model changes,
-thinking-level changes, leaf pointers, and session info; it only shows user
-messages, assistant messages, tool calls, compaction summaries, and branch
-summaries.
+Both actions preserve all existing JSONL entries. Plain navigation is in-memory
+only. If the user quits immediately, reopening selects the last non-legacy-leaf
+entry in file order rather than restoring that uncommitted selection. The next
+message or state change is appended with the selected target as its parent and
+therefore makes the new branch durable. Summary navigation appends its
+`branch_summary` immediately, so that summary becomes the durable tip. The
+picker intentionally hides metadata entries such as model changes,
+thinking-level changes, historical leaf pointers, and session info; it only
+shows user messages, assistant messages, tool calls, compaction summaries, and
+branch summaries.
 
 ## Branch Summaries
 

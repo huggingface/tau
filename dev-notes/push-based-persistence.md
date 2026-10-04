@@ -57,11 +57,11 @@ change moves persistence to the same side of the event stream.
   run generator and retries only messages whose `message_end` fired but whose
   write failed. It is keyed on message identity, never counts: the loop emits
   an assistant's `message_end` before appending it to the transcript, so
-  count-based sweeps can double-write. Each pending write retains stable
-  message and leaf entry ids; a retry reads durable ids and appends only the
-  missing pieces, so a failure between the two appends cannot duplicate the
-  message. Only retries pay that read — a first attempt mints ids that cannot
-  already be on disk, so the streaming path keeps one storage read per message. Repeated failures are logged without masking cancellation, retained,
+  count-based sweeps can double-write. Each pending write retains one stable
+  message entry id; a retry reads durable ids and skips an entry whose append
+  reached disk before raising. Only retries pay that read — a first attempt
+  mints an id that cannot already be on disk. Repeated failures are logged
+  without masking cancellation, retained,
   and flushed before the next prompt, continuation, compaction, or contextual
   terminal command.
 
@@ -88,8 +88,8 @@ Key regression tests:
   harness contract; `test_entry_path_repair_is_pushed_to_listeners` also pins
   canonical run event ordering.
 - `test_message_persistence_retry_is_idempotent` injects failures before and
-  after the message and leaf appends, plus during refresh, and verifies retry
-  leaves exactly one message and one leaf. The next-prompt test verifies a write
+  after the single message append, plus during refresh, and verifies retry
+  leaves exactly one message and no leaf pointer. The next-prompt test verifies a write
   that fails twice is retained and flushed before provider context is built.
 - `test_session_resumes_indexed_session` asserts each message persists exactly
   once after resume (guards the listener detach in `_adopt_replacement`).

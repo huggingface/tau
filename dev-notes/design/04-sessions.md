@@ -22,7 +22,7 @@ src/tau_agent/session/
 - `compaction`
 - `branch_summary`
 - `label`
-- `leaf`
+- `leaf` (legacy read compatibility only; never written)
 - `session_info`
 - `custom`
 
@@ -50,7 +50,7 @@ This mirrors Pi's session model and matters for interactive UIs:
 
 A message whose `message_end` never fired is deliberately not persisted: abandoning a run before the first completed message leaves no durable trace, so an aborted first prompt does not index a new session.
 
-Each persisted message is followed by a `leaf` entry pointing at that message. The leaf entries form an append-only history of the active branch pointer.
+The active tip is the last non-`leaf` entry in file order. Every new entry points to the current in-memory tip, so an append both records the operation and makes its branch active. Historical `leaf` entries still deserialize but are ignored for tip selection.
 
 Empty sessions are still deferred: loading a new session prepares initial metadata in memory, but Tau does not create the transcript file until the first durable session entry is appended. The first append materializes the pending `session_info`, model, and thinking-level entries before writing the message.
 

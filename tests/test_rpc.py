@@ -9,7 +9,14 @@ from typer.testing import CliRunner
 
 from pi_event_helpers import assistant_done, assistant_start, text_delta
 from tau_agent import AssistantMessage, Usage, UserMessage
-from tau_agent.session import JsonlSessionStorage, LeafEntry, MessageEntry, ModelChangeEntry
+from tau_agent.session import (
+    CompactionEntry,
+    CustomMessageEntry,
+    JsonlSessionStorage,
+    LeafEntry,
+    MessageEntry,
+    ModelChangeEntry,
+)
 from tau_ai import FakeProvider
 from tau_coding import (
     CodingSession,
@@ -17,6 +24,8 @@ from tau_coding import (
     ModelChoice,
     OpenAICompatibleProviderConfig,
     ProviderSettings,
+    SessionManager,
+    TauPaths,
 )
 from tau_coding import cli as cli_module
 from tau_coding.provider_config import ProviderModelMetadata
@@ -100,6 +109,37 @@ async def test_rpc_state_matches_pi_frontend_contract(tmp_path: Path) -> None:
         "success": True,
         "id": "thinking",
     }
+
+
+@pytest.mark.anyio
+async def test_rpc_set_session_name_persists_rename(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake", title="Old name")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+    stdin = StringIO('{"id":"rename","type":"set_session_name","name":"New name"}\n')
+    stdout = StringIO()
+
+    await RpcServer(session, stdin=stdin, stdout=stdout).run()
+
+    assert json.loads(stdout.getvalue()) == {
+        "type": "response",
+        "command": "set_session_name",
+        "success": True,
+        "id": "rename",
+    }
+    updated = manager.get_session(record.id)
+    assert updated is not None
+    assert updated.title == "New name"
 
 
 @pytest.mark.anyio
@@ -233,6 +273,46 @@ async def test_rpc_session_inspection_matches_pi_shapes(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_rpc_projects_custom_message_entry_with_pi_wire_names(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    entry = CustomMessageEntry(
+        id="custom",
+        timestamp=1,
+        custom_type="extension:status",
+        content="working",
+        display=False,
+        details={"job": 7},
+    )
+    await storage.append(entry)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    stdin = StringIO('{"id":"entries","type":"get_entries"}\n')
+    stdout = StringIO()
+
+    await RpcServer(session, stdin=stdin, stdout=stdout).run()
+
+    projected = json.loads(stdout.getvalue())["data"]["entries"][0]
+    assert projected == {
+        "type": "custom_message",
+        "id": "custom",
+        "parentId": None,
+        "timestamp": "1970-01-01T00:00:01Z",
+        "customType": "extension:status",
+        "content": "working",
+        "details": {"job": 7},
+        "display": False,
+    }
+    assert "custom_type" not in projected
+
+
+@pytest.mark.anyio
 async def test_rpc_compaction_returns_canonical_summary_and_boundary(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     parent_id: str | None = None
@@ -254,7 +334,13 @@ async def test_rpc_compaction_returns_canonical_summary_and_boundary(tmp_path: P
         [
             [
                 assistant_start(model="fake"),
-                assistant_done(AssistantMessage(content="real summary", model="fake")),
+                assistant_done(
+                    AssistantMessage(
+                        content="real summary",
+                        model="fake",
+                        usage=Usage(input=800, output=40, cache_read=200),
+                    )
+                ),
             ]
         ]
     )
@@ -267,20 +353,65 @@ async def test_rpc_compaction_returns_canonical_summary_and_boundary(tmp_path: P
             cwd=tmp_path,
         )
     )
-    stdin = StringIO('{"id":"compact","type":"compact"}\n')
+    stdin = StringIO('{"id":"compact","type":"compact"}\n{"id":"entries","type":"get_entries"}\n')
     stdout = StringIO()
 
     await RpcServer(session, stdin=stdin, stdout=stdout).run()
 
-    response = json.loads(stdout.getvalue())
+    response, entries_response = [json.loads(line) for line in stdout.getvalue().splitlines()]
     compaction = next(entry for entry in await storage.read_all() if entry.type == "compaction")
     boundary = response["data"]["firstKeptEntryId"]
     assert response["data"]["summary"] == "real summary"
     assert boundary in original_ids
-    assert boundary not in compaction.replaces_entry_ids
+    assert compaction.replaces_entry_ids == []
     assert boundary != compaction.id
     assert compaction.first_kept_entry_id == boundary
     assert compaction.tokens_before == response["data"]["tokensBefore"]
+    projected = next(
+        entry for entry in entries_response["data"]["entries"] if entry["type"] == "compaction"
+    )
+    assert projected["usage"]["input"] == 800
+    assert projected["usage"]["cacheRead"] == 200
+    assert projected["usage"]["output"] == 40
+
+    entries_stdout = StringIO()
+    await RpcServer(
+        session,
+        stdin=StringIO('{"id":"entries","type":"get_entries"}\n'),
+        stdout=entries_stdout,
+    ).run()
+    projected = json.loads(entries_stdout.getvalue())["data"]["entries"][-1]
+    assert projected["firstKeptEntryId"] == boundary
+    assert projected["details"] == {}
+    assert "replacesEntryIds" not in json.dumps(projected)
+    assert "tauReplacedEntryIds" not in json.dumps(projected)
+
+
+@pytest.mark.anyio
+async def test_rpc_projects_legacy_compaction_without_id_list_bridge(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    await storage.append(MessageEntry(id="user", message=UserMessage(content="hi")))
+    await storage.append(
+        CompactionEntry(
+            id="compact",
+            parent_id="user",
+            summary="legacy",
+            replaces_entry_ids=["user"],
+        )
+    )
+    session = await _session(tmp_path, FakeProvider([]))
+    stdout = StringIO()
+
+    await RpcServer(
+        session,
+        stdin=StringIO('{"id":"entries","type":"get_entries"}\n'),
+        stdout=stdout,
+    ).run()
+
+    projected = json.loads(stdout.getvalue())["data"]["entries"][-1]
+    assert projected["type"] == "custom"
+    assert projected["customType"] == "tau.compaction"
+    assert projected["data"] == {"summary": "legacy"}
 
 
 @pytest.mark.anyio

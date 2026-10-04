@@ -23,6 +23,7 @@ from tau_agent.tools import AgentToolResult, ToolCall
 from tau_agent.types import JSONValue
 from tau_coding.extensions.api import CustomMessageMarkup, ToolCallMarkup, ToolResultMarkup
 from tau_coding.skills import Skill, parse_skill_invocation
+from tau_coding.system_prompt import SystemPromptSource
 from tau_coding.tui.themes import TranscriptRole
 
 ChatItemRole = TranscriptRole
@@ -74,6 +75,8 @@ class ChatItem:
     always_show_tool_result: bool = False
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
+    system_prompt: bool = False
+    system_prompt_sources: tuple[SystemPromptSource, ...] | None = None
     highlight: Literal["alert", "update"] | None = None
 
 
@@ -181,6 +184,8 @@ class TuiState:
         always_show_tool_result: bool = False,
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
+        system_prompt: bool = False,
+        system_prompt_sources: tuple[SystemPromptSource, ...] | None = None,
         highlight: Literal["alert", "update"] | None = None,
     ) -> None:
         """Append a transcript item."""
@@ -192,6 +197,8 @@ class TuiState:
             always_show_tool_result=always_show_tool_result,
             custom_type=custom_type,
             details=details,
+            system_prompt=system_prompt,
+            system_prompt_sources=system_prompt_sources,
             highlight=highlight,
         )
         self.items.append(item)
@@ -681,7 +688,7 @@ class TuiState:
         for message in messages:
             if isinstance(message, UserMessage):
                 self.add_user_message(message.text)
-            elif isinstance(message, CustomMessage):
+            elif isinstance(message, CustomMessage) and message.display:
                 self.add_user_message(
                     message.text,
                     custom_type=message.custom_type,

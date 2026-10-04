@@ -24,6 +24,7 @@ def test_session_manager_creates_and_lists_sessions(tmp_path: Path) -> None:
 
     assert record.provider_name == "huggingface"
     assert record.inference_provider == "deepinfra"
+    assert record.inference_provider_mode == "fixed"
     assert record.path.parent.parent == tmp_path / ".tau" / "sessions"
     assert "project-" in record.path.parent.name
     assert len(record.path.parent.name.rsplit("-", maxsplit=1)[-1]) == 6
@@ -236,6 +237,35 @@ def test_session_manager_ignores_extra_index_metadata(tmp_path: Path) -> None:
     assert record.model == "gpt-5"
 
 
+def test_session_manager_treats_legacy_pinned_routes_as_fixed(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    index_path = manager.project_index_path(cwd)
+    index_path.parent.mkdir(parents=True)
+    index_path.write_text(
+        json.dumps(
+            {
+                "id": "legacy-hf",
+                "path": str(index_path.parent / "legacy-hf.jsonl"),
+                "cwd": str(cwd.resolve()),
+                "model": "moonshotai/Kimi-K3",
+                "provider_name": "huggingface",
+                "inference_provider": "deepinfra",
+                "created_at": 1.0,
+                "updated_at": 2.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    [record] = manager.list_sessions(cwd)
+
+    assert record.inference_provider == "deepinfra"
+    assert record.inference_provider_mode == "fixed"
+
+
 def test_session_manager_gets_or_creates_default_session(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"
@@ -273,6 +303,51 @@ def test_session_manager_touch_updates_metadata(tmp_path: Path) -> None:
     assert updated.title == "Updated"
     assert updated.updated_at >= record.updated_at
     assert manager.get_session(record.id) == updated
+
+
+def test_session_manager_archives_session_without_deleting_transcript(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    record = manager.create_session(cwd=cwd, model="fake", session_id="archived-session")
+    record.path.write_text("conversation\n", encoding="utf-8")
+
+    assert manager.archive_session(record.id) is True
+    assert manager.get_session(record.id) is None
+    assert manager.list_sessions() == []
+    assert manager.list_archived_sessions() == [record]
+    assert record.path.read_text(encoding="utf-8") == "conversation\n"
+    assert cwd.exists()
+    assert manager.archive_session(record.id) is False
+    assert manager.unarchive_session(record.id) is True
+    assert manager.list_sessions() == [record]
+    assert manager.list_archived_sessions() == []
+    assert manager.unarchive_session(record.id) is False
+
+
+def test_session_manager_archives_project_without_deleting_transcripts(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    cwd = tmp_path / "project"
+    other_cwd = tmp_path / "other"
+    cwd.mkdir()
+    other_cwd.mkdir()
+    first = manager.create_session(cwd=cwd, model="fake", session_id="first")
+    second = manager.create_session(cwd=cwd, model="fake", session_id="second")
+    other = manager.create_session(cwd=other_cwd, model="fake", session_id="other")
+    for record in (first, second, other):
+        record.path.write_text(record.id, encoding="utf-8")
+
+    assert manager.archive_project(cwd) is True
+    assert manager.list_sessions() == [other]
+    assert {record.id for record in manager.list_archived_sessions()} == {"first", "second"}
+    assert first.path.read_text(encoding="utf-8") == "first"
+    assert second.path.read_text(encoding="utf-8") == "second"
+    assert cwd.exists()
+    assert manager.archive_project(cwd) is False
+    assert manager.unarchive_project(cwd) is True
+    assert {record.id for record in manager.list_sessions()} == {"first", "second", "other"}
+    assert manager.list_archived_sessions() == []
+    assert manager.unarchive_project(cwd) is False
 
 
 def test_session_manager_sorts_newest_updated_first(tmp_path: Path) -> None:

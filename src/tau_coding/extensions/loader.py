@@ -5,10 +5,11 @@ from __future__ import annotations
 import sys
 import tomllib
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.util import module_from_spec, spec_from_file_location
 from inspect import iscoroutinefunction
 from pathlib import Path
+from typing import Literal
 
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 
@@ -18,6 +19,9 @@ _MODULE_NAME_PREFIX = "tau_extension"
 _load_counter = 0
 
 
+ExtensionSource = Literal["built-in", "user", "explicit", "project"]
+
+
 @dataclass(frozen=True, slots=True)
 class DiscoveredExtension:
     """A discovered extension entry file before loading."""
@@ -25,6 +29,8 @@ class DiscoveredExtension:
     name: str
     path: Path
     package_dir: Path | None = None
+    source_id: str | None = None
+    source: ExtensionSource = "explicit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,8 +38,22 @@ class LoadedExtension:
     """A successfully imported extension module and its entry point."""
 
     name: str
-    path: Path
+    path: Path | None
+    source_id: str
     setup: Callable[..., object]
+    source: ExtensionSource = "explicit"
+    hidden: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ExtensionSourceMetadata:
+    """Non-executable provenance retained for one active extension source."""
+
+    name: str
+    source_id: str
+    source: ExtensionSource
+    hidden: bool
+    path: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,15 +120,21 @@ def discover_extensions(
             return
         seen_paths.add(resolved)
         seen_names.add(entry.name)
-        discovered.append(entry)
+        discovered.append(replace(entry, source_id=f"extension:{resolved.as_uri()}"))
 
     if include_resource_dirs:
-        for directory in extension_dirs(
-            paths,
-            include_project_dir=include_project_dir,
-            include_user_dir=include_user_dir,
-        ):
-            for entry in _discover_in_dir(directory, diagnostics):
+        directories: list[tuple[Path, ExtensionSource]] = []
+        if include_project_dir and paths.cwd is not None and paths.project_resources_enabled:
+            directories.append((paths.cwd / ".tau" / "extensions", "project"))
+        if include_user_dir:
+            directories.append((paths.root / "extensions", "user"))
+        seen_directories: set[Path] = set()
+        for directory, source in directories:
+            resolved_directory = directory.expanduser().resolve()
+            if resolved_directory in seen_directories:
+                continue
+            seen_directories.add(resolved_directory)
+            for entry in _discover_in_dir(directory, diagnostics, source=source):
                 add(entry)
 
     for path in extra_paths:
@@ -121,10 +147,17 @@ def discover_extensions(
                 continue
             entry_file = expanded / "extension.py"
             if entry_file.is_file():
-                add(DiscoveredExtension(name=expanded.name, path=entry_file, package_dir=expanded))
+                add(
+                    DiscoveredExtension(
+                        name=expanded.name,
+                        path=entry_file,
+                        package_dir=expanded,
+                        source="explicit",
+                    )
+                )
                 continue
             found_any = False
-            for entry in _discover_in_dir(expanded, diagnostics):
+            for entry in _discover_in_dir(expanded, diagnostics, source="explicit"):
                 found_any = True
                 add(entry)
             if not found_any:
@@ -136,7 +169,7 @@ def discover_extensions(
                     )
                 )
         elif expanded.is_file():
-            add(DiscoveredExtension(name=expanded.stem, path=expanded))
+            add(DiscoveredExtension(name=expanded.stem, path=expanded, source="explicit"))
         else:
             diagnostics.append(
                 ResourceDiagnostic(
@@ -166,10 +199,16 @@ def load_extensions(
         include_project_dir=include_project_dir,
         include_user_dir=include_user_dir,
     )
+    # Discovery freezes every source before any import. Extension code may
+    # mutate entry or parent symlinks during import/setup, but ownership stays
+    # tied to the canonical source selected by the host.
     loaded: list[LoadedExtension] = []
     all_diagnostics = list(diagnostics)
     for entry in discovered:
-        extension, entry_diagnostics = _load_extension(entry)
+        source_id = entry.source_id
+        if source_id is None:  # defensive: discovery always assigns it
+            raise RuntimeError(f"extension source identity was not frozen: {entry.path}")
+        extension, entry_diagnostics = _load_extension(entry, source_id=source_id)
         all_diagnostics.extend(entry_diagnostics)
         if extension is not None:
             loaded.append(extension)
@@ -180,7 +219,10 @@ def load_extensions(
 
 
 def _discover_in_dir(
-    directory: Path, diagnostics: list[ResourceDiagnostic]
+    directory: Path,
+    diagnostics: list[ResourceDiagnostic],
+    *,
+    source: ExtensionSource,
 ) -> Iterator[DiscoveredExtension]:
     if not directory.is_dir():
         return
@@ -188,15 +230,20 @@ def _discover_in_dir(
         if path.name.startswith(("_", ".")):
             continue
         if path.is_file() and path.suffix == ".py":
-            yield DiscoveredExtension(name=path.stem, path=path)
+            yield DiscoveredExtension(name=path.stem, path=path, source=source)
         elif path.is_dir():
             manifest_entries = _manifest_entries(path, diagnostics)
             if manifest_entries:
-                yield from manifest_entries
+                yield from (replace(entry, source=source) for entry in manifest_entries)
                 continue
             entry_file = path / "extension.py"
             if entry_file.is_file():
-                yield DiscoveredExtension(name=path.name, path=entry_file, package_dir=path)
+                yield DiscoveredExtension(
+                    name=path.name,
+                    path=entry_file,
+                    package_dir=path,
+                    source=source,
+                )
 
 
 def _manifest_entries(
@@ -242,7 +289,7 @@ def _manifest_entries(
         return []
     entries: list[DiscoveredExtension] = []
     for item in declared:
-        entry_file = (directory / item).resolve()
+        entry_file = directory / item
         if not entry_file.is_file():
             diagnostics.append(
                 ResourceDiagnostic(
@@ -265,6 +312,8 @@ def _manifest_entries(
 
 def _load_extension(
     entry: DiscoveredExtension,
+    *,
+    source_id: str,
 ) -> tuple[LoadedExtension | None, list[ResourceDiagnostic]]:
     global _load_counter
     _load_counter += 1
@@ -309,7 +358,13 @@ def _load_extension(
             )
         ]
 
-    return LoadedExtension(name=entry.name, path=entry.path, setup=setup), []
+    return LoadedExtension(
+        name=entry.name,
+        path=entry.path,
+        source_id=source_id,
+        setup=setup,
+        source=entry.source,
+    ), []
 
 
 def unload_extension_modules() -> int:

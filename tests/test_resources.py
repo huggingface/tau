@@ -20,6 +20,41 @@ def test_resource_paths_use_tau_subdirectories(tmp_path: Path) -> None:
     assert paths.prompts_dirs == (tmp_path / "prompts",)
 
 
+def test_default_resource_paths_follow_tau_home_and_share_agents(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau-personal"
+    cwd = tmp_path / "project"
+    monkeypatch.setenv("TAU_HOME", str(tau_home))
+
+    paths = TauResourcePaths(cwd=cwd)
+
+    assert paths.root == tau_home
+    assert paths.skills_dir == tau_home / "skills"
+    assert paths.prompts_dir == tau_home / "prompts"
+    assert paths.themes_dirs == (tau_home / "themes", cwd / ".tau" / "themes")
+    assert paths.system_prompt_path == tau_home / "SYSTEM.md"
+    assert paths.append_system_prompt_path == tau_home / "APPEND_SYSTEM.md"
+    assert paths.agents_root == Path.home() / ".agents"
+    assert paths.skills_dirs == (
+        tau_home / "skills",
+        Path.home() / ".agents" / "skills",
+        cwd / ".tau" / "skills",
+        cwd / ".agents" / "skills",
+    )
+
+
+def test_explicit_resource_root_ignores_tau_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    explicit_root = tmp_path / "explicit"
+    monkeypatch.setenv("TAU_HOME", str(tmp_path / "environment"))
+
+    assert TauResourcePaths(root=explicit_root).root == explicit_root
+
+
 def test_resource_paths_include_agents_and_project_directories(tmp_path: Path) -> None:
     cwd = tmp_path / "project"
     tau_home = tmp_path / "home" / ".tau"
@@ -47,7 +82,7 @@ def test_resource_paths_include_agents_and_project_directories(tmp_path: Path) -
     assert paths.append_system_prompt_path == tau_home / "APPEND_SYSTEM.md"
 
 
-def test_system_prompt_files_use_project_over_user_precedence(tmp_path: Path) -> None:
+def test_system_prompt_files_replace_by_precedence_and_append_in_order(tmp_path: Path) -> None:
     cwd = tmp_path / "project"
     tau_home = tmp_path / "home" / ".tau"
     agents_home = tmp_path / "home" / ".agents"
@@ -57,6 +92,7 @@ def test_system_prompt_files_use_project_over_user_precedence(tmp_path: Path) ->
     (tau_home / "SYSTEM.md").write_text("User base", encoding="utf-8")
     (cwd / ".tau" / "SYSTEM.md").write_text("Project base", encoding="utf-8")
     (tau_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
+    (cwd / ".tau" / "APPEND_SYSTEM.md").write_text("Project append", encoding="utf-8")
     # `.agents` is not a system-prompt configuration location.
     (agents_home / "SYSTEM.md").write_text("Agents base", encoding="utf-8")
 
@@ -66,31 +102,52 @@ def test_system_prompt_files_use_project_over_user_precedence(tmp_path: Path) ->
 
     assert resources.custom_prompt == "Project base"
     assert resources.custom_prompt_path == cwd / ".tau" / "SYSTEM.md"
-    assert resources.append_prompt == "User append"
-    assert resources.append_prompt_path == tau_home / "APPEND_SYSTEM.md"
+    assert resources.append_prompt == "User append\n\nProject append"
+    assert resources.append_prompts == ("User append", "Project append")
+    assert resources.append_prompt_paths == (
+        tau_home / "APPEND_SYSTEM.md",
+        cwd / ".tau" / "APPEND_SYSTEM.md",
+    )
     assert [(item.severity, item.path) for item in resources.diagnostics] == [
         ("info", cwd / ".tau" / "SYSTEM.md"),
         ("warning", tau_home / "SYSTEM.md"),
         ("info", tau_home / "APPEND_SYSTEM.md"),
+        ("info", cwd / ".tau" / "APPEND_SYSTEM.md"),
     ]
 
 
-def test_explicit_prompt_values_shadow_files_without_reading_them(tmp_path: Path) -> None:
+def test_overlapping_user_and_project_append_path_is_loaded_once(tmp_path: Path) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    append_path = tau_home / "APPEND_SYSTEM.md"
+    append_path.write_text("Once", encoding="utf-8")
+
+    resources = discover_system_prompt_resources(
+        TauResourcePaths(root=tau_home, agents_root=None, cwd=tmp_path)
+    )
+
+    assert resources.append_prompt == "Once"
+    assert resources.append_prompt_paths == (append_path,)
+    assert [(item.name, item.path) for item in resources.diagnostics] == [("append", append_path)]
+
+
+def test_explicit_replacement_shadows_file_but_append_files_still_load(tmp_path: Path) -> None:
     tau_home = tmp_path / ".tau"
     tau_home.mkdir()
     (tau_home / "SYSTEM.md").write_bytes(b"\xff")
-    (tau_home / "APPEND_SYSTEM.md").write_bytes(b"\xff")
+    (tau_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
 
     resources = discover_system_prompt_resources(
         TauResourcePaths(root=tau_home, agents_root=None),
         custom_prompt_explicit=True,
-        append_prompt_explicit=True,
     )
 
     assert resources.custom_prompt is None
-    assert resources.append_prompt is None
+    assert resources.append_prompt == "User append"
+    assert resources.append_prompt_paths == (tau_home / "APPEND_SYSTEM.md",)
     assert len(resources.diagnostics) == 2
-    assert all("explicit startup value" in item.message for item in resources.diagnostics)
+    assert "explicit startup value" in resources.diagnostics[0].message
+    assert "selected user" in resources.diagnostics[1].message
 
 
 def test_selected_system_prompt_file_must_be_readable_utf8(tmp_path: Path) -> None:
@@ -100,6 +157,15 @@ def test_selected_system_prompt_file_must_be_readable_utf8(tmp_path: Path) -> No
     prompt_path.write_bytes(b"\xff")
 
     with pytest.raises(ResourceError, match="Could not read replacement system prompt file"):
+        discover_system_prompt_resources(TauResourcePaths(root=tau_home, agents_root=None))
+
+
+def test_selected_append_system_prompt_file_must_be_readable_utf8(tmp_path: Path) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "APPEND_SYSTEM.md").write_bytes(b"\xff")
+
+    with pytest.raises(ResourceError, match="Could not read append system prompt file"):
         discover_system_prompt_resources(TauResourcePaths(root=tau_home, agents_root=None))
 
 

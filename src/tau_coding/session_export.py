@@ -23,12 +23,14 @@ from tau_agent.messages import (
     ToolCall,
     ToolResultMessage,
     UserMessage,
+    content_text,
     message_text,
 )
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
     CustomEntry,
+    CustomMessageEntry,
     LabelEntry,
     LeafEntry,
     MessageEntry,
@@ -183,9 +185,17 @@ def render_session_html(
     entry_list = list(entries)
     active_leaf_id = _active_leaf_id(entry_list)
     active_path_ids = _active_path_ids(entry_list, active_leaf_id)
-    visible_entries = _visible_entries(entry_list)
-    tree_html = _render_tree(visible_entries, active_path_ids, active_leaf_id)
-    details_html = _render_entry_details(visible_entries, active_path_ids, active_leaf_id)
+    visible_entries = _visible_export_entries(entry_list)
+    visible_active_leaf_id = next(
+        (entry.id for entry in reversed(visible_entries) if entry.id in active_path_ids),
+        None,
+    )
+    tree_entries: list[SessionEntry] = [
+        entry for entry in visible_entries if not isinstance(entry, LeafEntry)
+    ]
+    labels_by_id = _resolved_labels(entry_list)
+    tree_html = _render_tree(tree_entries, active_path_ids, visible_active_leaf_id, labels_by_id)
+    details_html = _render_entry_details(visible_entries, active_path_ids, visible_active_leaf_id)
     source_html = f'<p class="source">Source: <code>{_escape(source)}</code></p>' if source else ""
     system_prompt_html = _render_system_prompt(system_prompt)
     generated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -195,8 +205,7 @@ def render_session_html(
     event_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "event")
     usage_html = render_usage_dashboard(
         collect_session_usage(
-            [entry for entry in visible_entries if entry.id in active_path_ids]
-            or list(visible_entries)
+            [entry for entry in entry_list if entry.id in active_path_ids] or entry_list
         )
     )
     light_theme_css = _export_theme_css(TAU_LIGHT_THEME)
@@ -541,6 +550,7 @@ def render_session_html(
       border-left: 1px solid var(--line);
     }}
     .tree li {{ margin: 1px 0; }}
+    .bookmark-label {{ color: var(--accent); font-weight: 700; margin-right: 0.45rem; }}
     .node-link {{
       display: flex;
       align-items: center;
@@ -1075,22 +1085,34 @@ def _render_system_prompt(system_prompt: str | None) -> str:
     )
 
 
-def _visible_entries(entries: Sequence[SessionEntry]) -> list[SessionEntry]:
-    """Filter out entries that are pointers/plumbing rather than transcript content.
-
-    Leaf pointer entries only record which entry is the current tip of a branch;
-    that information is already conveyed by the active-path/active-leaf styling,
-    so showing them as their own rows would just add noise to the export.
-    """
-    return [entry for entry in entries if not isinstance(entry, LeafEntry)]
+def _visible_export_entries(entries: list[SessionEntry]) -> list[SessionEntry]:
+    """Hide presentation-only entries while preserving visible tree ancestry."""
+    entries_by_id = {entry.id: entry for entry in entries}
+    hidden_ids = {
+        entry.id for entry in entries if isinstance(entry, CustomMessageEntry) and not entry.display
+    }
+    visible: list[SessionEntry] = []
+    for entry in entries:
+        if entry.id in hidden_ids:
+            continue
+        parent_id = entry.parent_id
+        visited: set[str] = set()
+        while parent_id in hidden_ids and parent_id not in visited:
+            visited.add(parent_id)
+            parent = entries_by_id.get(parent_id)
+            parent_id = parent.parent_id if parent is not None else None
+        visible.append(
+            entry.model_copy(update={"parent_id": parent_id})
+            if parent_id != entry.parent_id
+            else entry
+        )
+    return visible
 
 
 def _active_leaf_id(entries: Sequence[SessionEntry]) -> str | None:
     for entry in reversed(entries):
-        if isinstance(entry, LeafEntry):
-            return entry.entry_id
-    if entries:
-        return entries[-1].id
+        if not isinstance(entry, LeafEntry):
+            return entry.id
     return None
 
 
@@ -1107,6 +1129,7 @@ def _render_tree(
     entries: list[SessionEntry],
     active_path_ids: set[str],
     active_leaf_id: str | None,
+    labels_by_id: dict[str, str],
 ) -> str:
     if not entries:
         return '<p class="empty">No entries.</p>'
@@ -1129,6 +1152,7 @@ def _render_tree(
             children_by_parent,
             active_path_ids,
             active_leaf_id,
+            labels_by_id,
             ancestors=set(),
             rendered_ids=rendered_ids,
         )
@@ -1142,6 +1166,7 @@ def _render_tree(
             children_by_parent,
             active_path_ids,
             active_leaf_id,
+            labels_by_id,
             ancestors=set(),
             rendered_ids=rendered_ids,
         )
@@ -1164,6 +1189,7 @@ def _render_tree_chain(
     children_by_parent: dict[str | None, list[SessionEntry]],
     active_path_ids: set[str],
     active_leaf_id: str | None,
+    labels_by_id: dict[str, str],
     *,
     ancestors: set[str],
     rendered_ids: set[str],
@@ -1204,6 +1230,7 @@ def _render_tree_chain(
                     children_by_parent,
                     active_path_ids,
                     active_leaf_id,
+                    labels_by_id,
                     ancestors=chain_ancestors,
                     rendered_ids=rendered_ids,
                 )
@@ -1211,7 +1238,9 @@ def _render_tree_chain(
                 if child.id not in rendered_ids
             )
             nested_html = f'<ol class="tree">{nested_html}</ol>'
-        li_html_parts.append(_render_tree_node(node, nested_html, active_path_ids, active_leaf_id))
+        li_html_parts.append(
+            _render_tree_node(node, nested_html, active_path_ids, active_leaf_id, labels_by_id)
+        )
     return "".join(li_html_parts)
 
 
@@ -1220,6 +1249,7 @@ def _render_tree_node(
     nested_html: str,
     active_path_ids: set[str],
     active_leaf_id: str | None,
+    labels_by_id: dict[str, str],
 ) -> str:
     classes = ["tree-node"]
     if entry.id in active_path_ids:
@@ -1227,13 +1257,16 @@ def _render_tree_node(
     if entry.id == active_leaf_id:
         classes.append("active-leaf")
     label = _entry_tree_label(entry)
+    bookmark = labels_by_id.get(entry.id)
+    bookmark_html = f'<span class="bookmark-label">[{_escape(bookmark)}]</span>' if bookmark else ""
+    accessible_label = f"[{bookmark}] {label}" if bookmark else label
     return (
         f'<li class="{" ".join(c for c in classes if c)}" '
         f'data-entry-kind="{_entry_filter_kind(entry)}">'
         f'<a class="node-link" href="#entry-{_attr(entry.id)}" '
-        f'aria-label="{_attr(label)}">'
+        f'aria-label="{_attr(accessible_label)}">'
         f'<span class="icon">{_entry_icon(entry)}</span>'
-        f'<span class="node-type">{_escape(label)}</span>'
+        f'{bookmark_html}<span class="node-type">{_escape(label)}</span>'
         "</a>"
         f"{nested_html}"
         "</li>"
@@ -1312,24 +1345,58 @@ def _render_entry_detail(
 def _render_entry_body(entry: SessionEntry) -> str:
     if isinstance(entry, MessageEntry):
         return _render_message_entry(entry)
+    if isinstance(entry, CustomMessageEntry):
+        details = (
+            _render_block("Details", _render_json_block(entry.details))
+            if entry.details is not None
+            else ""
+        )
+        return f"<pre>{_escape(content_text(entry.content))}</pre>{details}"
     if isinstance(entry, ModelChangeEntry):
         return f"<p>Model changed to <code>{_escape(entry.model)}</code>.</p>"
     if isinstance(entry, ThinkingLevelChangeEntry):
         level = entry.thinking_level if entry.thinking_level is not None else "off"
         return f"<p>Thinking level changed to <code>{_escape(level)}</code>.</p>"
     if isinstance(entry, CompactionEntry):
+        boundary = entry.first_kept_entry_id or "unavailable (legacy compaction)"
+        usage = (
+            _render_block(
+                "Summary request usage",
+                _render_json_block(entry.usage.model_dump(mode="json", by_alias=True)),
+            )
+            if entry.usage is not None
+            else ""
+        )
         return (
+            f"<p>First kept entry: <code>{_escape(boundary)}</code></p>"
             f"<pre>{_escape(entry.summary)}</pre>"
-            f"{_render_list('Replaces entries', entry.replaces_entry_ids)}"
+            f"{usage}"
         )
     if isinstance(entry, BranchSummaryEntry):
         branch_root = entry.branch_root_id or "none"
+        usage = (
+            _render_block(
+                "Summary request usage",
+                _render_json_block(entry.usage.model_dump(mode="json", by_alias=True)),
+            )
+            if entry.usage is not None
+            else ""
+        )
         return (
             f"<p>Branch root: <code>{_escape(branch_root)}</code></p>"
             f"<pre>{_escape(entry.summary)}</pre>"
+            f"{usage}"
         )
     if isinstance(entry, LabelEntry):
-        return f"<p>Session label: <strong>{_escape(entry.label)}</strong></p>"
+        action = (
+            f"Set bookmark to <strong>{_escape(entry.label)}</strong>"
+            if entry.label
+            else "Cleared bookmark"
+        )
+        return (
+            f'<p>{action} on <a href="#entry-{_attr(entry.target_id)}">'
+            f"<code>{_escape(entry.target_id)}</code></a>.</p>"
+        )
     if isinstance(entry, LeafEntry):
         leaf = entry.entry_id or "none"
         return f"<p>Active leaf pointer: <code>{_escape(leaf)}</code></p>"
@@ -1519,6 +1586,8 @@ _ICON_DOWNLOAD = (
 
 
 def _entry_icon(entry: SessionEntry) -> str:
+    if isinstance(entry, CustomMessageEntry):
+        return _ICON_USER
     if isinstance(entry, MessageEntry):
         message = entry.message
         if isinstance(message, UserMessage):
@@ -1546,6 +1615,8 @@ def _entry_parent_html(entry: SessionEntry) -> str:
 
 
 def _entry_title(entry: SessionEntry) -> str:
+    if isinstance(entry, CustomMessageEntry):
+        return f"Custom message: {entry.custom_type}"
     if isinstance(entry, MessageEntry):
         message = entry.message
         if isinstance(message, UserMessage):
@@ -1576,6 +1647,8 @@ def _entry_title(entry: SessionEntry) -> str:
 
 def _entry_preview(entry: SessionEntry) -> str:
     """Return a short one-line preview shown on the collapsed entry row."""
+    if isinstance(entry, CustomMessageEntry):
+        return _summarize_text(content_text(entry.content))
     if isinstance(entry, MessageEntry):
         message = entry.message
         if isinstance(message, ToolResultMessage):
@@ -1590,7 +1663,7 @@ def _entry_preview(entry: SessionEntry) -> str:
     if isinstance(entry, CompactionEntry | BranchSummaryEntry):
         return _summarize_text(entry.summary)
     if isinstance(entry, LabelEntry):
-        return entry.label
+        return entry.label or f"cleared {entry.target_id}"
     if isinstance(entry, LeafEntry):
         return entry.entry_id or "none"
     if isinstance(entry, SessionInfoEntry):
@@ -1600,8 +1673,24 @@ def _entry_preview(entry: SessionEntry) -> str:
     return entry.id
 
 
+def _resolved_labels(entries: Sequence[SessionEntry]) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, LabelEntry):
+            continue
+        label = entry.label.strip() if entry.label is not None else ""
+        if label:
+            labels[entry.target_id] = label
+        else:
+            labels.pop(entry.target_id, None)
+    return labels
+
+
 def _entry_tree_label(entry: SessionEntry) -> str:
     """Return the sidebar label: just the tool name for tool entries."""
+    if isinstance(entry, CustomMessageEntry):
+        summary = _entry_preview(entry)
+        return f"custom message: {summary}" if summary else "custom message"
     if isinstance(entry, MessageEntry):
         message = entry.message
         if isinstance(message, ToolResultMessage):
@@ -1638,6 +1727,8 @@ def _entry_is_error(entry: SessionEntry) -> bool:
 
 
 def _entry_filter_kind(entry: SessionEntry) -> str:
+    if isinstance(entry, CustomMessageEntry):
+        return "message"
     if isinstance(entry, MessageEntry):
         message = entry.message
         if isinstance(message, ToolResultMessage):
@@ -1655,7 +1746,7 @@ def _summarize_text(text: str, *, limit: int = 110) -> str:
     return summary[: limit - 3].rstrip() + "..."
 
 
-def _json_dump(value: dict[str, JSONValue]) -> str:
+def _json_dump(value: JSONValue) -> str:
     return json.dumps(value, indent=2, sort_keys=True)
 
 
@@ -1663,7 +1754,7 @@ _JSON_LEXER = JsonLexer()
 _HIGHLIGHT_FORMATTER = HtmlFormatter(nowrap=True)
 
 
-def _render_json_block(value: dict[str, JSONValue]) -> str:
+def _render_json_block(value: JSONValue) -> str:
     """Render a JSON payload as a syntax-highlighted, self-contained <pre> block."""
     source = _json_dump(value)
     try:

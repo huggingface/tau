@@ -68,7 +68,7 @@ class TuiEventAdapter:
             message = event.message
             if isinstance(message, UserMessage):
                 self.state.add_user_message(message.text)
-            elif isinstance(message, CustomMessage):
+            elif isinstance(message, CustomMessage) and message.display:
                 self.state.add_user_message(
                     message.text,
                     custom_type=message.custom_type,
@@ -139,6 +139,9 @@ class TuiEventAdapter:
                 self._pending_overflow_error = None
             return
         if isinstance(event, AutoRetryStartEvent):
+            if self.state.items and self.state.items[-1].role == "error":
+                self.state.items.pop()
+            self.state.error = None
             self.state.add_item("status", f"… {event.error_message}")
 
     def _flush(self) -> None:

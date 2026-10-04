@@ -9,8 +9,10 @@ from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
     ToolResultMessage,
+    Usage,
     UserMessage,
     message_text,
+    sum_usage,
 )
 from tau_agent.provider import ModelProvider
 from tau_agent.provider_events import AssistantDoneEvent, AssistantErrorEvent
@@ -70,12 +72,13 @@ async def summarize_branch_messages_with_model(
     messages: Sequence[AgentMessage],
     custom_instructions: str | None = None,
     replace_instructions: bool = False,
-) -> str | None:
-    """Return a model-generated branch summary, or None when generation fails."""
+) -> tuple[str, Usage, str | None] | None:
+    """Return a generated summary, usage, and resolved provider, or None on failure."""
     if not messages:
         return None
 
     response: AssistantMessage | None = None
+    response_usages: list[Usage] = []
     async for event in provider.stream_response(
         model=model,
         system=BRANCH_SUMMARY_SYSTEM_PROMPT,
@@ -94,13 +97,18 @@ async def summarize_branch_messages_with_model(
             return None
         if isinstance(event, AssistantDoneEvent):
             response = event.message
+            response_usages.append(event.message.usage)
 
     if response is None:
         return None
     summary = response.text.strip()
     if not summary:
         return None
-    return _add_branch_summary_context(summary, messages)
+    return (
+        _add_branch_summary_context(summary, messages),
+        sum_usage(response_usages),
+        response.response_provider,
+    )
 
 
 def _branch_summary_prompt(

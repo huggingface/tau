@@ -12,9 +12,18 @@ from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG, builtin_provider_entry
 from tau_coding.reload import CodingReloadSummary, ReloadCategorySummary
 from tau_coding.resources import ResourceDiagnostic
-from tau_coding.session_manager import CodingSessionRecord, SessionManager
+from tau_coding.session_manager import (
+    CodingSessionRecord,
+    SessionManager,
+    normalize_session_name,
+)
 from tau_coding.skills import Skill
-from tau_coding.system_prompt import ProjectContextFile
+from tau_coding.system_prompt import (
+    ProjectContextFile,
+    SystemPromptInspection,
+    SystemPromptSource,
+    format_system_prompt_inspection,
+)
 from tau_coding.thinking import normalize_thinking_level
 
 LOGIN_PROVIDER_ALIASES = {
@@ -75,6 +84,9 @@ class CommandSession(Protocol):
     def system_prompt(self) -> str: ...
 
     @property
+    def system_prompt_inspection(self) -> SystemPromptInspection: ...
+
+    @property
     def session_id(self) -> str | None: ...
 
     @property
@@ -86,8 +98,6 @@ class CommandSession(Protocol):
     def ensure_session_indexed(self) -> None: ...
 
     def set_model(self, model: str) -> None: ...
-
-    def reload_provider_settings(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,11 +119,15 @@ class CommandResult:
     tree_picker_requested: bool = False
     login_picker_requested: bool = False
     custom_provider_login_requested: bool = False
+    local_requested: bool = False
+    sidebar_toggle_requested: bool = False
     login_provider: str | None = None
     login_method: str | None = None
     logout_picker_requested: bool = False
     logout_provider: str | None = None
     model_picker_requested: bool = False
+    model_selection_provider: str | None = None
+    model_selection_model: str | None = None
     tools_picker_requested: bool = False
     scoped_models_picker_requested: bool = False
     skills_picker_requested: bool = False
@@ -121,6 +135,8 @@ class CommandResult:
     thinking_level: str | None = None
     theme: str | None = None
     message: str | None = None
+    system_prompt_inspection: SystemPromptInspection | None = None
+    session_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,6 +383,24 @@ def create_default_command_registry() -> CommandRegistry:
     )
     registry.register(
         SlashCommand(
+            name="local",
+            usage="/local",
+            description="Configure and manage local backends.",
+            handler=_local_command,
+            search_terms=("backends", "inference"),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="sidebar",
+            usage="/sidebar",
+            description="Show or hide the TUI sidebar for this session.",
+            handler=_sidebar_command,
+            search_terms=("toggle", "visibility", "panel"),
+        )
+    )
+    registry.register(
+        SlashCommand(
             name="login",
             usage="/login [provider]",
             description="Connect a provider with OAuth or an API key.",
@@ -434,8 +468,13 @@ def _status_command(context: CommandContext) -> CommandResult:
         f"Context window: {session.context_window_tokens}",
     ]
     if session.provider_name == "huggingface":
-        route = getattr(session, "inference_provider", None) or "automatic"
-        lines.append(f"Hugging Face inference provider: {route}")
+        route = getattr(session, "inference_provider", None)
+        mode = getattr(session, "inference_provider_mode", "fixed" if route else "automatic")
+        if mode == "automatic":
+            route_status = f"automatic (currently {route})" if route else "automatic"
+        else:
+            route_status = f"{route} (fixed)" if route else "fixed"
+        lines.append(f"Hugging Face inference provider: {route_status}")
     context_window_source = getattr(session, "context_window_source", None)
     if context_window_source:
         lines.append(f"Context window source: {context_window_source}")
@@ -470,7 +509,24 @@ def _status_command(context: CommandContext) -> CommandResult:
 def _system_command(context: CommandContext) -> CommandResult:
     if context.args:
         return CommandResult(handled=True, message="Usage: /system")
-    return CommandResult(handled=True, message=context.session.system_prompt)
+    inspection = getattr(context.session, "system_prompt_inspection", None)
+    if inspection is None:
+        inspection = SystemPromptInspection(
+            text=context.session.system_prompt,
+            sources=(
+                SystemPromptSource(
+                    kind="runtime",
+                    label="Effective system prompt",
+                    source="active Tau session",
+                    content=context.session.system_prompt,
+                ),
+            ),
+        )
+    return CommandResult(
+        handled=True,
+        message=format_system_prompt_inspection(inspection),
+        system_prompt_inspection=inspection,
+    )
 
 
 def _hotkeys_command(context: CommandContext) -> CommandResult:
@@ -482,6 +538,7 @@ def _hotkeys_command(context: CommandContext) -> CommandResult:
         "- Esc: cancel active run",
         "- Ctrl+K: open slash-command completions",
         "- Ctrl+R: open session picker",
+        "- Ctrl+P / Shift+Ctrl+P: cycle scoped models forward / backward",
         "- Shift+Tab: cycle thinking mode",
         "- Ctrl+T: toggle thinking tokens",
         "- Ctrl+O: collapse or expand tool output",
@@ -590,18 +647,11 @@ def _name_command(context: CommandContext) -> CommandResult:
     except ValueError as exc:
         return CommandResult(handled=True, message=str(exc))
 
-    if manager.get_session(session_id) is None:
-        context.session.ensure_session_indexed()
-
-    updated = manager.touch_session(
-        session_id,
-        model=context.session.model,
-        provider_name=context.session.provider_name,
-        title=name,
+    return CommandResult(
+        handled=True,
+        session_name=name,
+        message=f"Session renamed: {name}",
     )
-    if updated is None:
-        return CommandResult(handled=True, message=f"Unknown current session: {session_id}")
-    return CommandResult(handled=True, message=f"Session renamed: {updated.title}")
 
 
 def _format_sessions(context: CommandContext) -> str:
@@ -624,10 +674,8 @@ def _tools_command(context: CommandContext) -> CommandResult:
 
 
 def _model_command(context: CommandContext) -> CommandResult:
-    refresh_error = _refresh_provider_settings(context.session)
-    if refresh_error is not None:
-        return refresh_error
-
+    # The picker uses the current snapshot and refreshes catalogs after opening.
+    # Rebuilding the active provider here can prevent the picker from opening.
     if context.args:
         model = context.args.strip()
         available_models = set(context.session.available_models)
@@ -638,6 +686,12 @@ def _model_command(context: CommandContext) -> CommandResult:
                 message=f"Unknown model for provider {context.session.provider_name}: {model}\n"
                 f"Available models: {models}",
             )
+        if callable(getattr(context.session, "select_provider_model", None)):
+            return CommandResult(
+                handled=True,
+                model_selection_provider=context.session.provider_name,
+                model_selection_model=model,
+            )
         context.session.set_model(model)
         return CommandResult(handled=True, message=f"Current model: {model}")
 
@@ -645,10 +699,6 @@ def _model_command(context: CommandContext) -> CommandResult:
 
 
 def _scoped_models_command(context: CommandContext) -> CommandResult:
-    refresh_error = _refresh_provider_settings(context.session)
-    if refresh_error is not None:
-        return refresh_error
-
     if context.args:
         return CommandResult(handled=True, message="Usage: /scoped-models")
     return CommandResult(handled=True, scoped_models_picker_requested=True)
@@ -725,6 +775,18 @@ def _theme_command(context: CommandContext) -> CommandResult:
     return CommandResult(handled=True, theme=theme_name)
 
 
+def _local_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /local")
+    return CommandResult(handled=True, local_requested=True)
+
+
+def _sidebar_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /sidebar")
+    return CommandResult(handled=True, sidebar_toggle_requested=True)
+
+
 def _login_command(context: CommandContext) -> CommandResult:
     provider_name = context.args.strip()
     if provider_name in {"custom", "new", "add"}:
@@ -791,17 +853,6 @@ def _format_diagnostics(
     return lines
 
 
-def _refresh_provider_settings(session: CommandSession) -> CommandResult | None:
-    try:
-        session.reload_provider_settings()
-    except ValueError as exc:
-        return CommandResult(
-            handled=True,
-            message=f"Could not refresh provider settings: {exc}",
-        )
-    return None
-
-
 def format_reload_summary(summary: CodingReloadSummary) -> str:
     lines = [
         "Reloaded local coding resources and project context.",
@@ -864,12 +915,9 @@ def _parse_export_args(args: str) -> tuple[str | None, Path | None]:
 
 
 def _validated_session_name(value: str) -> str:
-    name = value.strip()
-    if not name:
+    if not value.strip():
         raise ValueError("Usage: /name <new name>")
-    if any(char in name for char in "\r\n\t"):
-        raise ValueError("Session name must be a single line.")
-    return name
+    return normalize_session_name(value)
 
 
 def _normalize_name(name: str) -> str:

@@ -22,7 +22,12 @@ from tau_coding.provider_config import (
 from tau_coding.rendering import PrintOutputMode
 from tau_coding.resources import TauResourcePaths
 from tau_coding.skills import load_skills
-from tau_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
+from tau_coding.system_prompt import (
+    BuildSystemPromptOptions,
+    build_system_prompt,
+    build_system_prompt_inspection,
+    format_system_prompt_inspection,
+)
 from tau_coding.tools import create_coding_tools
 from tau_coding.update_check import (
     ReleaseNoteSection,
@@ -381,6 +386,27 @@ def test_update_command_upgrades_without_startup_check(monkeypatch: pytest.Monke
     assert "Tau update completed with: uv tool install tau-ai@0.2.4" in result.stdout
 
 
+def test_update_models_force_refreshes_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[bool] = []
+
+    async def refresh_models(*, force: bool) -> cli.ModelsDevRefreshResult:
+        calls.append(force)
+        return cli.ModelsDevRefreshResult(
+            refreshed=True,
+            not_modified=False,
+            model_count=42,
+            cache_path=Path("/tmp/models-store.json"),
+        )
+
+    monkeypatch.setattr(cli, "refresh_models_dev_catalog", refresh_models)
+
+    result = CliRunner().invoke(app, ["update", "--models"])
+
+    assert result.exit_code == 0
+    assert calls == [True]
+    assert "Model catalogs refreshed: 42 models" in result.stdout
+
+
 def test_update_command_reports_windows_handoff_without_claiming_completion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -737,7 +763,7 @@ async def test_run_print_mode_system_command_prints_prompt_without_provider_call
     )
 
     captured = capsys.readouterr()
-    expected_system = build_system_prompt(
+    inspection = build_system_prompt_inspection(
         BuildSystemPromptOptions(
             cwd=tmp_path,
             tools=create_coding_tools(cwd=tmp_path),
@@ -745,7 +771,7 @@ async def test_run_print_mode_system_command_prints_prompt_without_provider_call
         )
     )
     assert ok is True
-    assert captured.out == f"{expected_system}\n"
+    assert captured.out == f"{format_system_prompt_inspection(inspection)}\n"
     assert captured.err == ""
     assert provider.calls == []
     assert await storage.read_all() == []
@@ -831,7 +857,7 @@ async def test_run_print_mode_persists_session_entries(
     assert [message.role for message in messages] == ["user", "assistant"]
     assert messages[0].content == "Say hello"
     assert messages[1].text == "Done"
-    assert any(entry.type == "leaf" for entry in entries)
+    assert not any(entry.type == "leaf" for entry in entries)
 
 
 @pytest.mark.anyio
@@ -839,9 +865,14 @@ async def test_run_print_mode_resumes_persisted_conversation(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    await storage.append(MessageEntry(message=UserMessage(content="First question")))
-    await storage.append(MessageEntry(message=AssistantMessage(content="First answer")))
-    await storage.append(ModelChangeEntry(model="model-a"))
+    user_entry = MessageEntry(message=UserMessage(content="First question"))
+    assistant_entry = MessageEntry(
+        parent_id=user_entry.id,
+        message=AssistantMessage(content="First answer"),
+    )
+    await storage.append(user_entry)
+    await storage.append(assistant_entry)
+    await storage.append(ModelChangeEntry(parent_id=assistant_entry.id, model="model-a"))
     provider = FakeProvider(
         [
             [
@@ -1225,9 +1256,11 @@ async def test_print_resume_does_not_apply_hf_route_to_explicit_non_hf_provider(
         session_id="session-123",
     )
 
+    lifecycle: list[str] = []
+
     class ClosableFakeProvider(FakeProvider):
         async def aclose(self) -> None:
-            return None
+            lifecycle.append("provider_closed")
 
     provider = ClosableFakeProvider([])
     create_calls: list[tuple[str, str | None]] = []
@@ -1240,10 +1273,19 @@ async def test_print_resume_does_not_apply_hf_route_to_explicit_non_hf_provider(
         **kwargs: object,
     ) -> ClosableFakeProvider:
         del model, kwargs
+        lifecycle.append("provider_created")
         create_calls.append((provider_config.name, inference_provider))
         return provider
 
     async def fake_run_print_mode(**kwargs: object) -> bool:
+        lifecycle.append("session_run")
+        resumed_record = manager.get_session("session-123")
+        storage = kwargs["storage"]
+        assert resumed_record is not None
+        assert isinstance(storage, JsonlSessionStorage)
+        assert kwargs["provider"] is provider
+        assert kwargs["provider_name"] == "local"
+        assert storage.path == resumed_record.path
         return True
 
     monkeypatch.setattr(cli, "load_provider_settings", lambda: settings)
@@ -1261,6 +1303,7 @@ async def test_print_resume_does_not_apply_hf_route_to_explicit_non_hf_provider(
 
     assert ok is True
     assert create_calls == [("local", None)]
+    assert lifecycle == ["provider_created", "session_run", "provider_closed"]
 
 
 def test_create_print_session_uses_requested_id_and_rejects_collision(tmp_path: Path) -> None:
@@ -1894,6 +1937,61 @@ def test_setup_command_writes_provider_settings(
     assert provider.max_retry_delay_seconds == 0.5
 
 
+def test_relative_tau_home_reports_actionable_cli_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TAU_HOME", ".tau-personal")
+
+    result = CliRunner().invoke(app, ["providers"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for TAU_HOME" in result.stderr
+    assert "must be an absolute path" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_unknown_user_tau_home_reports_actionable_cli_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TAU_HOME", "~tau-review-user-that-does-not-exist-728/.tau")
+
+    result = CliRunner().invoke(app, ["providers"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for TAU_HOME" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_setup_command_writes_only_to_configured_tau_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau-personal"
+    monkeypatch.setenv("TAU_HOME", str(tau_home))
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--provider",
+            "local",
+            "--base-url",
+            "http://localhost:11434/v1",
+            "--api-key-env",
+            "LOCAL_API_KEY",
+            "--model",
+            "qwen",
+            "setup",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (tau_home / "catalog.toml").exists()
+    assert (tau_home / "providers.json").exists()
+    assert not (tmp_path / ".tau").exists()
+    assert load_provider_settings(TauPaths(home=tau_home)).default_provider == "local"
+
+
 def test_setup_command_warns_when_api_key_env_is_missing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1942,3 +2040,101 @@ async def test_headless_ask_declines_without_corrupting_structured_stdout(
     assert "PROTECTED-STRUCTURED-SECRET" not in provider.calls[0][1]
     assert "Project inputs" not in captured.out
     assert "Project inputs" in captured.err
+
+
+def test_thinking_flag_forwards_to_tui_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--thinking", "high", "--new-session"])
+
+    assert result.exit_code == 0
+    assert calls == ["high"]
+
+
+def test_thinking_flag_forwards_to_print_mode_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_print_mode(*args: object, **kwargs: object) -> bool:
+        calls.append(kwargs.get("thinking_level_override"))
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["--print", "-t", "low", "hello"])
+
+    assert result.exit_code == 0
+    assert calls == ["low"]
+
+
+def test_thinking_flag_forwards_to_rpc_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_rpc_mode(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "run_openai_rpc_mode", fake_run_openai_rpc_mode)
+
+    result = CliRunner().invoke(app, ["--mode", "rpc", "--thinking", "xhigh"])
+
+    assert result.exit_code == 0
+    assert calls == ["xhigh"]
+
+
+def test_thinking_flag_rejects_invalid_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        raise AssertionError("TUI must not start for an invalid thinking level")
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--thinking", "maximum", "--new-session"])
+
+    assert result.exit_code == 2
+    assert "Unknown thinking mode: maximum" in _panel_text(result.output)
+
+
+def test_thinking_flag_accepts_case_insensitive_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["-t", "HIGH", "--new-session"])
+
+    assert result.exit_code == 0
+    assert calls == ["high"]
+
+
+def test_thinking_flag_absent_forwards_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--new-session"])
+
+    assert result.exit_code == 0
+    assert calls == [None]
+
+
+def test_help_lists_thinking_option() -> None:
+    result = CliRunner().invoke(app, ["--help"], env={"COLUMNS": "160"})
+
+    output = re.sub(r"\s+", "", _strip_ansi(result.output))
+    assert result.exit_code == 0
+    assert "--thinking" in output

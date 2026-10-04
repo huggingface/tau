@@ -41,6 +41,7 @@ from tau_coding.provider_catalog import (
 )
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
+    THINKING_LEVELS,
     ThinkingLevel,
     ThinkingParameter,
     anthropic_thinking_budget_for_level,
@@ -561,6 +562,31 @@ def save_provider_thinking_level(
         model=model,
         thinking_level=thinking_level,
     )
+    save_provider_settings(updated, paths)
+    return updated
+
+
+def toggle_saved_stable_scoped_model(
+    *,
+    provider_name: str,
+    model: str,
+    paths: TauPaths | None = None,
+    fallback_settings: ProviderSettings | None = None,
+) -> ProviderSettings:
+    """Toggle an already-authorized stable reference without saving a definition.
+
+    Callers must restrict this path to trusted built-in dynamic providers.  The
+    durable value is only the exact provider/model pair; availability continues
+    to come from the process-local provider snapshot.
+    """
+    settings = _load_provider_settings_for_write(paths, fallback_settings=fallback_settings)
+    target = ScopedModelConfig(provider=provider_name, model=model)
+    existing = list(settings.scoped_models)
+    if target in existing:
+        existing = [item for item in existing if item != target]
+    else:
+        existing.append(target)
+    updated = replace(settings, scoped_models=tuple(existing))
     save_provider_settings(updated, paths)
     return updated
 
@@ -1296,6 +1322,7 @@ def _apply_provider_preference(
             provider,
             f"provider_preferences.{provider.name}.thinking_defaults",
             ignore_unknown_models=True,
+            ignore_unavailable=True,
         )
         if "thinking_defaults" in value
         else provider.thinking_defaults
@@ -1348,20 +1375,25 @@ def _thinking_defaults_dict(
     field_name: str,
     *,
     ignore_unknown_models: bool = False,
+    ignore_unavailable: bool = False,
 ) -> dict[str, ThinkingLevel]:
     raw = _raw_thinking_defaults_dict(value, field_name)
     if ignore_unknown_models:
         raw = {model: level for model, level in raw.items() if model in provider.models}
+    valid: dict[str, ThinkingLevel] = {}
     for model, thinking_level in raw.items():
         validate_provider_model(provider, model)
         available = provider_thinking_levels(provider, model=model)
         if thinking_level not in available:
+            if ignore_unavailable:
+                continue
             modes = ", ".join(available) or "none"
             raise ProviderConfigError(
                 f"Provider thinking default {thinking_level} is not available for "
                 f"{provider.name}:{model}. Available modes: {modes}"
             )
-    return raw
+        valid[model] = thinking_level
+    return valid
 
 
 def _raw_thinking_defaults_dict(value: object, field_name: str) -> dict[str, ThinkingLevel]:
@@ -1440,8 +1472,13 @@ def provider_thinking_levels(
         return ()
     return tuple(
         level
-        for level in provider.thinking_levels
-        if metadata is None or _metadata_supports_thinking_level(metadata, level)
+        for level in THINKING_LEVELS
+        if (
+            level in provider.thinking_levels
+            or metadata is not None
+            and metadata.thinking_level_map.get(level) is not None
+        )
+        and (metadata is None or _metadata_supports_thinking_level(metadata, level))
     )
 
 
@@ -1473,9 +1510,10 @@ def provider_thinking_unavailable_reason(
 def _levels_from_thinking_map(
     thinking_level_map: dict[ThinkingLevel, str | None],
 ) -> tuple[ThinkingLevel, ...]:
-    levels: tuple[ThinkingLevel, ...] = ("off", "minimal", "low", "medium", "high", "xhigh")
     return tuple(
-        level for level in levels if _thinking_level_map_supports(thinking_level_map, level)
+        level
+        for level in THINKING_LEVELS
+        if _thinking_level_map_supports(thinking_level_map, level)
     )
 
 
@@ -1494,7 +1532,7 @@ def _thinking_level_map_supports(
 ) -> bool:
     if level in thinking_level_map:
         return thinking_level_map[level] is not None
-    return level != "xhigh"
+    return level not in {"xhigh", "max"}
 
 
 def _metadata_for_model(provider: ProviderConfig, model: str) -> ProviderModelMetadata | None:
@@ -1616,6 +1654,7 @@ def resolve_startup_thinking_level(
     model: str,
     *,
     preferred: ThinkingLevel = DEFAULT_THINKING_LEVEL,
+    cli_override: ThinkingLevel | None = None,
 ) -> ThinkingLevel | None:
     """Pick a valid startup thinking level for a provider/model pair.
 
@@ -1625,9 +1664,24 @@ def resolve_startup_thinking_level(
     the remembered per-model preference wins, then the global ``preferred``
     level, then the provider/catalog default, then the first available level.
 
+    An explicit ``cli_override`` (from ``--thinking``) takes precedence over
+    everything, and unlike the fallback chain it is strict: requesting a level
+    the model does not support raises :class:`ProviderConfigError` instead of
+    silently falling back.
+
     Returns ``None`` when the model has no configurable thinking levels.
     """
     levels = provider_thinking_levels(provider, model=model)
+    if cli_override is not None:
+        if not levels:
+            raise ProviderConfigError(f"Thinking modes are unavailable for {provider.name}:{model}")
+        if cli_override not in levels:
+            allowed = ", ".join(levels)
+            raise ProviderConfigError(
+                f'Thinking mode "{cli_override}" is not available for '
+                f"{provider.name}:{model}. Available modes: {allowed}"
+            )
+        return cli_override
     if not levels:
         return None
     remembered = provider.thinking_defaults.get(model)

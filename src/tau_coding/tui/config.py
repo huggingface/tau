@@ -54,11 +54,13 @@ class TuiKeybindings:
     command_palette: str = "ctrl+k"
     session_picker: str = "ctrl+r"
     queue_follow_up: str = "alt+enter"
+    insert_newline: str = "shift+enter"
     accept_completion: str = "tab"
     completion_next: str = "down"
     completion_previous: str = "up"
     thinking_cycle: str = "shift+tab"
     model_cycle: str = "ctrl+p"
+    model_cycle_reverse: str = "ctrl+shift+p"
     toggle_thinking: str = "ctrl+t"
     toggle_tool_results: str = "ctrl+o"
     copy_message: str = "ctrl+c"
@@ -71,11 +73,13 @@ class TuiKeybindings:
             "command_palette": self.command_palette,
             "session_picker": self.session_picker,
             "queue_follow_up": self.queue_follow_up,
+            "insert_newline": self.insert_newline,
             "accept_completion": self.accept_completion,
             "completion_next": self.completion_next,
             "completion_previous": self.completion_previous,
             "thinking_cycle": self.thinking_cycle,
             "model_cycle": self.model_cycle,
+            "model_cycle_reverse": self.model_cycle_reverse,
             "toggle_thinking": self.toggle_thinking,
             "toggle_tool_results": self.toggle_tool_results,
             "copy_message": self.copy_message,
