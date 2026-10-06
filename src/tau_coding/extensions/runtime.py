@@ -88,6 +88,16 @@ from tau_coding.system_prompt import PromptSection
 TurnRequestedCallback = Callable[[str, "str | None", "dict[str, JSONValue] | None"], None]
 
 
+class BoundModelChoice(Protocol):
+    """Provider/model identifiers exposed by a bound session."""
+
+    @property
+    def provider_name(self) -> str: ...
+
+    @property
+    def model(self) -> str: ...
+
+
 class BoundSession(Protocol):
     """The slice of `CodingSession` the extension runtime binds to."""
 
@@ -99,6 +109,12 @@ class BoundSession(Protocol):
 
     @property
     def provider_name(self) -> str: ...
+
+    @property
+    def available_providers(self) -> tuple[str, ...]: ...
+
+    @property
+    def available_model_choices(self) -> tuple[BoundModelChoice, ...]: ...
 
     @property
     def inference_provider(self) -> str | None: ...

@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from tau_coding.extensions.runtime import ExtensionRuntime
     from tau_coding.local_backends import LocalBackend
     from tau_coding.paths import TauPaths
+    from tau_coding.session import ModelChoice
     from tau_coding.tui.config import TuiTheme
 
 AGENT_EVENT_TYPES: frozenset[str] = frozenset(
@@ -908,6 +909,18 @@ class ExtensionContext:
         """Return the active provider name."""
         self._generation.assert_active()
         return self._runtime.session_view.provider_name
+
+    @property
+    def available_providers(self) -> tuple[str, ...]:
+        """Return provider IDs that the active session can call."""
+        self._generation.assert_active()
+        return tuple(self._runtime.session_view.available_providers)
+
+    @property
+    def available_model_choices(self) -> tuple[ModelChoice, ...]:
+        """Return provider/model IDs from the active session's runtime view."""
+        self._generation.assert_active()
+        return cast("tuple[ModelChoice, ...]", self._runtime.session_view.available_model_choices)
 
     @property
     def inference_provider(self) -> str | None:

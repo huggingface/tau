@@ -26,6 +26,7 @@ from tau_coding import (
     BuiltInExtension,
     CodingSession,
     CodingSessionConfig,
+    ModelChoice,
     ResourceError,
     SessionManager,
     TauPaths,
@@ -124,6 +125,11 @@ class RecordingSession:
         self.cwd = tmp_path
         self.model = "fake"
         self.provider_name = "fake"
+        self.available_providers = ("fake", "other")
+        self.available_model_choices = (
+            ModelChoice(provider_name="fake", model="fake"),
+            ModelChoice(provider_name="other", model="other-model"),
+        )
         self.inference_provider: str | None = None
         self.inference_provider_mode = "automatic"
         self.session_id = "session-1"
@@ -1554,6 +1560,22 @@ def test_transcript_is_empty_at_session_start(tmp_path: Path) -> None:
     assert api.context.session_name == "Test session"  # type: ignore[attr-defined]
     assert api.context.thinking_level == "medium"  # type: ignore[attr-defined]
     assert api.context.transcript == ()  # type: ignore[attr-defined]
+
+
+def test_context_exposes_available_provider_and_model_ids(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "reader")
+    session = RecordingSession(tmp_path)
+    runtime.bind(session)
+
+    assert api.context.available_providers == ("fake", "other")
+    assert [
+        (choice.provider_name, choice.model) for choice in api.context.available_model_choices
+    ] == [
+        ("fake", "fake"),
+        ("other", "other-model"),
+    ]
+    assert all(isinstance(choice, ModelChoice) for choice in api.context.available_model_choices)
 
 
 def test_transcript_exposes_prior_messages_in_order(tmp_path: Path) -> None:
