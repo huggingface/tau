@@ -713,39 +713,55 @@ const frontendCode = `async for event in session.prompt(text):
       <div>
         <div class="sec-head">
           <span class="mark">7</span>
-          <h2>Standing on Pi</h2>
+          <h2>Pi, and why &tau;</h2>
         </div>
         <p>
-          Tau borrows its architecture from{" "}
+          Tau began as a way to understand{" "}
           <a href="https://pi.dev" target="_blank" rel="noopener">Pi</a>, a
-          minimalist agent harness: keep the brain, the environment, and the
-          interface apart. Tau retells that idea in Python, one readable step at
-          a time.
+          small coding agent written in TypeScript. Pi keeps three things apart:
+          the loop, the machine it works on, and the screen you watch it on. Tau
+          keeps that split and rebuilds it in Python, with notes on every step.
         </p>
-        <p class="principles-line">
-          Small layers &middot; events, not callbacks &middot; real, not a toy
-          &middot; docs follow the code.
-        </p>
-        <p class="remark">
-          <span class="def-label">Remark.</span> Why &ldquo;tau&rdquo;? Because &tau;
-          = 2&pi; &mdash; and one full turn deserves its own name.{" "}
-          <a href="/why-tau/">The full rant &rarr;</a>
+        <p>
+          The name is a joke that stuck. &pi; is half a turn; &tau; = 2&pi; is
+          the whole circle. Pi was the first half of the trip &mdash; Tau tries
+          to go the rest of the way round, slowly, and show its work.{" "}
+          <a href="/why-tau/">More on &tau; than you asked for &rarr;</a>
         </p>
       </div>
-      <div class="terminal" aria-hidden="true">
-        <div class="bar">
-          <span></span><span></span><span></span><span class="t">a session</span
-          >
-        </div>
-        <pre><span class="pmt">&#964; &rsaquo;</span> <span class="cmd">rename foo() to bar() everywhere</span>
-
-<span class="out">  read   </span><span class="key">src/app.py</span>
-<span class="out">  bash   </span><span class="key">grep -rn "foo(" src</span>
-<span class="out">  edit   </span><span class="key">src/app.py, src/util.py</span>
-<span class="out">  bash   </span><span class="key">uv run pytest</span>  <span class="out">&#10003; 42 passed</span>
-
-Renamed 6 call sites across 2 files.</pre>
-      </div>
+      <figure
+        class="sketch"
+        aria-label="A circle: the top half is pi, the full turn is tau"
+      >
+        <svg viewBox="0 0 480 430" role="img">
+          <g class="ink" filter="url(#rough)">
+            <path
+              class="flow"
+              d="M371 190 A 132 130 0 0 0 112 184"
+              marker-end="url(#ah)"></path>
+            <path d="M110 218 A 132 130 0 0 0 368 224" marker-end="url(#ah)"
+            ></path>
+            <text x="240" y="44" class="hand big">Pi</text>
+            <text x="240" y="66" class="hand soft"
+              >half a turn &middot; TypeScript</text
+            >
+            <text x="240" y="384" class="hand big">Tau</text>
+            <text x="240" y="408" class="hand soft"
+              >the whole turn &middot; Python, with notes</text
+            >
+            <text x="240" y="140" class="hand soft">same three parts</text>
+            <text x="240" y="178" class="hand">the loop</text>
+            <text x="240" y="212" class="hand">the machine</text>
+            <text x="240" y="246" class="hand">the screen</text>
+          </g>
+          <circle class="dot" cx="372" cy="204" r="4"></circle>
+          <circle class="dot" cx="108" cy="203" r="4"></circle>
+          <text x="386" y="209" class="angle">0</text>
+          <text x="94" y="209" class="angle end">&pi;</text>
+          <text x="386" y="236" class="angle">&tau; = 2&pi;</text>
+        </svg>
+        <figcaption>Fig. 8 &mdash; &pi; gets you halfway</figcaption>
+      </figure>
     </div>
   </section>
 

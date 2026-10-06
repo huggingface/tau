@@ -634,3 +634,6 @@ section{ padding:80px 0; border-top:var(--hair); }
 .sketch.pending .draw{ stroke-dashoffset:1; }
 .sketch .fade{ transition:opacity .4s ease calc(var(--i) * var(--step) + 250ms); }
 .sketch.pending .fade{ opacity:0; }
+.sketch .dot{ fill:var(--ink); }
+.sketch .angle{ font-family:var(--math); font-style:italic; font-size:17px; fill:var(--ink-soft); }
+.sketch .angle.end{ text-anchor:end; }
