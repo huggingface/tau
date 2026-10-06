@@ -7,6 +7,12 @@ rendering.
 
 For Hugging Face-specific routing extensions, `set_inference_provider(<provider>)` selects a fixed route while `set_inference_provider(None)` restores recoverable automatic routing. Read both `context.inference_provider` (current route) and `context.inference_provider_mode` (`automatic` or `fixed`) when presenting route status.
 
+Once a session is bound, `context.available_providers` returns the provider IDs
+Tau can currently call, and `context.available_model_choices` returns frozen
+`ModelChoice(provider_name, model)` values from the effective runtime
+inventory. This includes dynamic providers and runtime-refreshed model catalogs;
+providers without usable credentials are omitted.
+
 Once a session is bound, `await tau.set_label(entry_id, label)` creates or updates
 a per-entry bookmark. Pass `None` or an empty string to clear it. The target must
 be an existing session entry; Tau validates it and appends the change rather
