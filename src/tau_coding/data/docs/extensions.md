@@ -19,7 +19,7 @@ For complete API documentation, read the repository's published guide when worki
 - `website/content/guides/extensions.md`
 - `dev-notes/architecture/phase-21-extensions.md`
 
-Installed examples are under `examples/extensions/` next to these docs. Read the relevant example completely before implementing an extension.
+Installed examples are under `examples/extensions/` next to these docs. Read the relevant example completely before implementing an extension. `ask_user_question.py` demonstrates an agent tool that waits for a multiple-choice UI selection.
 
 ## Locations
 

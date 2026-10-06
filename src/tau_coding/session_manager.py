@@ -134,6 +134,11 @@ class SessionManager:
         """Return the session metadata index path for a project cwd."""
         return self.paths.project_session_dir(cwd) / "index.jsonl"
 
+    @property
+    def archive_index_path(self) -> Path:
+        """Return the metadata index for sessions hidden from the resume picker."""
+        return self.paths.sessions_dir / "archive.jsonl"
+
     def list_sessions(self, cwd: Path | None = None) -> list[CodingSessionRecord]:
         """Return indexed sessions, newest updated first.
 
@@ -155,6 +160,81 @@ class SessionManager:
         """Return the most recently updated session for a working directory."""
         records = self.list_sessions(cwd)
         return records[0] if records else None
+
+    def list_archived_sessions(self, cwd: Path | None = None) -> list[CodingSessionRecord]:
+        """Return archived sessions, optionally restricted to one project."""
+        records = _deduplicate_records(self._read_index(self.archive_index_path))
+        if cwd is not None:
+            resolved_cwd = cwd.resolve()
+            records = [record for record in records if record.cwd.resolve() == resolved_cwd]
+        return sorted(records, key=lambda record: record.updated_at, reverse=True)
+
+    def archive_session(self, session_id: str) -> bool:
+        """Move a session out of the resume index without touching its transcript."""
+        matches = [record for record in self._read_all_records() if record.id == session_id]
+        if not matches:
+            return False
+        self._add_to_archive(matches)
+        for record in matches:
+            self._remove(record)
+            if self.index_path.exists():
+                self._remove_from_index(self.index_path, session_id)
+        return True
+
+    def archive_project(self, cwd: Path) -> bool:
+        """Move a project's sessions out of resume indexes without touching files."""
+        resolved_cwd = cwd.resolve()
+        records = [
+            record for record in self._read_all_records() if record.cwd.resolve() == resolved_cwd
+        ]
+        if not records:
+            return False
+        self._add_to_archive(records)
+        project_path = self.project_index_path(resolved_cwd)
+        project_records = [
+            record
+            for record in self._read_index(project_path)
+            if record.cwd.resolve() != resolved_cwd
+        ]
+        self._write_index(project_path, project_records)
+        if self.index_path.exists():
+            legacy_records = [
+                record
+                for record in self._read_index(self.index_path)
+                if record.cwd.resolve() != resolved_cwd
+            ]
+            self._write_index(self.index_path, legacy_records)
+        return True
+
+    def unarchive_session(self, session_id: str) -> bool:
+        """Restore one archived session to the active resume index."""
+        matches = [record for record in self.list_archived_sessions() if record.id == session_id]
+        if not matches:
+            return False
+        for record in matches:
+            self._upsert(record)
+        self._remove_from_archive(session_id)
+        return True
+
+    def unarchive_project(self, cwd: Path) -> bool:
+        """Restore all archived sessions for a project to the active index."""
+        resolved_cwd = cwd.resolve()
+        matches = [
+            record
+            for record in self.list_archived_sessions()
+            if record.cwd.resolve() == resolved_cwd
+        ]
+        if not matches:
+            return False
+        for record in matches:
+            self._upsert(record)
+        archived = [
+            record
+            for record in self._read_index(self.archive_index_path)
+            if record.cwd.resolve() != resolved_cwd
+        ]
+        self._write_index(self.archive_index_path, archived)
+        return True
 
     def create_session(
         self,
@@ -369,9 +449,23 @@ class SessionManager:
         self._write_index(path, records)
 
     def _remove(self, record: CodingSessionRecord) -> None:
-        path = self.project_index_path(record.cwd)
-        records = [item for item in self._read_index(path) if item.id != record.id]
+        self._remove_from_index(self.project_index_path(record.cwd), record.id)
+
+    def _remove_from_index(self, path: Path, session_id: str) -> None:
+        records = [item for item in self._read_index(path) if item.id != session_id]
         self._write_index(path, records)
+
+    def _add_to_archive(self, records: list[CodingSessionRecord]) -> None:
+        archived = [
+            item
+            for item in _deduplicate_records(self._read_index(self.archive_index_path))
+            if all(item.id != record.id for record in records)
+        ]
+        archived.extend(records)
+        self._write_index(self.archive_index_path, archived)
+
+    def _remove_from_archive(self, session_id: str) -> None:
+        self._remove_from_index(self.archive_index_path, session_id)
 
 
 def _deduplicate_records(records: list[CodingSessionRecord]) -> list[CodingSessionRecord]:
