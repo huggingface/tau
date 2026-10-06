@@ -29,7 +29,7 @@ The name is a small joke about picking the *right* foundation. See
   **running shell commands** in your project.
 - Work in an **interactive TUI** or as a **one-shot command** for scripts and
   pipes.
-- Talk to **OpenAI, Anthropic, OpenAI Codex, OpenRouter, Hugging Face**, or any
+- Talk to **OpenAI, Anthropic, OpenAI Codex, OpenRouter, OrcaRouter, Hugging Face**, or any
   OpenAI-compatible endpoint (including local models).
 - **Remember** every session, let you **resume** it later, and **branch** from
   any earlier point to explore a different path.

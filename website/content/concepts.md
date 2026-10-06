@@ -18,7 +18,7 @@ model has nothing left to do. That loop is the heart of every coding agent.
 ## Providers and models
 
 A **provider** is the service that hosts AI models (OpenAI, Anthropic, OpenAI
-Codex, OpenRouter, Hugging Face, or any OpenAI-compatible endpoint). A **model**
+Codex, OpenRouter, OrcaRouter, Hugging Face, or any OpenAI-compatible endpoint). A **model**
 is the specific brain you're talking to (e.g. `gpt-5.5`, `claude-sonnet-4-6`).
 You pick a provider + model; you can switch either mid-session.
 → [Providers & models]({{< relref "./guides/providers-and-models.md" >}})
