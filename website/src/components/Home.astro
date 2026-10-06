@@ -1,4 +1,5 @@
 ---
+import { Code } from "astro:components";
 import { site } from "../data";
 const toolCode = `from tau_agent.messages import TextContent
 from tau_agent.tools import AgentTool, AgentToolResult
@@ -470,7 +471,7 @@ const frontendCode = `async for event in session.prompt(text):
       <code>examples/extensions/hello_tool.py</code>:
     </p>
     <div class="two even">
-      <pre class="code-fig">{toolCode}</pre>
+      <Code class="code-fig" code={toolCode} lang="python" theme="min-light" />
       <figure
         class="sketch"
         aria-label="How a tool is split between the model and your code"
@@ -522,7 +523,7 @@ const frontendCode = `async for event in session.prompt(text):
       stdout, using the real event names from &sect;3.
     </p>
     <div class="two even">
-      <pre class="code-fig">{frontendCode}</pre>
+      <Code class="code-fig" code={frontendCode} lang="python" theme="min-light" />
       <figure
         class="sketch"
         aria-label="Events flowing from the session into a hand-written frontend"

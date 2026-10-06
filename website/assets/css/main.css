@@ -555,6 +555,7 @@ section{ padding:80px 0; border-top:var(--hair); }
 /* ---- home: code figures, syllabus ---- */
 .two.even{ grid-template-columns:1fr 1fr; align-items:start; }
 @media (max-width:820px){ .two.even{ grid-template-columns:1fr; } }
+.code-fig.astro-code{ background:transparent !important; }
 .code-fig{
   margin:0; padding:18px 0; overflow-x:auto;
   border-top:var(--rule); border-bottom:var(--rule);
