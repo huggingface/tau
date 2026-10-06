@@ -419,6 +419,7 @@ async def test_malformed_model_payloads_raise_without_guessing_metadata(tmp_path
         ({"modalities": ["text"]}, ("text",)),
         ({"architecture": {"input_modalities": ["text", "unknown"]}}, None),
         ({"architecture": {"input_modalities": ["audio"]}}, None),
+        ({"architecture": {"input_modalities": ["text", {"kind": "image"}]}}, None),
         ({"architecture": {"input_modalities": []}}, None),
         ({"architecture": "text"}, None),
         ({}, None),

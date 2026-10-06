@@ -325,7 +325,8 @@ class LlamaCppService:
             payload = _json_object(response, "/v1/models")
             models = _parse_models(payload)
             if len(models) == 1 and models[0].input_modalities is None:
-                models = (await self._with_props_modalities(client, headers, models[0]),)
+                # Older llama.cpp builds report vision only in /props.
+                models = (await self._inputs_from_props(client, headers, models[0]),)
             return LlamaCppDiscovery(
                 self.endpoint,
                 models,
@@ -1443,17 +1444,17 @@ class LlamaCppService:
                 ),
             )
 
-    async def _with_props_modalities(
+    async def _inputs_from_props(
         self,
         client: httpx.AsyncClient,
         headers: Mapping[str, str],
         model: ProviderModel,
     ) -> ProviderModel:
-        """Fill a single model's inputs from ``/props`` when ``/v1/models`` omits them.
+        """Return ``model`` with the inputs that ``/props`` reports, if it reports any.
 
-        llama.cpp builds before October 2026 report image support only in
-        ``/props``, which describes the one loaded model of a standard server.
-        Any failure leaves the model unchanged.
+        llama.cpp builds before October 2026 report vision only in ``/props``.
+        On a standard server it describes the one loaded model. A failed or
+        unusable response leaves the model unchanged.
         """
         try:
             response = await client.get(self.endpoint.server_root + "/props", headers=dict(headers))

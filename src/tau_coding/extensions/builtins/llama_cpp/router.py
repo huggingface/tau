@@ -19,6 +19,13 @@ import httpx
 LLAMA_CPP_ROUTER_MIN_BUILD = 9688
 LLAMA_CPP_ROUTER_MAX_BUILD = 10595
 
+InputModalities = tuple[Literal["text", "image"], ...]
+
+# Every input modality llama.cpp can report. A report with any other value is
+# not trusted. Tau sends only text and images, so it ignores audio and video.
+_KNOWN_INPUT_MODALITIES = frozenset({"text", "image", "audio", "video"})
+_SENT_INPUT_MODALITIES = ("text", "image")
+
 RouterState = Literal[
     "loaded", "sleeping", "unloaded", "loading", "downloading", "failed", "unknown"
 ]
@@ -44,7 +51,7 @@ class RouterModel:
     id: str
     state: RouterState
     display_name: str | None = None
-    input_modalities: tuple[Literal["text", "image"], ...] | None = None
+    input_modalities: InputModalities | None = None
     failed: bool = False
     downloaded_bytes: int | None = None
     download_total_bytes: int | None = None
@@ -144,34 +151,27 @@ async def list_router_models(
     return tuple(result)
 
 
-# Input modalities llama.cpp can report. Tau sends only text and images, so the
-# others are dropped; any other value makes the whole report untrusted.
-_LLAMA_CPP_INPUT_MODALITIES = frozenset({"text", "image", "audio", "video"})
+def reported_input_modalities(model: Mapping[str, object]) -> InputModalities | None:
+    """Return the text and image inputs that a llama.cpp ``/models`` entry reports.
 
-
-def reported_input_modalities(
-    model: Mapping[str, object],
-) -> tuple[Literal["text", "image"], ...] | None:
-    """Return the text and image inputs a llama.cpp ``/models`` entry reports.
-
-    llama.cpp reports them under ``architecture.input_modalities``; a top-level
-    ``input_modalities`` or ``modalities`` list is accepted for other servers.
-    Returns None when nothing is reported or the report holds an unknown value.
+    llama.cpp reports them as ``architecture.input_modalities``. Other servers may
+    use a top-level ``input_modalities`` or ``modalities`` list. Returns None when
+    the entry reports nothing, or reports a value Tau does not know.
     """
     architecture = model.get("architecture")
-    value = architecture.get("input_modalities") if isinstance(architecture, Mapping) else None
-    if value is None:
-        value = model.get("input_modalities", model.get("modalities"))
-    if not isinstance(value, list) or not value:
+    reported = architecture.get("input_modalities") if isinstance(architecture, Mapping) else None
+    if reported is None:
+        reported = model.get("input_modalities", model.get("modalities"))
+    if not isinstance(reported, list) or not reported:
         return None
-    if not all(isinstance(entry, str) and entry in _LLAMA_CPP_INPUT_MODALITIES for entry in value):
+    if not all(isinstance(entry, str) and entry in _KNOWN_INPUT_MODALITIES for entry in reported):
         return None
-    supported = tuple(dict.fromkeys(entry for entry in value if entry in {"text", "image"}))
-    return cast(tuple[Literal["text", "image"], ...], supported) or None
+    sent = tuple(entry for entry in _SENT_INPUT_MODALITIES if entry in reported)
+    return cast(InputModalities, sent) or None
 
 
-def props_input_modalities(props: object) -> tuple[Literal["text", "image"], ...] | None:
-    """Return the inputs a standard server's ``/props`` reports as ``modalities.vision``."""
+def props_input_modalities(props: object) -> InputModalities | None:
+    """Return the inputs that ``modalities.vision`` in a standard server's ``/props`` reports."""
     modalities = props.get("modalities") if isinstance(props, Mapping) else None
     vision = modalities.get("vision") if isinstance(modalities, Mapping) else None
     if not isinstance(vision, bool):
