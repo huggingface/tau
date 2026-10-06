@@ -181,6 +181,8 @@ def setup(tau):
 
     # read-only context
     tau.context.cwd, tau.context.model, tau.context.provider_name
+    tau.context.available_providers             # callable provider IDs
+    tau.context.available_model_choices         # ModelChoice(provider_name, model)
     tau.context.inference_provider             # current Hugging Face route, or None
     tau.context.inference_provider_mode        # "automatic" or "fixed"
     tau.context.session_id, tau.context.session_name
@@ -200,6 +202,14 @@ def setup(tau):
     await tau.context.ui.input("Title", "placeholder") # -> str | None
     tau.context.ui.notify("message", "info")           # same as tau.notify
 ```
+
+`context.available_providers` and `context.available_model_choices` expose the
+same effective runtime inventory used by Tau's model picker. Providers without
+usable credentials are omitted. Model choices include dynamic extension
+providers and runtime-refreshed, account-specific catalogs when available. Each
+choice is a frozen `ModelChoice(provider_name, model)`, so extensions can
+filter the returned IDs without accessing provider credentials or mutable
+session internals.
 
 `set_inference_provider(route)` lets provider-specific extensions select a
 Hugging Face inference-provider route for the active session. A provider name

@@ -373,6 +373,11 @@ provider/model access varies by plan and policy.
   `/model` picker. In the `/scoped-models` modal, press `Tab` to switch to a
   scoped-only view where `Enter` removes models from the list.
 
+Both pickers open from the current snapshot without waiting for provider settings
+to reload. A background refresh that omits the active model leaves its existing
+runtime working, but does not offer that model as a new selection. Even an empty
+catalog does not prevent the picker from opening when the active model is stale.
+
 Tau validates the selected model against the active provider's configured model
 list before creating or refreshing a runtime provider. This prevents accidental
 provider/model mismatches, such as trying to send an API-only OpenAI model to the

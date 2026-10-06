@@ -52,7 +52,12 @@ from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.openai_cache import is_direct_openai_url, openai_prompt_cache_key
 from tau_ai.provider import CancellationToken
-from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.retry import (
+    RETRYABLE_TRANSPORT_ERRORS,
+    provider_retry_event,
+    retry_delay_seconds,
+    wait_for_retry,
+)
 from tau_ai.stream import canonicalize_provider_stream
 from tau_ai.tool_call_ids import portable_tool_call_id
 
@@ -351,7 +356,7 @@ class OpenAICompatibleProvider:
                         for parser_event in final_events:
                             yield parser_event
                         return
-                except httpx.HTTPError as exc:
+                except RETRYABLE_TRANSPORT_ERRORS as exc:
                     if not parser.emitted_content and self._should_retry(attempt):
                         delay = retry_delay_seconds(
                             attempt,
