@@ -90,6 +90,19 @@ activity indicator and terminal tab title animate while it runs, and a
 turn-finished notification fires when it completes while the app is unfocused.
 Press `Esc` to cancel a running compaction.
 
+## Limiting a run
+
+Context compaction makes room for more work; it does not decide when to stop.
+To limit one run's token usage, estimated cost, or consecutive failed turns,
+set `runPolicies` in Tau home's `settings.json`. Limits are off by default.
+The default `steer` action asks the model to summarize and hand back unfinished
+work. Choose `cancel` to stop after the current turn without a summary.
+
+Checks occur after a turn's tools finish, so they cannot undo work or guarantee
+a strict billing ceiling. See [run policy configuration]({{< relref
+"../reference/configuration.md#run-policies" >}}) for the settings, accounting
+boundary, and retry behavior.
+
 ## Thinking modes
 
 Some models can spend extra effort reasoning before answering. Tau exposes a

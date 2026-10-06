@@ -303,12 +303,14 @@ class _ToolCallBuilder:
     def build(self, index: int) -> ToolCall:
         arguments_text = "".join(self.arguments_parts)
         arguments = _loads_object(arguments_text) if arguments_text else {}
+        malformed = arguments_text if arguments is None else None
         if arguments is None:
-            arguments = {"_raw_arguments": arguments_text}
+            arguments = {}
         return ToolCall(
             id=self.id or f"tool-call-{index}",
             name=self.name,
             arguments=arguments,
+            malformed_arguments_text=malformed,
         )
 
 
