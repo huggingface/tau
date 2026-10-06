@@ -33,7 +33,8 @@ from textual.selection import Selection
 from textual.widget import Widget
 from textual.widgets import Collapsible, Static
 from textual.widgets import Markdown as TextualMarkdown
-from textual.widgets.markdown import MarkdownBlock, MarkdownFence, MarkdownStream
+from textual.widgets._markdown import MarkdownParagraph  # not publicly re-exported
+from textual.widgets.markdown import MarkdownFence, MarkdownStream
 
 from tau_agent.tools import AgentTool, ToolCall
 from tau_coding.context_window import estimate_text_tokens
@@ -310,8 +311,12 @@ def _session_summary_fingerprint(
     )
 
 
-class TauMarkdownBlock(MarkdownBlock):
-    """Markdown block that applies Tau's themed inline link color."""
+class TauMarkdownBlock(MarkdownParagraph):
+    """Markdown paragraph that applies Tau's themed inline link color.
+
+    Subclasses ``MarkdownParagraph`` (not ``MarkdownBlock``) so paragraph
+    spacing rules that target ``MarkdownParagraph`` still apply.
+    """
 
     DEFAULT_CSS = """
     TauMarkdownBlock {
