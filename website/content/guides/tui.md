@@ -198,6 +198,15 @@ output for other tools. Compaction and grouping affect only the TUI display;
 execution, session history, and print-mode transcripts retain every complete call
 and result.
 
+Previews are lossy: a long tool result or `!` shell-command output is cut to a
+fixed number of lines and characters, and Tau appends
+`[Preview only: … hidden from the TUI.]` where the rest was dropped. Expanding with
+**Ctrl+O** renders the untruncated text instead, so debugging a `!` command (for
+example while configuring a sandbox profile) no longer needs a session export.
+To have the whole transcript start expanded, pass
+`--show-full-output` when launching `tau`. Both controls only affect display;
+session history always holds the complete output.
+
 Markdown link hover styling underlines only the linked text, never the rest of its
 row. User message blocks use the same theme background as the prompt field and sidebar,
 with light vertical padding so they read as blocks rather than highlighted lines.
