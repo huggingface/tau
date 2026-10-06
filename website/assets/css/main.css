@@ -9,9 +9,10 @@
 html, body{ margin:0; padding:0; }
 
 :root{
-  --ground:#FFFFFF;
-  --paper:#FFFFFF;
-  --paper-edge:#F6F6F6;
+  --ground:#FDFCF8;
+  --paper:#FDFCF8;
+  --paper-edge:#F4F1E8;
+  --pen:#C2402A;
   --grid:#EBEBEB;
   --grid-strong:#D4D4D4;
   --ink:#111111;
@@ -119,7 +120,7 @@ p a, .lede a, h2 a{ text-decoration:underline; text-decoration-thickness:1px; te
 body.search-open{ overflow:hidden; }
 .search-modal{
   position:fixed; inset:0; z-index:50;
-  background:rgba(255,255,255,.88);
+  background:rgba(253,252,248,.9);
   display:flex; align-items:flex-start; justify-content:center;
   padding:80px 16px;
 }
@@ -610,3 +611,17 @@ section{ padding:80px 0; border-top:var(--hair); }
   .install .copy{ padding-left:10px; font-size:13px; }
 }
 @media (max-width:520px){ .install .dollar{ display:none; } .install .copy{ font-size:12px; padding-left:8px; } }
+
+/* ---- red pen: everything "added by hand" ---- */
+.sec-head .mark, .def-label, .pr h3::before, .closing p::after,
+.eyebrow-hand, .admonition-title{ color:var(--pen); }
+.hero .eyebrow-hand{ color:var(--ink-soft); }
+.admonition{ border-left-color:var(--pen); }
+.sketch .hand.soft{ fill:var(--pen); }
+.sketch .ink path.flow{ stroke:var(--pen); }
+.sketch figcaption{ color:var(--ink-soft); }
+.hero-loop .node.on{ fill:var(--pen); stroke:var(--pen); }
+.hero-loop .ev.on{ fill:var(--pen); }
+.hero-loop .wedge{ stroke:rgba(194,64,42,.12); }
+.hero-loop .angle{ fill:var(--ink-soft); }
+::selection{ background:var(--pen); color:#fff; }

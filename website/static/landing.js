@@ -18,7 +18,7 @@
   var ctx = canvas.getContext("2d");
   var INK   = "#111111";
   var BLUE  = "#111111";
-  var RED   = "#111111";
+  var RED   = "#C2402A";
   var SOFT  = "#9A9A9A";
   var GRID  = "#E2E2E2";
   var TAU   = Math.PI * 2;
@@ -126,7 +126,7 @@
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(px, py); ctx.stroke();
 
     // --- height (sin) bar on circle ---
-    ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.lineWidth = 1.4;
+    ctx.strokeStyle = "rgba(194,64,42,.6)"; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.moveTo(px, cy); ctx.lineTo(px, py); ctx.stroke();
 
     // --- projection line linking circle point to wave point ---
