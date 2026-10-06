@@ -92,7 +92,7 @@ test("docs retain callouts, highlighting, navigation, and edit links", async () 
     assert.ok(html.includes(value), value);
   const home = await readFile(path.join(dist, "index.html"), "utf8");
   assert.ok(home.includes("https://github.com/huggingface/tau"));
-  assert.ok(home.includes("tauCanvas"));
+  assert.ok(home.includes("loopRadius"));
   const why = await readFile(path.join(dist, "why-tau/index.html"), "utf8");
   assert.ok(why.includes("MathJax"));
 });
