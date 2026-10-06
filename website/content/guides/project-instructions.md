@@ -23,7 +23,7 @@ Keep it focused — it's part of the prompt budget for every turn.
 
 Tau discovers instruction files in this order. User files are always eligible;
 project files are included only after the active cwd's [project-trust decision]
-({{< relref "./project-trust.md" >}}):
+(/guides/project-trust/):
 
 ```text
 ~/.tau/AGENTS.md
@@ -48,7 +48,6 @@ project context for future turns. Adding the first protected file to an empty
 project triggers trust resolution rather than silently inheriting the old empty
 snapshot.
 
-{{% note %}}
-Tau itself uses an `AGENTS.md` at the repo root — a real example of the format
-in practice.
-{{% /note %}}
+> [!NOTE]
+> Tau itself uses an `AGENTS.md` at the repo root — a real example of the format
+> in practice.

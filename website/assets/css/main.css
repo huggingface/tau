@@ -694,7 +694,7 @@ section{ padding:88px 0; }
   margin:0 0 8px; font-family:var(--grotesk); font-weight:600; font-size:13px;
   letter-spacing:.06em; text-transform:uppercase; color:var(--accent);
 }
-.admonition-body > *:last-child{ margin-bottom:0; }
+.admonition > *:last-child{ margin-bottom:0; }
 .admonition-tip{ border-left-color:var(--green); background:rgba(31,138,95,.07); }
 .admonition-tip .admonition-title{ color:var(--green); }
 .admonition-caution{ border-left-color:var(--red); background:rgba(214,67,91,.06); }

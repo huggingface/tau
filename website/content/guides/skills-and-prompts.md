@@ -57,19 +57,18 @@ Steps to review the current diff for security problems...
 Any supporting files (references, snippets) can live alongside `SKILL.md`
 inside the same directory.
 
-{{% tip %}}
-Bare `.md` files at the root of a skills directory (for example
-`~/.tau/skills/review.md`) are **not** loaded as skills. Tau will surface a
-diagnostic telling you to move them into their own directory:
-
-```bash
-cd ~/.tau/skills
-mkdir review && mv review.md review/SKILL.md
-```
-
-This matches the Agent Skills spec and applies uniformly across `.tau/` and
-`.agents/` locations.
-{{% /tip %}}
+> [!TIP]
+> Bare `.md` files at the root of a skills directory (for example
+> `~/.tau/skills/review.md`) are **not** loaded as skills. Tau will surface a
+> diagnostic telling you to move them into their own directory:
+>
+> ```bash
+> cd ~/.tau/skills
+> mkdir review && mv review.md review/SKILL.md
+> ```
+>
+> This matches the Agent Skills spec and applies uniformly across `.tau/` and
+> `.agents/` locations.
 
 Tau's own extension and provider workflows are packaged documentation rather
 than built-in skills. They remain available to the agent without appearing in
@@ -161,7 +160,6 @@ rename the file to load it as a custom prompt.
 - Use a **skill** when you want to give the model *reference know-how* it can
   pull in when a task calls for it, invoked with `/skill:<name>`.
 
-{{% tip %}}
-Keep personal, cross-project helpers in `~/.agents/`. Keep project-specific ones
-in the repo's `.tau/` or `.agents/` so they're shared with collaborators.
-{{% /tip %}}
+> [!TIP]
+> Keep personal, cross-project helpers in `~/.agents/`. Keep project-specific ones
+> in the repo's `.tau/` or `.agents/` so they're shared with collaborators.

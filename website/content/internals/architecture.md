@@ -22,16 +22,16 @@ above it has to care which model vendor is in use.
 ### `tau_agent` — the portable brain
 
 Owns the reusable agent core: messages, tools, events, the
-[agent loop]({{< relref "./agent-loop.md" >}}), the harness, and session primitives. This package
+[agent loop](/internals/agent-loop/), the harness, and session primitives. This package
 must **not** import CLI, Rich, Textual, or resource-loading code. That's what
 keeps it portable.
 
 ### `tau_coding` — the coding application
 
 Owns everything that makes Tau a *coding agent you run*: the CLI, the built-in
-[tools]({{< relref "../reference/tools.md" >}}), [project instructions]({{< relref "../guides/project-instructions.md" >}}),
-[skills and prompts]({{< relref "../guides/skills-and-prompts.md" >}}),
-[sessions on disk]({{< relref "../guides/sessions.md" >}}), provider configuration, and the
+[tools](/reference/tools/), [project instructions](/guides/project-instructions/),
+[skills and prompts](/guides/skills-and-prompts/),
+[sessions on disk](/guides/sessions/), provider configuration, and the
 Textual TUI.
 
 ### Local-backend boundary
@@ -43,7 +43,7 @@ progress, diagnostics, and capability values; the Textual adapter renders them
 and owns cancellation, confirmation, and idle checks. Pairing each backend with
 its exact source-owned provider layer prevents a shadowing extension from using
 or resetting another source's integration. See the [local backends
-guide]({{< relref "../guides/local-inference.md" >}}).
+guide](/guides/local-inference/).
 
 Phase 6 validates the boundary with a permanent second fake backend and a
 test-only Ollama adapter. Provider discovery and backend status may use
@@ -76,11 +76,10 @@ TUI, or a frontend you build yourself — all by consuming the same event stream
 That's also what makes Tau readable: each layer answers one question, and you can
 study it without untangling the others.
 
-→ Next: [The agent loop & events]({{< relref "./agent-loop.md" >}}) ·
-[Design principles]({{< relref "./design-principles.md" >}}) ·
-[Build your own frontend]({{< relref "./custom-frontend.md" >}})
+→ Next: [The agent loop & events](/internals/agent-loop/) ·
+[Design principles](/internals/design-principles/) ·
+[Build your own frontend](/internals/custom-frontend/)
 
-{{% note title="Going deeper" %}}
-The phase-by-phase build journals, design docs, and ADRs live in the repo under
-`dev-notes/` (not on this site). See [Contributing]({{< relref "../contributing.md" >}}).
-{{% /note %}}
+> [!NOTE] Going deeper
+> The phase-by-phase build journals, design docs, and ADRs live in the repo under
+> `dev-notes/` (not on this site). See [Contributing](/contributing/).

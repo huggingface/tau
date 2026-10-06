@@ -1,0 +1,38 @@
+---
+import { getCollection, render } from "astro:content";
+import Base from "../layouts/Base.astro";
+import Docs from "../components/Docs.astro";
+import Home from "../components/Home.astro";
+import WhyTau from "../components/WhyTau.astro";
+import Releases from "../components/Releases.astro";
+import Roadmap from "../components/Roadmap.astro";
+import { pagePath } from "../data";
+export async function getStaticPaths() {
+  return (await getCollection("docs")).map((entry) => ({
+    params: { slug: pagePath(entry.id).slice(1, -1) || undefined },
+    props: { entry },
+  }));
+}
+const { entry } = Astro.props;
+const { Content } = await render(entry);
+const isHome = entry.id === "_index";
+const file = entry.filePath?.replace(/^.*?content\//, "") ?? `${entry.id}.md`;
+---
+
+<Base {...entry.data}>
+  {
+    isHome ? (
+      <Home />
+    ) : entry.data.layout === "why-tau" ? (
+      <WhyTau />
+    ) : entry.data.layout === "releases" ? (
+      <Releases />
+    ) : entry.data.layout === "roadmap" ? (
+      <Roadmap />
+    ) : (
+      <Docs {...entry.data} file={file}>
+        <Content />
+      </Docs>
+    )
+  }
+</Base>

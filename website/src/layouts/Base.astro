@@ -1,0 +1,103 @@
+---
+import Navbar from "../components/Navbar.astro";
+import Footer from "../components/Footer.astro";
+import { site } from "../data";
+import "../../assets/css/main.css";
+interface Props {
+  title: string;
+  description?: string;
+  image?: string;
+  mathjax?: boolean;
+}
+const {
+  title,
+  description = site.description,
+  image = "/images/og-image.png",
+  mathjax,
+} = Astro.props;
+const pageTitle = Astro.url.pathname === "/" ? "Tau" : `${title} · Tau`;
+const canonical = new URL(
+  Astro.url.pathname === "/404/" ? "/404.html" : Astro.url.pathname,
+  Astro.site,
+);
+const ogImage = new URL(image, Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link
+      rel="alternate"
+      type="application/rss+xml"
+      href="/index.xml"
+      title="Tau"
+    />
+    <meta
+      property="og:type"
+      content={Astro.url.pathname === "/" ? "website" : "article"}
+    />
+    <meta property="og:site_name" content="Tau" />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={pageTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+    {
+      import.meta.env.PROD && (
+        <>
+          <script
+            is:inline
+            async
+            src="https://www.googletagmanager.com/gtag/js?id=G-3KBLC76BV0"
+          />
+          <script
+            is:inline
+            set:html="window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date()); gtag('config', 'G-3KBLC76BV0');"
+          />
+        </>
+      )
+    }
+    {
+      mathjax && (
+        <>
+          <script
+            is:inline
+            set:html={
+              'window.MathJax = { tex: { inlineMath: [["\\\\(", "\\\\)"]], displayMath: [["\\\\[", "\\\\]"]], processEscapes: true, processEnvironments: true } };'
+            }
+          />
+          <script
+            is:inline
+            src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"
+          />
+        </>
+      )
+    }
+  </head>
+  <body>
+    <Navbar />
+    <main data-pagefind-body><slot /></main>
+    <Footer />
+    <script>
+      import "../../assets/js/nav-toggle.js";
+    </script>
+    <script>
+      import "../../assets/js/copy-code.js";
+    </script>
+  </body>
+</html>

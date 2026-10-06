@@ -10,10 +10,10 @@ cover everything else.
 tau [OPTIONS] [PROMPT] [COMMAND] [ARGS]
 ```
 
-- With no arguments, `tau` opens the interactive [TUI]({{< relref "../guides/tui.md" >}}).
+- With no arguments, `tau` opens the interactive [TUI](/guides/tui/).
 - A positional `PROMPT` opens the TUI and submits it as the first turn.
 - `/local` is available in the TUI for registered local backends; print mode reports that setup is interactive-only.
-- `-p/--print` (or `--mode`) runs that same positional prompt in [print mode]({{< relref "../guides/print-mode.md" >}}) instead of the TUI.
+- `-p/--print` (or `--mode`) runs that same positional prompt in [print mode](/guides/print-mode/) instead of the TUI.
 - Put flags before the prompt — Tau treats everything after the last recognized flag as prompt text, including tokens that look like flags.
 
 On TUI and text print-mode startup, Tau may show a non-blocking notice when a
@@ -46,7 +46,7 @@ features and fixes.
 | `-p, --print` | Run the positional prompt in non-interactive print mode |
 | `-m, --model TEXT` | Model to request from the provider |
 | `--provider TEXT` | Configured provider name to use |
-| `-t, --thinking LEVEL` | Initial [thinking level]({{< relref "../guides/context.md#thinking-modes" >}}) for this run (`off`…`max`); overrides remembered defaults without persisting, errors if the model doesn't support it |
+| `-t, --thinking LEVEL` | Initial [thinking level](/guides/context/#thinking-modes) for this run (`off`…`max`); overrides remembered defaults without persisting, errors if the model doesn't support it |
 | `--cwd PATH` | Working directory for the built-in tools |
 | `--mode [text\|json\|transcript\|rpc]` | Select headless output; `rpc` starts the JSONL subprocess protocol |
 | `--session TEXT` | Resume a session id in the TUI or print mode |
@@ -55,7 +55,7 @@ features and fixes.
 | `--system-prompt TEXT_OR_PATH` | Replace Tau's default system-prompt base with literal text or an existing UTF-8 file |
 | `--append-system-prompt TEXT_OR_PATH` | Append literal text or an existing UTF-8 file (repeatable) |
 | `--auto-compact-threshold INT` | Auto-compact above this rough token estimate |
-| `-e, --extension PATH` | Load an [extension]({{< relref "../guides/extensions.md" >}}) file or directory (repeatable) |
+| `-e, --extension PATH` | Load an [extension](/guides/extensions/) file or directory (repeatable) |
 | `--no-extensions` | Disable extension directory discovery (explicit `-e` paths still load) |
 | `--project-extensions` | Also load trusted `<project>/.tau/extensions`; project trust and this code opt-in are both required |
 | `-a, --approve` | Trust protected project inputs for this invocation only |
@@ -64,11 +64,11 @@ features and fixes.
 
 `tau install` accepts local Python files, local package directories, Pi-style
 `git:github.com/owner/repository[@ref]` sources, and normal HTTP/SSH Git URLs.
-See [Extensions]({{< relref "../guides/extensions.md#install-an-extension" >}})
+See [Extensions](/guides/extensions/#install-an-extension)
 for package-layout, dependency, and security details.
 
 `--approve` and `--no-approve` are mutually exclusive and never write the
-trust store. See [Project trust]({{< relref "../guides/project-trust.md" >}})
+trust store. See [Project trust](/guides/project-trust/)
 for interactive scopes, headless defaults, protected resources, and the
 non-sandbox boundary.
 
@@ -105,7 +105,7 @@ Tau also discovers `SYSTEM.md` and `APPEND_SYSTEM.md` under the project or user
 trusted project `APPEND_SYSTEM.md`, then repeated CLI values. Use `/reload` after
 changing a file. These are Tau-specific configuration files, not `.agents`
 resources. See
-[Configuration & files]({{< relref "./configuration.md#system-prompt-files" >}})
+[Configuration & files](/reference/configuration/#system-prompt-files)
 for paths, precedence, diagnostics, and the project-resource security warning.
 
 ### Resume in print mode
@@ -161,5 +161,5 @@ tau --provider local \
   setup
 ```
 
-See also: [RPC protocol]({{< relref "./rpc.md" >}}), [Slash commands]({{< relref "./slash-commands.md" >}}) (in-session), and
-[Keyboard shortcuts]({{< relref "./keybindings.md" >}}).
+See also: [RPC protocol](/reference/rpc/), [Slash commands](/reference/slash-commands/) (in-session), and
+[Keyboard shortcuts](/reference/keybindings/).

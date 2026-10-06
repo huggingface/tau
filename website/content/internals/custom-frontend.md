@@ -3,11 +3,10 @@ title: Build your own frontend
 description: Advanced — drive Tau's coding session from your own UI by consuming its event stream.
 ---
 
-{{% caution title="Advanced" %}}
-This page is for building a *new frontend* on top of Tau's core. If you just want
-to use Tau, see [The interactive session]({{< relref "../guides/tui.md" >}}). The APIs here are
-Python and assume you've read the [architecture overview]({{< relref "./architecture.md" >}}).
-{{% /caution %}}
+> [!CAUTION] Advanced
+> This page is for building a *new frontend* on top of Tau's core. If you just want
+> to use Tau, see [The interactive session](/guides/tui/). The APIs here are
+> Python and assume you've read the [architecture overview](/internals/architecture/).
 
 Tau's Textual app is one frontend, not the architecture. A custom UI plugs into
 the same primitives the built-in TUI uses:
@@ -36,7 +35,7 @@ async for event in session.prompt(user_text):
 
 The stream yields provider-neutral `CodingSessionEvent` values: portable
 `AgentEvent` values from `tau_agent.events` plus session-level values from
-`tau_coding.events` (see [the agent loop]({{< relref "./agent-loop.md" >}})).
+`tau_coding.events` (see [the agent loop](/internals/agent-loop/)).
 Render from these, never from provider-specific chunks. Use `agent_start` to
 enter the running state and `agent_settled`—not merely `agent_end`—to leave it,
 because automatic compaction, retry, or queued continuation may follow an
@@ -106,7 +105,6 @@ chunks, Textual internals, or the raw JSONL structure (use `SessionManager` /
 `CodingSession`). Stick to the event, message, tool, harness, and session
 primitives.
 
-{{% note %}}
-The full per-phase build journals for these systems live in the repo under
-`dev-notes/` (see [Contributing]({{< relref "../contributing.md" >}})).
-{{% /note %}}
+> [!NOTE]
+> The full per-phase build journals for these systems live in the repo under
+> `dev-notes/` (see [Contributing](/contributing/)).

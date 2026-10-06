@@ -20,7 +20,7 @@ Themes are discovered at startup; restart Tau after adding or editing a file.
 Invalid theme files are skipped with a startup notice — they never prevent Tau
 from starting. Select a theme with `/theme <name>`, the `/theme` picker, or
 Textual's command palette. The selection is persisted in `~/.tau/tui.json` —
-see [Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
+see [Configuration](/reference/configuration/#tui-settings).
 
 ## Theme format
 

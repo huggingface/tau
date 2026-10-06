@@ -107,8 +107,7 @@ Use the optional key in one of these ways:
 
 A stored key wins over `LLAMA_API_KEY`. Without a key Tau sends no
 `Authorization` header. Keys never enter the llama.cpp state file, sessions,
-exports, or diagnostics. See [Project trust and security]({{< relref
-"./project-trust.md#security-boundary" >}}).
+exports, or diagnostics. See [Project trust and security](/guides/project-trust/#security-boundary).
 
 ## Choose a model
 
@@ -262,8 +261,7 @@ are not shipped Tau backends.
 Tau never copies old fake keys, fake model IDs, catalog definitions, project
 settings, or environment endpoints into built-in state. Reset removes only
 built-in settings and safe snapshots; it never stops a server or deletes model
-files. For other OpenAI-compatible endpoints, keep using [`/login custom`]({{<
-relref "../guides/providers-and-models.md#adding-a-custom--local-provider" >}})
+files. For other OpenAI-compatible endpoints, keep using [`/login custom`](/guides/providers-and-models/#adding-a-custom--local-provider)
 or `tau setup`.
 
 Router management never changes the safety boundary: all mutations are explicit,

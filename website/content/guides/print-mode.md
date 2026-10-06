@@ -115,7 +115,6 @@ if tau --mode text -p "do the tests pass? answer yes or no" | grep -qi yes; then
 fi
 ```
 
-{{% tip %}}
-For interactive work, start the [TUI]({{< relref "./tui.md" >}}) instead — you get streaming,
-steering, pickers, and session branching.
-{{% /tip %}}
+> [!TIP]
+> For interactive work, start the [TUI](/guides/tui/) instead — you get streaming,
+> steering, pickers, and session branching.

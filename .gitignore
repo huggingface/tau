@@ -10,10 +10,12 @@ wheels/
 # Virtual environments
 .venv
 
-# Hugo docs site (website/)
+# Website build output and dependencies
 website/public/
 website/resources/
-website/.hugo_build.lock
+website/node_modules/
+website/dist/
+website/.astro/
 
 # System files
 .DS_Store

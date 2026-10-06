@@ -10,14 +10,14 @@ approachable as it grows.
 
 Each package has one job: `tau_ai` streams models, `tau_agent` runs the loop,
 `tau_coding` is the application. You can read and test any layer on its own
-without understanding the others. → [Architecture]({{< relref "./architecture.md" >}})
+without understanding the others. → [Architecture](/internals/architecture/)
 
 ## Events are the contract
 
 The agent communicates progress through a stream of provider-neutral events.
 Frontends render from those events, never from provider-specific chunks or
 internal control flow. This is what lets print mode, the TUI, and custom
-frontends share one core. → [The agent loop & events]({{< relref "./agent-loop.md" >}})
+frontends share one core. → [The agent loop & events](/internals/agent-loop/)
 
 ## The core stays portable
 
@@ -29,14 +29,14 @@ core from outside. The reusable brain never reaches up into a UI.
 
 A tool is a name, a description, a JSON input schema, and an async executor that
 returns a structured result. There's no framework magic — which makes tools easy
-to read, test, and add. → [Built-in tools]({{< relref "../reference/tools.md" >}})
+to read, test, and add. → [Built-in tools](/reference/tools/)
 
 ## Sessions are durable and inspectable
 
 Every conversation is an append-only JSONL transcript on disk. History is a tree
 you can resume and branch; compaction changes the *active* context without
 rewriting the record. The format is plain enough to read by hand.
-→ [Sessions]({{< relref "../guides/sessions.md" >}})
+→ [Sessions](/guides/sessions/)
 
 ## Small product divergences are explicit
 
@@ -52,4 +52,4 @@ agent-loop behavior.
 
 Tau was built in small, documented phases so a reader can trace how the system
 grew. Those phase notes live in the repo under `dev-notes/` (see
-[Contributing]({{< relref "../contributing.md" >}})); these pages distill the result.
+[Contributing](/contributing/)); these pages distill the result.

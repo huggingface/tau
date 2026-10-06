@@ -240,14 +240,17 @@ uv run tau
 uv run tau -p "explain this repo"
 ```
 
-Run the Hugo documentation site:
+Run the Astro documentation site (Node 22.12+):
 
 ```bash
 cd website
-hugo server -D
+npm ci
+npm run dev
 ```
 
-Open <http://localhost:1313/>. Build with `hugo --minify`.
+Open <http://localhost:4321/>. Build with `npm run build`, then
+`npm run preview` to test Pagefind search. Run `npm run check`,
+`npm run format:check`, and `npm test` (after building) for website checks.
 
 ## Documentation
 

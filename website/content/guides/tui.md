@@ -5,7 +5,7 @@ description: Get fluent in Tau's terminal UI — prompting, steering, the comman
 
 Running `tau` with no arguments opens the interactive terminal UI (TUI). This is
 where most work happens. This guide covers the moving parts; for the exact keys
-see [Keyboard shortcuts]({{< relref "../reference/keybindings.md" >}}).
+see [Keyboard shortcuts](/reference/keybindings/).
 
 ## Sending a prompt
 
@@ -14,7 +14,7 @@ keeps its padded block size and background, while a single left border changes
 color to reflect focus, shell mode, and active runs without boxing it in.
 **Shift+Enter** inserts a newline for multi-line prompts. If your terminal cannot
 distinguish it from Enter, remap `insert_newline` in `~/.tau/tui.json`; see
-[Keyboard shortcuts]({{< relref "../reference/keybindings.md#prompting" >}}). Tau streams the
+[Keyboard shortcuts](/reference/keybindings/#prompting). Tau streams the
 assistant's reply above the prompt, showing tool calls as they run. When OpenAI
 returns several reasoning-summary parts, Tau keeps them as separate Markdown
 paragraphs rather than joining their headings together. In supported terminal
@@ -27,7 +27,7 @@ terminals are left untouched. Set `turn_notification` to `"bell"` to let the
 terminal mark the tab or apply its configured bell behavior instead, or `"off"`
 to disable notifications. BEL and operating-system desktop notifications may
 produce sounds according to the user's terminal and system settings; see
-[Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
+[Configuration](/reference/configuration/#tui-settings).
 
 Chat Completions providers can interleave reasoning and answer fragments (for
 example, DeepSeek through Hugging Face). Tau keeps each channel in one continuous
@@ -78,7 +78,7 @@ When slash-command autocomplete is open, **Enter** applies the highlighted
 suggestion without submitting it; use the arrow keys first to choose a different
 suggestion. **Tab** also applies the highlighted suggestion.
 
-The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}). For local inference, see the [local backends guide]({{< relref "./local-inference.md" >}}).
+The full list is in the [Slash commands reference](/reference/slash-commands/). For local inference, see the [local backends guide](/guides/local-inference/).
 
 ### Local backends
 
@@ -103,8 +103,7 @@ server-side download instead continues in llama.cpp when `/local` closes.
 Cached model snapshots remain visible as stale during server downtime.
 State-changing actions require an idle agent. Reset does not stop llama.cpp or
 delete model files; credential deletion is separately confirmed. For explicit
-startup and troubleshooting, see the [local inference guide]({{< relref
-"./local-inference.md" >}}).
+startup and troubleshooting, see the [local inference guide](/guides/local-inference/).
 
 ## Running shell commands directly
 
@@ -125,12 +124,11 @@ execute a shell command instead of messaging the model.
 While typing a path after `!`/`!!`, press **Tab** to complete filenames from the
 working directory. Dot-prefixed paths such as `.env` and `.agents/` are included.
 
-{{% note title="Aliases" %}}
-These commands (and the agent's `bash` tool) run in a non-interactive shell, so
-your `~/.zshrc`/`~/.bashrc` aliases aren't loaded automatically. To use your own
-aliases, set a `shellCommandPrefix` — see
-[Shell settings]({{< relref "../reference/configuration.md#shell-settings" >}}).
-{{% /note %}}
+> [!NOTE] Aliases
+> These commands (and the agent's `bash` tool) run in a non-interactive shell, so
+> your `~/.zshrc`/`~/.bashrc` aliases aren't loaded automatically. To use your own
+> aliases, set a `shellCommandPrefix` — see
+> [Shell settings](/reference/configuration/#shell-settings).
 
 ## Referencing files with `@`
 
@@ -241,7 +239,7 @@ when you want to reduce what is sent to the model.
   `tau-dark`, the aqua selection color is also the global accent used for
   headings, prompt activity, and other emphasized UI. `tau-light` uses a deep
   teal accent for headings and list markers against its white background. See
-  [Themes]({{< relref "./themes.md" >}}).
+  [Themes](/guides/themes/).
 
 ## The sidebar
 
@@ -332,7 +330,7 @@ branch, and provider use the quieter metadata color.
 
 The sidebar appears on the **right** by default. It can be moved to the **left**
 or turned **off** entirely by setting `sidebar_position` in `~/.tau/tui.json` —
-see [Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
+see [Configuration](/reference/configuration/#tui-settings).
 Use `/sidebar` to toggle visibility during a session. This is temporary: it
 preserves a configured left/right position, does not change `tui.json`, and is
 forgotten when Tau restarts. A configured `off` sidebar can be shown temporarily
@@ -355,6 +353,6 @@ compatibility default.
 
 ## Next
 
-- [Sessions]({{< relref "./sessions.md" >}}) — resume, branch, rename, export.
-- [Providers & models]({{< relref "./providers-and-models.md" >}}) — switch and add models.
-- [Managing context]({{< relref "./context.md" >}}) — compaction and thinking modes.
+- [Sessions](/guides/sessions/) — resume, branch, rename, export.
+- [Providers & models](/guides/providers-and-models/) — switch and add models.
+- [Managing context](/guides/context/) — compaction and thinking modes.

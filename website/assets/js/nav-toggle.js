@@ -38,7 +38,7 @@ document.addEventListener("DOMContentLoaded", function () {
       // in local dev. Run `hugo --minify && npx pagefind@latest --site public
       // && npx serve public` to test search for real.
       searchBox.innerHTML =
-        '<p class="search-unavailable">Search index not built. Run <code>hugo --minify &amp;&amp; npx pagefind@latest --site public</code>, then serve <code>public/</code>, to test search locally.</p>';
+        '<p class="search-unavailable">Search index not built. Run <code>npm run build &amp;&amp; npm run preview</code>, serve <code>dist/</code>, to test search locally.</p>';
       unavailableNoticeShown = true;
     } else if (initialized) {
       requestAnimationFrame(focusInput);

@@ -26,22 +26,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Hugo
-        uses: peaceiris/actions-hugo@2752ce1d29631191ea3f27c23495fa06139a5b78 # v3.2.1
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          hugo-version: "0.152.2"
-          extended: true
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
 
-      - name: Build documentation
-        run: hugo --minify
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Build search index
-        run: npx --yes pagefind@latest --site public
+      - name: Check types and formatting
+        run: npm run check && npm run format:check
+
+      - name: Build documentation and search index
+        run: npm run build
+
+      - name: Test website
+        run: npm test
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: website/public
+          path: website/dist
 
   deploy:
     permissions:

@@ -10,11 +10,10 @@ ships four built-in coding tools: `read`, `write`, `edit`, and `bash`.
 All paths are resolved against the session's working directory (`--cwd`, or the
 directory you launched Tau from).
 
-{{% note %}}
-This page documents tool *behavior* — what the model can do on your machine. To
-build a frontend or register your own tools, see
-[Building a custom frontend]({{< relref "../internals/custom-frontend.md" >}}).
-{{% /note %}}
+> [!NOTE]
+> This page documents tool *behavior* — what the model can do on your machine. To
+> build a frontend or register your own tools, see
+> [Building a custom frontend](/internals/custom-frontend/).
 
 ## `read`
 

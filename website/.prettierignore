@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.astro/
+public/
+resources/
+content/
+assets/
+static/
+data/
+package-lock.json
