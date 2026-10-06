@@ -1,104 +1,177 @@
 ---
 import { site } from "../data";
+const toolCode = `from tau_agent.messages import TextContent
+from tau_agent.tools import AgentTool, AgentToolResult
+
+
+async def _run_hello(tool_call_id, arguments,
+                     signal=None, on_update=None):
+    who = str(arguments.get("who", "world"))
+    return AgentToolResult(
+        content=[TextContent(text=f"Hello, {who}!")])
+
+
+def setup(tau):
+    tau.register_tool(AgentTool(
+        name="hello",
+        label="hello",
+        description="Greet someone by name.",
+        parameters={
+            "type": "object",
+            "properties": {"who": {"type": "string"}},
+        },
+        execute_fn=_run_hello,
+    ))`;
+
+const frontendCode = `async for event in session.prompt(text):
+    match event.type:
+        case "message_update":
+            e = event.assistant_message_event
+            if e.type == "text_delta":
+                print(e.delta, end="")
+        case "tool_execution_start":
+            print(f"\\n→ {event.tool_name}({event.args})")
+        case "tool_execution_end":
+            print("  ✗" if event.is_error else "  ✓")
+        case "agent_settled":
+            break`;
 ---
 
 <div class="wrap">
   <header class="hero">
     <div class="hero-grid">
       <div>
-        <p class="eyebrow-hand">An educational coding-agent project</p>
+        <p class="eyebrow-hand">
+          An open-source coding agent, written to be read
+        </p>
         <h1 class="hero-title-original">
-          Learn how coding agents are <em>built.</em>
+          A coding agent you can <em>read in an afternoon.</em>
         </h1>
         <p class="lede">
-          <strong>Tau</strong> is a small Python coding agent you read like a textbook.
-          Watch it stream model output, call tools, manage sessions, and grow into
-          a terminal UI &mdash; one readable layer at a time.
+          <strong>Tau</strong> is a small, working coding agent in Python. It talks
+          to a model, reads and edits your files, and runs shell commands from your
+          terminal &mdash; with no framework hiding how any of it works.
         </p>
         <p class="lede small-lede">
-          No hidden machinery. Every moving part is on the page.
+          Use it as a tool. Read it as a textbook. Fork it as a starting point.
         </p>
-        <div class="cta-row">
-          <span class="install">
-            <span
-              ><span class="dollar">$</span> curl -LsSf https://twotimespi.dev/install.sh
-              | sh</span
-            >
-            <button
-              class="copy"
-              id="copyBtn"
-              type="button"
-              aria-label="Copy install command">copy</button
-            >
-          </span>
-          <a class="ghost" href="/internals/architecture/"
-            >Start with the architecture <span class="arr">&rarr;</span></a
-          >
-          <a class="ghost" href={site.discordUrl} target="_blank" rel="noopener"
-            >Join the Discord community <span class="arr">&rarr;</span></a
-          >
-        </div>
-        <div class="star-cta">
-          <a
-            class="star-cta-link"
-            href={site.githubUrl}
-            target="_blank"
-            rel="noopener"
-          >
-            <svg
-              class="gh-icon"
-              viewBox="0 0 16 16"
-              width="15"
-              height="15"
-              aria-hidden="true"
-              ><path
-                fill="currentColor"
-                fill-rule="evenodd"
-                clip-rule="evenodd"
-                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
-              ></path></svg
-            >
-            <span>Star Tau on GitHub</span>
-            <svg
-              class="star-icon"
-              viewBox="0 0 16 16"
-              width="13"
-              height="13"
-              aria-hidden="true"
-              ><path
-                fill="currentColor"
-                d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.79L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.192L.818 6.375a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"
-              ></path></svg
-            >
-          </a>
-        </div>
       </div>
 
-      <figure class="figure">
-        <span class="figlabel">&#952; sweeps 0 &rarr; &#964;</span>
-        <canvas
-          id="tauCanvas"
-          width="520"
-          height="380"
-          role="img"
-          aria-label="A radius sweeping a unit circle through one full turn, tracing one period of a sine wave on notebook paper."
-        ></canvas>
-        <span class="figval" id="thetaVal">&#952; = 0.00</span>
+      <figure
+        class="sketch hero-loop"
+        aria-label="One turn of the agent loop: prompt, model, tool, result, mapped onto a circle from 0 to tau"
+      >
+        <svg viewBox="-55 0 630 490" role="img">
+          <circle
+            id="loopWedge"
+            class="wedge"
+            cx="260"
+            cy="240"
+            r="24"
+            transform="translate(260 240) scale(1 -1) translate(-260 -240)"
+          ></circle>
+          <g class="ink" filter="url(#rough)">
+            <path
+              d="M434.3 224.3 A 175 175 0 0 0 282.7 66.5"
+              marker-end="url(#ah)"></path>
+            <path
+              d="M244.3 65.7 A 175 175 0 0 0 86.5 217.3"
+              marker-end="url(#ah)"></path>
+            <path
+              d="M85.7 255.7 A 175 175 0 0 0 237.3 413.5"
+              marker-end="url(#ah)"></path>
+            <path
+              d="M275.7 414.3 A 175 175 0 0 0 433.5 262.7"
+              marker-end="url(#ah)"></path>
+            <text x="450" y="246" class="hand big start" data-step="0"
+              >prompt</text
+            >
+            <text x="260" y="30" class="hand big" data-step="1">model</text>
+            <text x="70" y="246" class="hand big end" data-step="2">tool</text>
+            <text x="260" y="452" class="hand big" data-step="3">result</text>
+          </g>
+          <line
+            id="loopRadius"
+            class="radius"
+            x1="260"
+            y1="240"
+            x2="435"
+            y2="240"></line>
+          <circle class="hub" cx="260" cy="240" r="3"></circle>
+          <circle class="node" data-step="0" cx="435.0" cy="240.0" r="6"
+          ></circle>
+          <text x="450" y="270" class="code sm ev start" data-step="0"
+            >agent_start</text
+          >
+          <circle class="node" data-step="1" cx="260.0" cy="65.0" r="6"
+          ></circle>
+          <text x="260" y="52" class="code sm ev" data-step="1">text_delta</text
+          >
+          <circle class="node" data-step="2" cx="85.0" cy="240.0" r="6"
+          ></circle>
+          <text x="70" y="270" class="code sm ev end" data-step="2"
+            >tool_call</text
+          >
+          <circle class="node" data-step="3" cx="260.0" cy="415.0" r="6"
+          ></circle>
+          <text x="260" y="474" class="code sm ev" data-step="3"
+            >tool_execution_end</text
+          >
+          <text x="420" y="232" class="angle" text-anchor="end">0</text>
+          <text x="274" y="92" class="angle" text-anchor="start">τ/4</text>
+          <text x="100" y="232" class="angle" text-anchor="start">τ/2</text>
+          <text x="274" y="400" class="angle" text-anchor="start">3τ/4</text>
+          <text id="loopTheta" x="570" y="486" class="code sm end"
+            >θ = 0.00</text
+          >
+        </svg>
+        <figcaption>Fig. 1 &mdash; one turn of the loop is &tau;</figcaption>
       </figure>
     </div>
 
-    <div class="strip arch-strip">
-      <div class="cellitem">
-        <span class="num">learn</span><span class="cap">agent architecture</span
+    <div class="hero-install">
+      <div class="install-tabs" role="tablist" aria-label="Install method">
+        <button
+          type="button"
+          role="tab"
+          aria-selected="true"
+          data-cmd="curl -LsSf https://twotimespi.dev/install.sh | sh"
+          >macOS &middot; Linux</button
+        >
+        <button
+          type="button"
+          role="tab"
+          aria-selected="false"
+          data-cmd="irm https://twotimespi.dev/install.ps1 | iex"
+          >Windows</button
+        >
+        <button
+          type="button"
+          role="tab"
+          aria-selected="false"
+          data-cmd="uv tool install tau-ai">uv</button
         >
       </div>
-      <div class="cellitem">
-        <span class="num">read</span><span class="cap">small Python layers</span
+      <span class="install">
+        <span
+          ><span class="dollar">$</span>{" "}
+          <span id="installCmd"
+            >curl -LsSf https://twotimespi.dev/install.sh | sh</span
+          ></span
         >
-      </div>
-      <div class="cellitem">
-        <span class="num">run</span><span class="cap"
-          >a real terminal agent</span
+        <button
+          class="copy"
+          id="copyHero"
+          type="button"
+          aria-label="Copy install command">copy</button
+        >
+      </span>
+      <div class="cta-row">
+        <a class="ghost" href="/quickstart/"
+          >Quickstart <span class="arr">&rarr;</span></a
+        >
+        <a class="ghost" href="#syllabus"
+          >The syllabus <span class="arr">&rarr;</span></a
         >
       </div>
     </div>
@@ -108,214 +181,595 @@ import { site } from "../data";
 <div class="wrap">
   <section id="start">
     <div class="sec-head">
-      <span class="mark">01</span>
-      <div>
-        <p class="eyebrow-hand">3-layers</p>
-        <h2>A coding agent as a curriculum</h2>
-      </div>
+      <span class="mark">1</span>
+      <h2>An agent is a loop</h2>
     </div>
-    <div class="layers">
-      <div class="layer">
-        <span class="idx">&#8544;</span>
-        <span class="pkg">tau_ai</span>
-        <h3>Models become streams</h3>
-        <p>
-          Provider adapters turn model responses into provider-neutral events
-          the rest of the agent consumes.
-        </p>
-      </div>
-      <div class="layer">
-        <span class="idx">&#8545;</span>
-        <span class="pkg">tau_agent</span>
-        <h3>The agent loop</h3>
-        <p>
-          The reusable harness: messages, tools, transcript state, cancellation,
-          queued prompts, sessions.
-        </p>
-      </div>
-      <div class="layer">
-        <span class="idx">&#8546;</span>
-        <span class="pkg">tau_coding</span>
-        <h3>It becomes useful</h3>
-        <p>
-          The coding environment: files, shell, durable sessions, skills, slash
-          commands, and a Textual TUI.
-        </p>
-      </div>
-    </div>
-  </section>
-
-  <section>
     <div class="two">
       <div>
-        <p class="eyebrow-hand">no black boxes</p>
-        <h2>Every moving part is visible.</h2>
+        <p class="definition">
+          <span class="def-label">Definition 1.1</span>
+          A <em>coding agent</em> is a language model run in a loop, where each reply
+          may ask for a tool &mdash; read a file, edit it, run a command &mdash; and
+          each tool result is fed back as the next input. The loop stops when the
+          model answers without asking for anything.
+        </p>
         <p>
-          Tau answers the questions tutorials skip: What <em>is</em> an agent loop?
-          Where do tool calls come from? How does the transcript grow? How do sessions
-          survive the process exiting?
+          That's the whole idea. Everything else in Tau &mdash; sessions,
+          skills, the terminal UI &mdash; is built around this loop, not inside
+          it.
+        </p>
+        <p>
+          <a class="ghost" href="/internals/agent-loop/"
+            >Read the loop <span class="arr">&rarr;</span></a
+          >
         </p>
       </div>
-      <div class="event-flow" aria-label="Tau event flow">
-        <div class="flow-node">
-          <span>model stream</span><small
-            >tokens, tool requests, thinking deltas</small
+      <figure class="sketch" aria-label="Diagram of the agent loop">
+        <svg viewBox="0 0 520 420" role="img">
+          <defs>
+            <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.03"
+                numOctaves="2"
+                seed="7"></feTurbulence>
+              <feDisplacementMap in="SourceGraphic" scale="3.2"
+              ></feDisplacementMap>
+            </filter>
+            <marker
+              id="ah"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="9"
+              markerHeight="9"
+              orient="auto-start-reverse"
+            >
+              <path
+                d="M1 1 L9 5 L1 9"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"></path>
+            </marker>
+          </defs>
+          <g class="ink" filter="url(#rough)">
+            <!-- prompt -> model -->
+            <text x="300" y="26" class="hand">your prompt</text>
+            <path d="M300 34 C 302 46, 298 54, 300 66" marker-end="url(#ah)"
+            ></path>
+            <!-- model -->
+            <path d="M222 72 L 380 70 L 382 124 L 220 126 Z"></path>
+            <text x="300" y="106" class="hand big">model</text>
+            <text x="312" y="152" class="hand soft start">streams events</text>
+            <!-- model -> diamond -->
+            <path d="M301 128 C 299 142, 302 152, 300 164" marker-end="url(#ah)"
+            ></path>
+            <!-- diamond -->
+            <path d="M300 168 L 372 212 L 300 256 L 228 212 Z"></path>
+            <text x="300" y="218" class="hand">tool calls?</text>
+            <!-- no -> answer -->
+            <path d="M374 212 C 400 210, 420 214, 440 212" marker-end="url(#ah)"
+            ></path>
+            <text x="404" y="200" class="hand soft">no</text>
+            <text x="482" y="218" class="hand big">answer</text>
+            <path d="M448 232 C 470 236, 496 234, 514 230"></path>
+            <!-- yes -> tools -->
+            <path d="M300 258 C 302 272, 298 284, 300 296" marker-end="url(#ah)"
+            ></path>
+            <text x="312" y="284" class="hand soft start">yes</text>
+            <!-- tools -->
+            <path d="M220 300 L 382 302 L 380 356 L 222 354 Z"></path>
+            <text x="300" y="334" class="hand big">run tools</text>
+            <text x="300" y="384" class="hand soft">read · edit · bash</text>
+            <!-- loop back -->
+            <path
+              d="M218 328 C 120 332, 92 300, 94 210 C 96 120, 130 96, 216 98"
+              marker-end="url(#ah)"></path>
+            <text x="70" y="206" class="hand" transform="rotate(-90 70 206)"
+              >append result</text
+            >
+          </g>
+          <text x="300" y="412" class="hand soft"
+            >repeat until the model stops asking.</text
           >
-        </div>
-        <div class="flow-arrow">&darr;</div>
-        <div class="flow-node">
-          <span>event stream</span><small>the contract between layers</small>
-        </div>
-        <div class="flow-arrow">&darr;</div>
-        <div class="flow-node">
-          <span>agent loop</span><small
-            >decide, call tools, update transcript</small
-          >
-        </div>
-        <div class="flow-arrow">&darr;</div>
-        <div class="flow-split">
-          <div class="flow-node">
-            <span>session</span><small>inspectable JSONL history</small>
-          </div>
-          <div class="flow-node">
-            <span>frontend</span><small>print, Rich, or TUI</small>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <div class="two boundary-two">
-      <div>
-        <p class="eyebrow-hand">the boundary</p>
-        <h2>Separate the brain, the environment, and the face.</h2>
-        <p>
-          The whole lesson is the boundary. A reusable harness must not depend
-          on the terminal, file paths, or Rich rendering. Those wrap the harness
-          &mdash; they never live inside it.
-        </p>
-      </div>
-      <div class="terminal" aria-hidden="true">
-        <div class="bar">
-          <span></span><span></span><span></span><span class="t"
-            >tau &mdash; design split</span
-          >
-        </div>
-        <pre><span class="key">AgentHarness</span> = reusable agent brain
-<span class="key">AgentSession</span> = coding-agent environment
-<span class="key">TUI</span>          = one possible frontend
-
-<span class="out">dependency direction</span>
-<span class="cmd">tau_coding</span> &rarr; <span class="cmd">tau_agent</span> &rarr; <span class="cmd">tau_ai</span></pre>
-      </div>
+        </svg>
+        <figcaption>Fig. 2 &mdash; the agent loop</figcaption>
+      </figure>
     </div>
   </section>
 
   <section>
     <div class="sec-head">
-      <span class="mark">02</span>
-      <div>
-        <p class="eyebrow-hand">the skills</p>
-        <h2>What you can learn from Tau</h2>
-      </div>
+      <span class="mark">2</span>
+      <h2>Three layers, nested</h2>
     </div>
-    <div class="capabilities">
-      <div>Provider-neutral streaming interfaces</div>
-      <div>Agent loops that request and execute tools</div>
-      <div>Typed local tools for read, write, edit, and bash</div>
-      <div>Durable sessions under <code>~/.tau/sessions</code></div>
-      <div>Session resume, branching, JSONL export, and HTML export</div>
-      <div>Project instructions, skills, and prompt templates</div>
-      <div>Slash commands and model/provider selection</div>
-      <div>Context accounting, compaction, and thinking controls</div>
-      <div>How to keep Textual behind a UI adapter boundary</div>
+    <p class="sec-intro">
+      Tau is three Python packages, nested like boxes. Each one controls its own
+      job and only uses what's inside it &mdash; so you can learn, or replace,
+      them one at a time.
+    </p>
+    <figure
+      class="sketch"
+      aria-label="Diagram of Tau's three nested layers and what each controls"
+    >
+      <svg viewBox="0 0 960 530" role="img">
+        <g class="ink" filter="url(#rough)">
+          <!-- you -> app -->
+          <text x="44" y="250" class="hand big">you</text>
+          <path d="M44 262 C 58 266, 72 262, 88 264" marker-end="url(#ah)"
+          ></path>
+
+          <!-- tau_coding -->
+          <path d="M92 40 L 930 43 L 927 442 L 94 439 Z"></path>
+          <text x="112" y="78" class="hand big start">tau_coding</text>
+          <text x="248" y="78" class="hand soft start"
+            >the app &mdash; touches your machine</text
+          >
+          <text x="690" y="150" class="hand start"
+            >· reads &amp; edits files</text
+          >
+          <text x="690" y="190" class="hand start">· runs shell commands</text>
+          <text x="690" y="230" class="hand start"
+            >· saves sessions to disk</text
+          >
+          <text x="690" y="270" class="hand start"
+            >· skills &amp; slash commands</text
+          >
+          <text x="690" y="310" class="hand start">· the terminal UI</text>
+
+          <!-- tau_agent -->
+          <path d="M132 102 L 662 100 L 660 404 L 134 402 Z"></path>
+          <text x="152" y="138" class="hand big start">tau_agent</text>
+          <text x="282" y="138" class="hand soft start"
+            >the loop &mdash; pure logic</text
+          >
+          <text x="462" y="200" class="hand start">· the transcript</text>
+          <text x="462" y="240" class="hand start"
+            >· tool calls &amp; results</text
+          >
+          <text x="462" y="280" class="hand start">· cancellation</text>
+          <text x="462" y="320" class="hand start">· queued prompts</text>
+
+          <!-- tau_ai -->
+          <path d="M172 164 L 432 166 L 430 366 L 174 363 Z"></path>
+          <text x="190" y="200" class="hand big start">tau_ai</text>
+          <text x="276" y="200" class="hand soft start">the model</text>
+          <text x="196" y="250" class="hand start">· provider adapters</text>
+          <text x="196" y="290" class="hand start">· token streaming</text>
+          <text x="196" y="330" class="hand start">· one event format</text>
+
+          <!-- tau_ai -> model APIs -->
+          <path d="M302 368 C 300 400, 304 440, 302 478" marker-end="url(#ah)"
+          ></path>
+          <text x="318" y="470" class="hand soft start"
+            >the only way out to a model</text
+          >
+          <text x="302" y="512" class="hand big">model APIs</text>
+          <text x="410" y="512" class="hand soft start"
+            >OpenAI · Anthropic · local</text
+          >
+        </g>
+        <text x="926" y="476" class="hand soft end"
+          >each box only imports what&rsquo;s inside it.</text
+        >
+      </svg>
+      <figcaption>Fig. 3 &mdash; what each layer controls</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="mark">3</span>
+      <h2>Everything is an event</h2>
+    </div>
+    <p class="sec-intro">
+      The agent doesn't print, draw, or save anything itself. Each layer emits
+      small, typed events, and the layer above turns them into its own. Whoever
+      listens at the top &mdash; a one-shot CLI, the terminal UI, your own
+      frontend, or a JSONL session file &mdash; decides what to do with them.
+    </p>
+    <figure
+      class="sketch events-sketch"
+      aria-label="Events emitted by each layer during one short run"
+    >
+      <svg viewBox="0 0 960 490" role="img">
+        <g class="ink" filter="url(#rough)">
+          <path class="lane" d="M24 96 C 300 94, 620 97, 936 95"></path>
+          <path class="pill" d="M235 81 L 365 80 L 366 110 L 236 111 Z"></path>
+          <path class="pill" d="M585 81 L 715 80 L 716 110 L 586 111 Z"></path>
+          <path class="pill" d="M794 81 L 916 80 L 917 110 L 795 111 Z"></path>
+          <path class="lane" d="M24 236 C 300 234, 620 237, 936 235"></path>
+          <path class="pill" d="M185 221 L 315 220 L 316 250 L 186 251 Z"
+          ></path>
+          <path class="pill" d="M382 221 L 558 220 L 559 250 L 383 251 Z"
+          ></path>
+          <path class="pill" d="M610 221 L 770 220 L 771 250 L 611 251 Z"
+          ></path>
+          <path class="pill" d="M824 221 L 906 220 L 907 250 L 825 251 Z"
+          ></path>
+          <path class="lane" d="M24 376 C 300 374, 620 377, 936 375"></path>
+          <path class="pill" d="M105 361 L 235 360 L 236 390 L 106 391 Z"
+          ></path>
+          <path class="pill" d="M271 361 L 369 360 L 370 390 L 272 391 Z"
+          ></path>
+          <path class="pill" d="M400 361 L 490 360 L 491 390 L 401 391 Z"
+          ></path>
+          <path class="pill" d="M523 361 L 637 360 L 638 390 L 524 391 Z"
+          ></path>
+          <path
+            class="flow"
+            d="M322 358 C 312 320, 270 290, 256 254"
+            marker-end="url(#ah)"></path>
+          <path
+            class="flow"
+            d="M446 358 C 448 320, 462 290, 466 254"
+            marker-end="url(#ah)"></path>
+          <path
+            class="flow"
+            d="M252 216 C 262 170, 290 140, 298 114"
+            marker-end="url(#ah)"></path>
+          <path
+            class="flow"
+            d="M688 216 C 680 170, 660 140, 652 114"
+            marker-end="url(#ah)"></path>
+          <path
+            class="flow"
+            d="M866 216 C 864 170, 858 140, 856 114"
+            marker-end="url(#ah)"></path>
+          <text x="24" y="61" class="hand big start">tau_coding</text>
+          <text x="156" y="61" class="hand soft start">the app</text>
+          <text x="24" y="201" class="hand big start">tau_agent</text>
+          <text x="144" y="201" class="hand soft start">the loop</text>
+          <text x="24" y="341" class="hand big start">tau_ai</text>
+          <text x="108" y="341" class="hand soft start">the model</text>
+          <text x="292" y="306" class="hand soft end">became text</text>
+          <text x="474" y="306" class="hand soft start">run read(README)</text>
+          <text x="290" y="160" class="hand soft start">saved</text>
+          <text x="676" y="160" class="hand soft end">saved</text>
+          <path
+            class="axis"
+            d="M30 452 C 300 450, 640 454, 930 451"
+            marker-end="url(#ah)"></path>
+          <text x="936" y="476" class="hand soft end">time</text>
+          <text x="24" y="478" class="hand soft start"
+            >prompt: &ldquo;fix the typo in README&rdquo;</text
+          >
+          <text x="936" y="26" class="hand soft end"
+            >the TUI and session.jsonl listen up here &uarr;</text
+          >
+        </g>
+        <text x="300" y="99.5" class="code">entry_appended</text>
+        <text x="650" y="99.5" class="code">entry_appended</text>
+        <text x="855" y="99.5" class="code">agent_settled</text>
+        <text x="250" y="239.5" class="code">message_update</text>
+        <text x="470" y="239.5" class="code">tool_execution_start</text>
+        <text x="690" y="239.5" class="code">tool_execution_end</text>
+        <text x="865" y="239.5" class="code">turn_end</text>
+        <text x="170" y="379.5" class="code">response_start</text>
+        <text x="320" y="379.5" class="code">text_delta</text>
+        <text x="445" y="379.5" class="code">tool_call</text>
+        <text x="580" y="379.5" class="code">response_end</text>
+      </svg>
+      <figcaption>
+        Fig. 4 &mdash; one short run, as events. Each layer listens to the one
+        below and speaks its own vocabulary.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="mark">4</span>
+      <h2>A tool is just a function</h2>
+    </div>
+    <p class="sec-intro">
+      Where do tool calls come from? A tool is half schema &mdash; a name, a
+      description, and parameters the model can read &mdash; and half plain
+      async function. This is a complete Tau extension, from{" "}
+      <code>examples/extensions/hello_tool.py</code>:
+    </p>
+    <div class="two even">
+      <pre class="code-fig">{toolCode}</pre>
+      <figure
+        class="sketch"
+        aria-label="How a tool is split between the model and your code"
+      >
+        <svg viewBox="0 0 480 440" role="img">
+          <g class="ink" filter="url(#rough)">
+            <path d="M40 62 L 440 60 L 442 300 L 38 298 Z"></path>
+            <path class="flow" d="M240 72 C 242 150, 238 220, 240 290"></path>
+            <text x="140" y="34" class="hand big">model</text>
+            <path d="M140 62 C 141 56, 139 50, 140 44" marker-end="url(#ah)"
+            ></path>
+            <path d="M178 26 C 250 6, 330 14, 344 56" marker-end="url(#ah)"
+            ></path>
+            <text x="352" y="30" class="hand soft start">calls it</text>
+            <text x="140" y="96" class="hand soft">the model sees</text>
+            <text x="340" y="96" class="hand soft">your code runs</text>
+            <path d="M340 160 C 342 182, 338 202, 340 222" marker-end="url(#ah)"
+            ></path>
+            <path d="M340 302 C 342 330, 338 350, 340 370" marker-end="url(#ah)"
+            ></path>
+            <text x="340" y="428" class="hand soft"
+              >back into the transcript</text
+            >
+          </g>
+          <text x="58" y="140" class="code sm start">name="hello"</text>
+          <text x="58" y="170" class="code sm start">description=</text>
+          <text x="70" y="190" class="code sm start">"Greet someone…"</text>
+          <text x="58" y="222" class="code sm start">parameters=&#123;</text>
+          <text x="70" y="242" class="code sm start">"who": string</text>
+          <text x="58" y="262" class="code sm start">&#125;</text>
+          <text x="340" y="148" class="code sm">_run_hello(args)</text>
+          <text x="340" y="244" class="code sm">AgentToolResult</text>
+          <text x="58" y="326" class="code start">AgentTool</text>
+          <text x="340" y="396" class="code">"Hello, Ada!"</text>
+        </svg>
+        <figcaption>Fig. 5 &mdash; half schema, half function</figcaption>
+      </figure>
     </div>
   </section>
 
   <section>
     <div class="sec-head">
-      <span class="mark">03</span>
-      <div>
-        <p class="eyebrow-hand">how we think</p>
-        <h2>Educational principles</h2>
-      </div>
+      <span class="mark">5</span>
+      <h2>A frontend in a dozen lines</h2>
     </div>
-    <div class="principles">
-      <div class="pr">
-        <h3>Small layers beat magic</h3>
-        <p>
-          One job per package. Study the provider layer, harness, and coding app
-          on their own.
-        </p>
-      </div>
-      <div class="pr">
-        <h3>Events make agents teachable</h3>
-        <p>
-          The agent emits a stream you can render, test, and export &mdash; not
-          control flow buried in callbacks.
-        </p>
-      </div>
-      <div class="pr">
-        <h3>Real enough to matter</h3>
-        <p>
-          Educational, not a toy. Run it as a real terminal agent while reading
-          the code behind it.
-        </p>
-      </div>
-      <div class="pr">
-        <h3>Docs follow implementation</h3>
-        <p>
-          Built phase by phase, each with notes on what was added, why, and how
-          it fits.
-        </p>
-      </div>
+    <p class="sec-intro">
+      The terminal UI is one listener among many. Anything that can loop over
+      the session's events is a frontend &mdash; here is one that prints to
+      stdout, using the real event names from &sect;3.
+    </p>
+    <div class="two even">
+      <pre class="code-fig">{frontendCode}</pre>
+      <figure
+        class="sketch"
+        aria-label="Events flowing from the session into a hand-written frontend"
+      >
+        <svg viewBox="0 0 480 440" role="img">
+          <g class="ink" filter="url(#rough)">
+            <text x="108" y="30" class="hand soft">session.prompt(…)</text>
+            <text x="350" y="30" class="hand soft">your screen</text>
+            <path d="M236 56 L 462 54 L 464 372 L 234 370 Z"></path>
+            <path d="M236 76 L 462 75"></path>
+            <path class="pill" d="M49 57 L 167 56 L 168 83 L 50 84 Z"></path>
+            <path
+              class="flow"
+              d="M170 70 C 200 72, 215 94, 240 95"
+              marker-end="url(#ah)"></path>
+            <path class="pill" d="M49 105 L 167 104 L 168 131 L 50 132 Z"
+            ></path>
+            <path
+              class="flow"
+              d="M170 118 C 200 120, 215 94, 240 95"
+              marker-end="url(#ah)"></path>
+            <path class="pill" d="M27 153 L 189 152 L 190 179 L 28 180 Z"
+            ></path>
+            <path
+              class="flow"
+              d="M192 166 C 200 168, 215 184, 240 185"
+              marker-end="url(#ah)"></path>
+            <path class="pill" d="M34 201 L 182 200 L 183 227 L 35 228 Z"
+            ></path>
+            <path
+              class="flow"
+              d="M185 214 C 200 216, 215 184, 240 185"
+              marker-end="url(#ah)"></path>
+            <path class="pill" d="M49 249 L 167 248 L 168 275 L 50 276 Z"
+            ></path>
+            <path
+              class="flow"
+              d="M170 262 C 200 264, 215 274, 240 275"
+              marker-end="url(#ah)"></path>
+            <path class="pill" d="M52 297 L 164 296 L 165 323 L 53 324 Z"
+            ></path>
+            <path
+              class="flow"
+              d="M167 310 C 200 312, 215 332, 240 333"
+              marker-end="url(#ah)"></path>
+            <text x="240" y="420" class="hand soft"
+              >you decide what each event looks like.</text
+            >
+          </g>
+          <text x="108" y="74" class="code sm">message_update</text>
+          <text x="108" y="122" class="code sm">message_update</text>
+          <text x="108" y="170" class="code sm">tool_execution_start</text>
+          <text x="108" y="218" class="code sm">tool_execution_end</text>
+          <text x="108" y="266" class="code sm">message_update</text>
+          <text x="108" y="314" class="code sm">agent_settled</text>
+          <text x="250" y="104" class="code sm start"
+            >I'll open the README…</text
+          >
+          <text x="250" y="194" class="code sm start">→ read(README.md) ✓</text>
+          <text x="250" y="284" class="code sm start">Fixed the typo.</text>
+          <text x="250" y="342" class="code sm start">— done —</text>
+        </svg>
+        <figcaption>
+          Fig. 6 &mdash; a frontend is a <code>match</code> on event types
+        </figcaption>
+      </figure>
     </div>
+  </section>
+
+  <section id="syllabus">
+    <div class="sec-head">
+      <span class="mark">6</span>
+      <h2>A syllabus</h2>
+    </div>
+    <p class="sec-intro">
+      Seven files, read in order, take you from a single event to a working
+      coding agent. Line counts are from the current source.
+    </p>
+    <figure
+      class="sketch"
+      aria-label="A reading route through seven Tau source files"
+    >
+      <svg viewBox="0 70 960 210" role="img">
+        <g class="ink" filter="url(#rough)">
+          <path
+            d="M30 126 S 40 120, 80 120 S 173 150, 213 150 S 306 120, 346 120 S 439 150, 479 150 S 572 120, 612 120 S 705 150, 745 150 S 838 120, 878 120 S 940 130, 940 128"
+          ></path>
+          <circle cx="80" cy="120" r="8.2"></circle>
+          <text x="80" y="99.76028224859598" class="hand big">1</text>
+          <text x="80" y="176.23971775140402" class="hand soft">87 lines</text>
+          <circle cx="213" cy="150" r="8.4"></circle>
+          <text x="213" y="129.61652238136685" class="hand big">2</text>
+          <text x="213" y="206.38347761863315" class="hand soft">93 lines</text>
+          <circle cx="346" cy="120" r="8.9"></circle>
+          <text x="346" y="99.06237250399991" class="hand big">3</text>
+          <text x="346" y="176.9376274960001" class="hand soft">118 lines</text>
+          <circle cx="479" cy="150" r="12.8"></circle>
+          <text x="479" y="125.18603662287941" class="hand big">4</text>
+          <text x="479" y="210.8139633771206" class="hand soft">376 lines</text>
+          <circle cx="612" cy="120" r="11.3"></circle>
+          <text x="612" y="96.6847832093495" class="hand big">5</text>
+          <text x="612" y="179.31521679065048" class="hand soft">259 lines</text
+          >
+          <circle cx="745" cy="150" r="9.9"></circle>
+          <text x="745" y="128.05604689517182" class="hand big">6</text>
+          <text x="745" y="207.94395310482818" class="hand soft">171 lines</text
+          >
+          <circle cx="878" cy="120" r="19.9"></circle>
+          <text x="878" y="88.1364287576226" class="hand big">7</text>
+          <text x="878" y="187.86357124237742" class="hand soft"
+            >1,218 lines</text
+          >
+          <text x="936" y="262" class="hand soft end"
+            >≈ 2,300 lines in all &mdash; about an afternoon.</text
+          >
+          <text x="30" y="262" class="hand soft start"
+            >circle size ∝ √lines</text
+          >
+        </g>
+        <text x="80" y="152.23971775140402" class="code sm">events.py</text>
+        <text x="213" y="182.38347761863315" class="code sm"
+          >_provider_events.py</text
+        >
+        <text x="346" y="152.9376274960001" class="code sm">tools.py</text>
+        <text x="479" y="186.8139633771206" class="code sm">loop.py</text>
+        <text x="612" y="155.31521679065048" class="code sm">harness.py</text>
+        <text x="745" y="183.94395310482818" class="code sm">jsonl.py</text>
+        <text x="878" y="163.86357124237742" class="code sm">tools.py</text>
+      </svg>
+      <figcaption>Fig. 7 &mdash; the reading route</figcaption>
+    </figure>
+    <table class="syllabus">
+      <thead>
+        <tr
+          ><th>&sect;</th><th>Lesson</th><th>File</th><th class="num">Lines</th
+          ></tr
+        >
+      </thead>
+      <tbody>
+        <tr>
+          <td class="n">1</td>
+          <td><a href="/internals/agent-loop/">Events, the contract</a></td>
+          <td><code>tau_agent/events.py</code></td>
+          <td class="num">87</td>
+        </tr>
+        <tr>
+          <td class="n">2</td>
+          <td><a href="/internals/architecture/">Models become events</a></td>
+          <td><code>tau_ai/_provider_events.py</code></td>
+          <td class="num">93</td>
+        </tr>
+        <tr>
+          <td class="n">3</td>
+          <td><a href="/reference/tools/">What a tool is</a></td>
+          <td><code>tau_agent/tools.py</code></td>
+          <td class="num">118</td>
+        </tr>
+        <tr>
+          <td class="n">4</td>
+          <td><a href="/internals/agent-loop/">The loop</a></td>
+          <td><code>tau_agent/loop.py</code></td>
+          <td class="num">376</td>
+        </tr>
+        <tr>
+          <td class="n">5</td>
+          <td><a href="/internals/architecture/">The harness</a></td>
+          <td><code>tau_agent/harness.py</code></td>
+          <td class="num">259</td>
+        </tr>
+        <tr>
+          <td class="n">6</td>
+          <td><a href="/guides/sessions/">Sessions on disk</a></td>
+          <td><code>tau_agent/session/jsonl.py</code></td>
+          <td class="num">171</td>
+        </tr>
+        <tr>
+          <td class="n">7</td>
+          <td><a href="/reference/tools/">Real tools</a></td>
+          <td><code>tau_coding/tools.py</code></td>
+          <td class="num">1,218</td>
+        </tr>
+      </tbody>
+    </table>
   </section>
 
   <section>
     <div class="two">
       <div>
-        <p class="eyebrow-hand">the origin</p>
-        <h2>
-          Inspired by <a href="https://pi.dev" target="_blank" rel="noopener"
-            >Pi</a
-          >, written as a Python learning path.
-        </h2>
-        <p>
-          <a href="https://pi.dev" target="_blank" rel="noopener">Pi</a> is the minimalist
-          coding-agent harness this project borrows its architectural lesson from
-          &mdash; keep the harness, the environment, and the UI apart. Tau isn't a
-          line-by-line port; it's an educational Python take on the same core ideas.
-        </p>
-        <p>
-          <a class="ghost" href="https://pi.dev" target="_blank" rel="noopener"
-            >Visit pi.dev <span class="arr">&rarr;</span></a
-          >
-        </p>
-      </div>
-      <div class="terminal" aria-hidden="true">
-        <div class="bar">
-          <span></span><span></span><span></span><span class="t"
-            >tau &mdash; session</span
-          >
+        <div class="sec-head">
+          <span class="mark">7</span>
+          <h2>Pi, and why &tau;</h2>
         </div>
-        <pre><span class="pmt">&#964; &rsaquo;</span> <span class="cmd">explain the agent loop</span>
-
-<span class="out">  stream   </span><span class="key">model events</span>
-<span class="out">  request  </span><span class="key">tool call</span>
-<span class="out">  execute  </span><span class="key">read / edit / bash</span>
-<span class="out">  append   </span><span class="key">transcript entries</span>
-<span class="out">  render   </span><span class="key">print mode or TUI</span></pre>
+        <p>
+          Tau began as a way to understand{" "}
+          <a href="https://pi.dev" target="_blank" rel="noopener">Pi</a>, a
+          small coding agent written in TypeScript. Pi keeps three things apart:
+          the loop, the machine it works on, and the screen you watch it on. Tau
+          keeps that split and rebuilds it in Python, with notes on every step.
+        </p>
+        <p>
+          The name is a joke that stuck. &pi; is half a turn; &tau; = 2&pi; is
+          the whole circle. Pi was the first half of the trip &mdash; Tau tries
+          to go the rest of the way round, slowly, and show its work.{" "}
+          <a href="/why-tau/">More on &tau; than you asked for &rarr;</a>
+        </p>
       </div>
+      <figure
+        class="sketch"
+        aria-label="A circle: the top half is pi, the full turn is tau"
+      >
+        <svg viewBox="0 0 480 430" role="img">
+          <g class="ink" filter="url(#rough)">
+            <path
+              class="flow"
+              d="M371 190 A 132 130 0 0 0 112 184"
+              marker-end="url(#ah)"></path>
+            <path d="M110 218 A 132 130 0 0 0 368 224" marker-end="url(#ah)"
+            ></path>
+            <text x="240" y="44" class="hand big">Pi</text>
+            <text x="240" y="66" class="hand soft"
+              >half a turn &middot; TypeScript</text
+            >
+            <text x="240" y="384" class="hand big">Tau</text>
+            <text x="240" y="408" class="hand soft"
+              >the whole turn &middot; Python, with notes</text
+            >
+            <text x="240" y="140" class="hand soft">same three parts</text>
+            <text x="240" y="178" class="hand">the loop</text>
+            <text x="240" y="212" class="hand">the machine</text>
+            <text x="240" y="246" class="hand">the screen</text>
+          </g>
+          <circle class="dot" cx="372" cy="204" r="4"></circle>
+          <circle class="dot" cx="108" cy="203" r="4"></circle>
+          <text x="386" y="209" class="angle">0</text>
+          <text x="94" y="209" class="angle end">&pi;</text>
+          <text x="386" y="236" class="angle">&tau; = 2&pi;</text>
+        </svg>
+        <figcaption>Fig. 8 &mdash; &pi; gets you halfway</figcaption>
+      </figure>
     </div>
   </section>
 
   <section class="closing">
     <span class="turn">&#964;</span>
     <p>
-      A map for building your own agent: start with events, add a loop, wrap it
-      in a harness, then give it tools and a UI.
+      Start with events, add a loop, give it tools, wrap it in a UI. That's a
+      coding agent.
     </p>
     <div class="cta-row">
       <span class="install">
@@ -333,11 +787,131 @@ import { site } from "../data";
       <a class="ghost" href="/quickstart/"
         >Get started <span class="arr">&rarr;</span></a
       >
-      <a class="ghost" href="/roadmap/"
-        >Follow the roadmap <span class="arr">&rarr;</span></a
+      <a class="ghost" href={site.discordUrl} target="_blank" rel="noopener"
+        >Join the Discord <span class="arr">&rarr;</span></a
       >
     </div>
   </section>
 </div>
 
 <script is:inline src="/landing.js"></script>
+
+<script is:inline>
+  (function () {
+    var cmd = document.getElementById("installCmd");
+    var tabs = document.querySelectorAll(".install-tabs [role=tab]");
+    tabs.forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        tabs.forEach(function (t) {
+          t.setAttribute("aria-selected", String(t === tab));
+        });
+        cmd.textContent = tab.dataset.cmd;
+      });
+    });
+    var copy = document.getElementById("copyHero");
+    copy.addEventListener("click", function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(cmd.textContent);
+      copy.textContent = "copied";
+      setTimeout(function () {
+        copy.textContent = "copy";
+      }, 1400);
+    });
+
+    // One turn of the loop: a radius sweeps 0 -> tau, lighting each step.
+    var TAU = Math.PI * 2,
+      cx = 260,
+      cy = 240,
+      R = 175,
+      PERIOD = 9000;
+    var radius = document.getElementById("loopRadius");
+    var wedge = document.getElementById("loopWedge");
+    var readout = document.getElementById("loopTheta");
+    var steps = document.querySelectorAll(".hero-loop [data-step]");
+    function draw(theta) {
+      var x = cx + R * Math.cos(theta),
+        y = cy - R * Math.sin(theta);
+      radius.setAttribute("x2", x.toFixed(1));
+      radius.setAttribute("y2", y.toFixed(1));
+      wedge.style.strokeDasharray = (theta * 24).toFixed(1) + " 999";
+      var active = Math.floor(theta / (TAU / 4)) % 4;
+      steps.forEach(function (el) {
+        el.classList.toggle("on", Number(el.dataset.step) === active);
+      });
+      readout.textContent =
+        "θ = " + theta.toFixed(2) + (theta > TAU - 0.05 ? " = τ" : "");
+    }
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      draw(TAU * 0.3);
+      return;
+    }
+    var start = null;
+    function frame(t) {
+      if (start === null) start = t;
+      draw((((t - start) % PERIOD) / PERIOD) * TAU);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+</script>
+
+<script is:inline>
+  // Draw each hand-drawn figure, stroke by stroke, when it scrolls into view.
+  (function () {
+    if (!("IntersectionObserver" in window)) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var SKIP = { loopRadius: 1, loopWedge: 1, loopTheta: 1 };
+    var TOTAL = 1600,
+      DRAW = 500,
+      FADE = 400;
+    document.querySelectorAll("figure.sketch").forEach(function (fig) {
+      var els = Array.prototype.filter.call(
+        fig.querySelectorAll("svg path, svg circle, svg text"),
+        function (el) {
+          return !el.closest("defs") && !SKIP[el.id];
+        },
+      );
+      var step = Math.min(70, TOTAL / Math.max(els.length, 1));
+      var markers = [];
+      els.forEach(function (el, i) {
+        el.style.setProperty("--i", String(i));
+        el.style.setProperty("--step", step + "ms");
+        var stroked =
+          el.closest(".ink") &&
+          el.tagName !== "text" &&
+          !el.classList.contains("flow");
+        el.classList.add(stroked ? "draw" : "fade");
+        if (stroked) el.setAttribute("pathLength", "1");
+        var m = el.getAttribute("marker-end");
+        if (m) {
+          el.removeAttribute("marker-end");
+          markers.push({ el: el, m: m, at: i * step + DRAW });
+        }
+      });
+      fig.classList.add("pending");
+      var io = new IntersectionObserver(
+        function (entries) {
+          if (!entries[0].isIntersecting) return;
+          io.disconnect();
+          fig.classList.remove("pending");
+          markers.forEach(function (x) {
+            setTimeout(function () {
+              x.el.setAttribute("marker-end", x.m);
+            }, x.at);
+          });
+          // Hand control back to the figure's own styles once drawing is done.
+          setTimeout(
+            function () {
+              els.forEach(function (el) {
+                el.classList.remove("draw", "fade");
+                el.removeAttribute("pathLength");
+              });
+            },
+            els.length * step + DRAW + FADE + 300,
+          );
+        },
+        { threshold: 0.3 },
+      );
+      io.observe(fig);
+    });
+  })();
+</script>
