@@ -146,6 +146,7 @@ from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.session_preparation import prepare_coding_session
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.skills import Skill
+from tau_coding.system_prompt import SystemPromptInspection
 from tau_coding.thinking import ThinkingLevel
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import (
@@ -552,7 +553,13 @@ PASTE_DISPLAY_THRESHOLD = 2_000
 class PromptInput(TextArea):
     """Multiline prompt input with completion key bindings."""
 
-    BINDINGS: ClassVar[list[BindingEntry]] = []
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        # Herdr may re-encode terminal Esc+b/f word motion as Kitty Alt+b/f.
+        Binding("alt+left,alt+b", "cursor_word_left", show=False),
+        Binding("alt+right,alt+f", "cursor_word_right", show=False),
+        Binding("alt+shift+left", "cursor_word_left(True)", show=False),
+        Binding("alt+shift+right", "cursor_word_right(True)", show=False),
+    ]
     shell_mode_style: str = ""
 
     def __init__(
@@ -1265,10 +1272,23 @@ class SessionPickerSearchInput(Input):
         Binding("escape", "cancel", "Cancel", show=False, priority=True),
         Binding("up", "cursor_up", "Up", show=False, priority=True),
         Binding("down", "cursor_down", "Down", show=False, priority=True),
+        Binding("f2", "show_archived", "Archived", show=False, priority=True),
     ]
 
     def _picker(self) -> SessionPickerScreen:
         return cast(SessionPickerScreen, self.screen)
+
+    async def _on_key(self, event: Key) -> None:
+        """Route the archive shortcut before Textual's default input handling."""
+        if event.key in {"ctrl+enter", "f2"} and isinstance(self.screen, SessionPickerScreen):
+            event.stop()
+            event.prevent_default()
+            if event.key == "f2":
+                self.screen.action_show_archived()
+            else:
+                self.screen.action_archive_cursor()
+            return
+        await super()._on_key(event)
 
     def on_key(self, event: Key) -> None:
         """Route picker control keys before the input edits its text."""
@@ -1287,6 +1307,10 @@ class SessionPickerSearchInput(Input):
                 self.screen.action_focus_projects()
             else:
                 self.screen.action_focus_sessions()
+        elif event.key == "ctrl+enter" and isinstance(self.screen, SessionPickerScreen):
+            event.stop()
+            event.prevent_default()
+            self.screen.action_archive_cursor()
         elif event.key == "escape":
             event.stop()
             event.prevent_default()
@@ -1619,6 +1643,8 @@ class SessionPickerScreen(ModalScreen[str | None]):
         Binding("left", "focus_projects", "Projects", show=False),
         Binding("right", "focus_sessions", "Sessions", show=False),
         Binding("enter", "select_cursor", "Select", show=False),
+        Binding("ctrl+enter", "archive_cursor", "Archive", show=False, priority=True),
+        Binding("f2", "show_archived", "Archived", show=False, priority=True),
     ]
 
     CSS = """
@@ -1629,23 +1655,35 @@ class SessionPickerScreen(ModalScreen[str | None]):
         max-height: 85%;
     }
 
-    #session-picker-columns {
-        height: auto;
+    #session-picker-tabs {
+        height: 3;
     }
 
-    .session-picker-column {
+    #session-picker-tabs Button {
+        width: 1fr;
+        border: none;
+    }
+
+    #session-picker-tabs Button.-active {
+        background: $tau-highlight-background;
+        color: $tau-highlight-text;
+        text-style: bold;
+    }
+
+    #session-picker-columns {
         height: auto;
         border: tall $tau-border;
         background: $tau-transcript-background;
     }
 
-    .session-picker-column.-active-column {
-        border: tall $tau-accent;
+    .session-picker-column {
+        height: auto;
+        background: $tau-transcript-background;
     }
 
     #session-picker-project-column {
         width: 34;
-        margin-right: 1;
+        border-right: tall $tau-border;
     }
 
     #session-picker-session-column {
@@ -1680,6 +1718,7 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self,
         records: Sequence[SessionCompletionRecord],
         *,
+        archived_records: Sequence[SessionCompletionRecord] = (),
         local_cwd: Path,
         theme: TuiTheme,
         loading_other_projects: bool = False,
@@ -1687,10 +1726,13 @@ class SessionPickerScreen(ModalScreen[str | None]):
     ) -> None:
         super().__init__()
         self.records = tuple(records)
+        self.archived_records = tuple(archived_records)
+        self.showing_archived = False
         self.local_cwd = local_cwd.resolve()
         self.theme = theme
         self.search_value = ""
         self.active_column: Literal["projects", "sessions"] = "sessions"
+        self.hidden_cwds: set[Path] = set()
         self.records_by_project = self._group_records_by_project()
         self.project_cwds = tuple(self.records_by_project)
         self.selected_project_index = 0
@@ -1702,6 +1744,9 @@ class SessionPickerScreen(ModalScreen[str | None]):
         """Compose project and session columns under one search field."""
         with Vertical(id="session-picker"):
             yield Static("Sessions", id="session-picker-title")
+            with Horizontal(id="session-picker-tabs"):
+                yield Button("Active", id="session-picker-active-tab")
+                yield Button("Archived", id="session-picker-archived-tab")
             yield SessionPickerSearchInput(
                 placeholder="Search sessions in selected project",
                 id="session-picker-search",
@@ -1728,9 +1773,16 @@ class SessionPickerScreen(ModalScreen[str | None]):
     def on_mount(self) -> None:
         """Start in the current project's recent-session column."""
         self.query_one("#session-picker-search", Input).focus()
+        self._refresh_tabs()
         self._refresh_project_list()
         self._refresh_session_list()
         self._update_help()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "session-picker-active-tab":
+            self._set_archive_view(False)
+        elif event.button.id == "session-picker-archived-tab":
+            self._set_archive_view(True)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Filter sessions in the selected project."""
@@ -1754,6 +1806,7 @@ class SessionPickerScreen(ModalScreen[str | None]):
             "left": self.action_focus_projects,
             "right": self.action_focus_sessions,
             "enter": self.action_select_cursor,
+            "delete": self.action_archive_cursor,
         }
         action = actions.get(event.key)
         if action is not None:
@@ -1775,9 +1828,15 @@ class SessionPickerScreen(ModalScreen[str | None]):
         if event.option_list.id == "session-picker-project-list":
             self.selected_project_index = event.option_index
             self._refresh_session_list()
-            self.action_focus_sessions()
+            if self.showing_archived:
+                self.action_unarchive_cursor()
+            else:
+                self.action_focus_sessions()
             return
-        self._select_visible_record()
+        if self.showing_archived:
+            self.action_unarchive_cursor()
+        else:
+            self._select_visible_record()
 
     def action_cursor_up(self) -> None:
         self._active_list().action_cursor_up()
@@ -1792,10 +1851,124 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self._set_active_column("sessions")
 
     def action_select_cursor(self) -> None:
-        if self.active_column == "projects":
+        if self.showing_archived:
+            self.action_unarchive_cursor()
+        elif self.active_column == "projects":
             self.action_focus_sessions()
         else:
             self._select_visible_record()
+
+    def action_show_active(self) -> None:
+        self._set_archive_view(False)
+
+    def action_show_archived(self) -> None:
+        self._set_archive_view(not self.showing_archived)
+
+    def _set_archive_view(self, show_archived: bool) -> None:
+        if self.showing_archived == show_archived:
+            return
+        selected_cwd = self.project_cwds[self.selected_project_index] if self.project_cwds else None
+        self.showing_archived = show_archived
+        self.records_by_project = self._group_records_by_project()
+        self.project_cwds = tuple(self.records_by_project)
+        if selected_cwd in self.project_cwds:
+            self.selected_project_index = self.project_cwds.index(selected_cwd)
+        else:
+            self.selected_project_index = 0
+        self._refresh_tabs()
+        self._refresh_project_list()
+        self._refresh_session_list()
+
+    def action_archive_cursor(self) -> None:
+        """Archive or unarchive the highlighted session or project."""
+        app = cast(TauTuiApp, self.app)
+        if not self.project_cwds:
+            return
+        if self.active_column == "projects":
+            cwd = self.project_cwds[self.selected_project_index]
+            worker = (
+                app._unarchive_session_project(cwd, self)
+                if self.showing_archived
+                else app._archive_session_project(cwd, self)
+            )
+            app.run_worker(worker, exclusive=False)
+            return
+        index = self.query_one("#session-picker-list", OptionList).highlighted
+        if index is not None and index < len(self.visible_records):
+            record = self.visible_records[index]
+            worker = (
+                app._unarchive_session_record(record, self)
+                if self.showing_archived
+                else app._archive_session_record(record, self)
+            )
+            app.run_worker(worker, exclusive=False)
+
+    def action_unarchive_cursor(self) -> None:
+        self.action_archive_cursor()
+
+    async def _remove_records(self, cwd: Path, session_id: str | None = None) -> None:
+        """Move newly archived metadata out of the active picker."""
+        if self.app.screen is not self:
+            return
+        resolved_cwd = Path(cwd).resolve()
+        if session_id is None:
+            moved = tuple(
+                record for record in self.records if Path(record.cwd).resolve() == resolved_cwd
+            )
+            self.records = tuple(
+                record for record in self.records if Path(record.cwd).resolve() != resolved_cwd
+            )
+            self.archived_records = (*self.archived_records, *moved)
+            self.hidden_cwds.add(resolved_cwd)
+        else:
+            record = self._record_by_id(session_id)
+            self.records = tuple(item for item in self.records if item.id != session_id)
+            self.archived_records = (*self.archived_records, record)
+            if not any(Path(item.cwd).resolve() == resolved_cwd for item in self.records):
+                self.hidden_cwds.add(resolved_cwd)
+        self._rebuild_visible_records()
+
+    async def _restore_records(self, cwd: Path, session_id: str | None = None) -> None:
+        """Move restored metadata from the archived picker into the active list."""
+        if self.app.screen is not self:
+            return
+        resolved_cwd = Path(cwd).resolve()
+        if session_id is None:
+            restored = tuple(
+                record
+                for record in self.archived_records
+                if Path(record.cwd).resolve() == resolved_cwd
+            )
+            self.records = (*self.records, *restored)
+            self.archived_records = tuple(
+                record
+                for record in self.archived_records
+                if Path(record.cwd).resolve() != resolved_cwd
+            )
+        else:
+            self.records = (*self.records, self._record_by_id(session_id))
+            self.archived_records = tuple(
+                record for record in self.archived_records if record.id != session_id
+            )
+        self.hidden_cwds.discard(resolved_cwd)
+        self._rebuild_visible_records()
+
+    def _record_by_id(self, session_id: str) -> SessionCompletionRecord:
+        return next(
+            record for record in (*self.records, *self.archived_records) if record.id == session_id
+        )
+
+    def _rebuild_visible_records(self) -> None:
+        self.records_by_project = self._group_records_by_project()
+        self.project_cwds = tuple(self.records_by_project)
+        if self.project_cwds:
+            self.selected_project_index = min(
+                self.selected_project_index, len(self.project_cwds) - 1
+            )
+        else:
+            self.selected_project_index = 0
+        self._refresh_project_list()
+        self._refresh_session_list()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -1804,10 +1977,11 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self,
         records: Sequence[SessionCompletionRecord],
         *,
+        archived_records: Sequence[SessionCompletionRecord] | None = None,
         loading_other_projects: bool = False,
     ) -> None:
         """Replace records after background loading while preserving navigation."""
-        selected_cwd = self.project_cwds[self.selected_project_index]
+        selected_cwd = self.project_cwds[self.selected_project_index] if self.project_cwds else None
         session_list = self.query_one("#session-picker-list", OptionList)
         selected_session_id = None
         if session_list.highlighted is not None and session_list.highlighted < len(
@@ -1816,6 +1990,8 @@ class SessionPickerScreen(ModalScreen[str | None]):
             selected_session_id = self.visible_records[session_list.highlighted].id
 
         self.records = tuple(records)
+        if archived_records is not None:
+            self.archived_records = tuple(archived_records)
         self.records_by_project = self._group_records_by_project()
         self.project_cwds = tuple(self.records_by_project)
         try:
@@ -1862,31 +2038,49 @@ class SessionPickerScreen(ModalScreen[str | None]):
     def _group_records_by_project(
         self,
     ) -> dict[Path, tuple[SessionCompletionRecord, ...]]:
-        """Group records once so picker refreshes stay linear in history size."""
+        """Group the selected tab's records once for linear picker refreshes."""
+        source = self.archived_records if self.showing_archived else self.records
         grouped: dict[Path, list[SessionCompletionRecord]] = {self.local_cwd: []}
-        for record in self.records:
-            grouped.setdefault(Path(record.cwd).resolve(), []).append(record)
+        for record in source:
+            cwd = Path(record.cwd).resolve()
+            if not self.showing_archived and cwd in self.hidden_cwds:
+                continue
+            grouped.setdefault(cwd, []).append(record)
         return {cwd: tuple(records) for cwd, records in grouped.items()}
+
+    def _refresh_tabs(self) -> None:
+        active = self.query_one("#session-picker-active-tab", Button)
+        archived = self.query_one("#session-picker-archived-tab", Button)
+        active.set_class(not self.showing_archived, "-active")
+        archived.set_class(self.showing_archived, "-active")
+        self.query_one("#session-picker-search", Input).placeholder = (
+            "Search archived sessions in selected project"
+            if self.showing_archived
+            else "Search sessions in selected project"
+        )
 
     def _refresh_project_list(self) -> None:
         project_list = self.query_one("#session-picker-project-list", OptionList)
         items: list[str] = []
         for cwd in self.project_cwds:
-            count = len(self.records_by_project[cwd])
             marker = "● " if cwd == self.local_cwd else "  "
-            noun = "session" if count == 1 else "sessions"
             folder_name = cwd.name or str(cwd)
-            items.append(f"{marker}{folder_name}  {count} {noun}")
+            items.append(f"{marker}{folder_name}")
         project_list.set_options(items)
-        project_list.highlighted = self.selected_project_index
+        project_list.highlighted = self.selected_project_index if self.project_cwds else None
 
     def _refresh_session_list(self) -> None:
-        selected_cwd = self.project_cwds[self.selected_project_index]
-        self.query_one("#session-picker-session-title", Static).update(
-            f"Recent sessions — {selected_cwd}"
-        )
-        project_records = self.records_by_project[selected_cwd]
-        self.visible_records = _filter_session_records(project_records, self.search_value)
+        label = "Archived sessions" if self.showing_archived else "Recent sessions"
+        if not self.project_cwds:
+            self.visible_records = ()
+            self.query_one("#session-picker-session-title", Static).update(label)
+        else:
+            selected_cwd = self.project_cwds[self.selected_project_index]
+            self.query_one("#session-picker-session-title", Static).update(
+                f"{label} — {selected_cwd}"
+            )
+            project_records = self.records_by_project[selected_cwd]
+            self.visible_records = _filter_session_records(project_records, self.search_value)
         session_list = self.query_one("#session-picker-list", OptionList)
         session_list.set_options(_session_picker_label(record) for record in self.visible_records)
         session_list.highlighted = 0 if self.visible_records else None
@@ -1897,12 +2091,24 @@ class SessionPickerScreen(ModalScreen[str | None]):
             text = "Loading sessions… - Escape closes"
         elif self.loading_other_projects:
             text = "Loading other projects… - Current sessions are ready - Escape closes"
+        elif not self.project_cwds:
+            text = "No active sessions or projects - Escape closes"
         elif not self.visible_records and self.active_column == "sessions":
             text = "No matching sessions - Left selects a project - Escape closes"
+        elif self.showing_archived and self.active_column == "projects":
+            text = "Up/Down selects project - Enter unarchives - F2 shows active - Escape closes"
+        elif self.showing_archived:
+            text = "Left selects project - Enter unarchives - F2 shows active - Escape closes"
         elif self.active_column == "projects":
-            text = "Up/Down selects project - Right opens sessions - Escape closes"
+            text = (
+                "Up/Down selects project - Right opens sessions - "
+                "Ctrl+Enter archives - F2 shows archived - Escape closes"
+            )
         else:
-            text = "Left selects project - Up/Down navigates - Enter resumes - Escape closes"
+            text = (
+                "Left selects project - Up/Down navigates - Enter resumes - "
+                "Ctrl+Enter archives - F2 shows archived - Escape closes"
+            )
         self.query_one("#session-picker-help", Static).update(text)
 
 
@@ -2967,8 +3173,12 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         theme: TuiTheme,
         on_toggle_scoped: Callable[[ModelChoice], Sequence[ModelChoice]] | None = None,
         picker_kind: Literal["model", "scoped"] = "model",
+        initial_thinking_level: str | None = None,
     ) -> None:
         super().__init__()
+        self.on_first_refresh: Callable[[], None] | None = None
+        self.refresh_worker: Worker[None] | None = None
+        self.initial_thinking_level = initial_thinking_level
         available = tuple(dict.fromkeys(choices))
         self.scoped_choices = tuple(dict.fromkeys(scoped_choices))
         self.unavailable_choices = frozenset(self.scoped_choices) - frozenset(available)
@@ -2991,23 +3201,11 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
             yield Static(title, id="model-picker-title")
             yield Static("", id="model-picker-tabs")
             yield ModelPickerSearchInput(placeholder="Search models", id="model-picker-search")
-            yield ListView(
-                *[
-                    ListItem(
-                        Label(
-                            _model_picker_label(
-                                choice,
-                                current_model=self.current_model,
-                                current_provider=self.provider_name,
-                                scoped=choice in self.scoped_choices,
-                                unavailable=choice in self.unavailable_choices,
-                            ),
-                            markup=False,
-                        )
-                    )
-                    for choice in self.choices
-                ],
+            yield OptionList(
+                *(self._label_for_choice(choice) for choice in self.choices),
                 id="model-picker-list",
+                markup=False,
+                compact=True,
             )
             yield Static("", id="model-picker-help")
 
@@ -3015,13 +3213,18 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         """Focus the search field."""
         search = self.query_one("#model-picker-search", Input)
         search.focus()
-        self._refresh_model_list()
+        # compose() already mounted the cached rows; only set selection/help.
+        self._refresh_model_list(rebuild_rows=False)
+        if self.on_first_refresh is not None:
+            self.call_after_refresh(self.on_first_refresh)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Filter model choices as the search value changes."""
         if event.input.id != "model-picker-search":
             return
         event.stop()
+        if self.search_value == event.value:
+            return
         self.search_value = event.value
         self._refresh_model_list()
 
@@ -3034,16 +3237,16 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
 
     def _reset_model_list_index(self) -> None:
         """Move selection to the current model or first visible row."""
-        model_list = self.query_one("#model-picker-list", ListView)
+        model_list = self.query_one("#model-picker-list", OptionList)
         if not self.visible_choices:
-            model_list.index = None
+            model_list.highlighted = None
             return
         try:
-            model_list.index = self.visible_choices.index(
+            model_list.highlighted = self.visible_choices.index(
                 ModelChoice(provider_name=self.provider_name, model=self.current_model)
             )
         except ValueError:
-            model_list.index = 0
+            model_list.highlighted = 0
 
     def on_key(self, event: Key) -> None:
         """Route model picker keys to the list."""
@@ -3060,18 +3263,18 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
             event.stop()
             self.action_toggle_mode()
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Handle the selected row."""
         event.stop()
         self._select_visible_choice()
 
     def action_cursor_up(self) -> None:
         """Move to the previous model."""
-        self.query_one("#model-picker-list", ListView).action_cursor_up()
+        self.query_one("#model-picker-list", OptionList).action_cursor_up()
 
     def action_cursor_down(self) -> None:
         """Move to the next model."""
-        self.query_one("#model-picker-list", ListView).action_cursor_down()
+        self.query_one("#model-picker-list", OptionList).action_cursor_down()
 
     def action_accept_model(self) -> None:
         """Select the highlighted model."""
@@ -3086,8 +3289,8 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         """Add or remove the highlighted model from scoped models."""
         if self.on_toggle_scoped is None or not self.visible_choices:
             return
-        model_list = self.query_one("#model-picker-list", ListView)
-        index = model_list.index
+        model_list = self.query_one("#model-picker-list", OptionList)
+        index = model_list.highlighted
         if index is None:
             return
         choice = self.visible_choices[index]
@@ -3096,7 +3299,17 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
 
     def action_cancel(self) -> None:
         """Close without selecting a model."""
+        self.cancel_refresh()
         self.dismiss(None)
+
+    def cancel_refresh(self) -> None:
+        """Stop work owned by this picker when it is no longer visible."""
+        if self.refresh_worker is not None and not self.refresh_worker.is_finished:
+            self.refresh_worker.cancel()
+
+    def on_unmount(self) -> None:
+        """Also cancel when a caller removes the picker without dismissing it."""
+        self.cancel_refresh()
 
     def update_choices(
         self,
@@ -3105,16 +3318,25 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
     ) -> None:
         """Publish a refreshed catalog without replacing the open picker."""
         available = tuple(dict.fromkeys(choices))
-        self.scoped_choices = tuple(dict.fromkeys(scoped_choices))
-        self.unavailable_choices = frozenset(self.scoped_choices) - frozenset(available)
-        self.choices = tuple(dict.fromkeys((*available, *self.scoped_choices)))
+        scoped = tuple(dict.fromkeys(scoped_choices))
+        updated = tuple(dict.fromkeys((*available, *scoped)))
+        unavailable = frozenset(scoped) - frozenset(available)
+        if (
+            scoped == self.scoped_choices
+            and updated == self.choices
+            and unavailable == self.unavailable_choices
+        ):
+            return
+        self.scoped_choices = scoped
+        self.unavailable_choices = unavailable
+        self.choices = updated
         self._refresh_model_list()
 
     def _select_visible_choice(self) -> None:
         if not self.visible_choices:
             return
-        model_list = self.query_one("#model-picker-list", ListView)
-        index = model_list.index
+        model_list = self.query_one("#model-picker-list", OptionList)
+        index = model_list.highlighted
         if index is None:
             return
         choice = self.visible_choices[index]
@@ -3123,30 +3345,27 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
             return
         if choice in self.unavailable_choices:
             return
+        self.cancel_refresh()
         self.dismiss(choice)
 
-    def _refresh_model_list(self) -> None:
+    def _label_for_choice(self, choice: ModelChoice) -> str:
+        return _model_picker_label(
+            choice,
+            current_model=self.current_model,
+            current_provider=self.provider_name,
+            scoped=choice in self.scoped_choices,
+            unavailable=choice in self.unavailable_choices,
+        )
+
+    def _refresh_model_list(self, *, rebuild_rows: bool = True) -> None:
         base_choices = self.scoped_choices if self.mode == "scoped" else self.choices
         self.visible_choices = _filter_model_choices(base_choices, self.search_value)
-        model_list = self.query_one("#model-picker-list", ListView)
-        model_list.clear()
-        model_list.extend(
-            [
-                ListItem(
-                    Label(
-                        _model_picker_label(
-                            choice,
-                            current_model=self.current_model,
-                            current_provider=self.provider_name,
-                            scoped=choice in self.scoped_choices,
-                            unavailable=choice in self.unavailable_choices,
-                        ),
-                        markup=False,
-                    )
-                )
-                for choice in self.visible_choices
-            ]
-        )
+        if rebuild_rows:
+            model_list = self.query_one("#model-picker-list", OptionList)
+            model_list.clear_options()
+            model_list.add_options(
+                self._label_for_choice(choice) for choice in self.visible_choices
+            )
         self._reset_model_list_index()
         scope_count = len(self.scoped_choices)
         tabs = self.query_one("#model-picker-tabs", Static)
@@ -4257,14 +4476,18 @@ class TauTuiApp(App[None]):
     #login-method-list ListItem Label,
     #login-provider-list ListItem Label,
     #theme-picker-list ListItem Label,
-    #model-picker-list ListItem Label {
+    #model-picker-list {
         color: $tau-screen-text;
     }
 
     #login-method-list ListItem.-highlight Label,
     #login-provider-list ListItem.-highlight Label,
-    #theme-picker-list ListItem.-highlight Label,
-    #model-picker-list ListItem.-highlight Label {
+    #theme-picker-list ListItem.-highlight Label {
+        background: $tau-highlight-background;
+        color: $tau-highlight-text;
+    }
+
+    #model-picker-list > .option-list--option-highlighted {
         background: $tau-highlight-background;
         color: $tau-highlight-text;
     }
@@ -4765,8 +4988,27 @@ class TauTuiApp(App[None]):
             return
         prompt = self.query_one("#prompt", PromptInput)
         prompt.sync_pending_paste()
-        self._sync_prompt_shell_mode(event.text_area.text)
-        self._completion_state = self._build_completion_state(event.text_area.text)
+        # Read text and cursor from the widget so both come from one snapshot.
+        text = prompt.text
+        self._sync_prompt_shell_mode(text)
+        self._completion_state = self._build_completion_state(text, cursor=prompt.cursor_position)
+        self._refresh_completions()
+
+    def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
+        """Close prompt autocomplete when the caret leaves the completed token."""
+        if event.text_area.id != "prompt":
+            return
+        # Edits post SelectionChanged before Changed; check after Changed has rebuilt.
+        self.call_later(self._close_completions_if_caret_left_token)
+
+    def _close_completions_if_caret_left_token(self) -> None:
+        if not self._completion_state.items:
+            return
+        item = self._completion_state.items[0]
+        cursor = self.query_one("#prompt", PromptInput).cursor_position
+        if item.start < cursor <= item.end:
+            return
+        self._completion_state = CompletionState()
         self._refresh_completions()
 
     async def action_submit_prompt(self) -> None:
@@ -4831,6 +5073,12 @@ class TauTuiApp(App[None]):
 
         command = self.session.handle_command(text)
         if command.handled:
+            if command.model_picker_requested:
+                self._open_model_picker()
+                return
+            if command.scoped_models_picker_requested:
+                self._open_scoped_models_picker()
+                return
             if command.clear_requested:
                 self.state.clear()
             if command.reload_requested:
@@ -4910,12 +5158,8 @@ class TauTuiApp(App[None]):
                     ),
                     exclusive=False,
                 )
-            if command.model_picker_requested:
-                self._open_model_picker()
             if command.tools_picker_requested:
                 self._open_tools_reference()
-            if command.scoped_models_picker_requested:
-                self._open_scoped_models_picker()
             if command.skills_picker_requested:
                 self._open_skills_picker()
             if command.theme_picker_requested:
@@ -4937,7 +5181,11 @@ class TauTuiApp(App[None]):
                 if _command_message_uses_notification(text, command.message):
                     self._notify(command.message)
                 elif _command_message_uses_transcript(text):
-                    self._append_command_message(text, command.message)
+                    self._append_command_message(
+                        text,
+                        command.message,
+                        system_prompt_inspection=command.system_prompt_inspection,
+                    )
                 else:
                     self._show_command_message(text, command.message)
             self._refresh()
@@ -5954,6 +6202,12 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
             if active_run_id != self._prompt_run_id:
                 return
+            if getattr(self.session, "has_pending_selection", False):
+                prompt = self.query_one("#prompt", PromptInput)
+                if not prompt.text:
+                    prompt.text = text
+                    prompt.move_cursor(_text_end_location(text))
+                    prompt.focus()
             message = _format_prompt_error(exc, self.session)
             self.state.error = message
             self.state.add_item("error", message)
@@ -6188,12 +6442,14 @@ class TauTuiApp(App[None]):
             self.screen.action_select_cursor()
             return
         prompt = self.query_one("#prompt", PromptInput)
+        item = self._completion_state.selected
         applied = self._apply_selected_completion(prompt.text)
-        if applied is None:
+        if applied is None or item is None:
             return
         prompt.text = applied
-        prompt.move_cursor(_text_end_location(applied))
-        self._completion_state = self._build_completion_state(prompt.text)
+        cursor = item.cursor_after_apply()
+        prompt.cursor_position = cursor
+        self._completion_state = self._build_completion_state(prompt.text, cursor=cursor)
         self._refresh_completions()
 
     def action_completion_next(self) -> None:
@@ -6371,13 +6627,14 @@ class TauTuiApp(App[None]):
 
         try:
             records = await asyncio.to_thread(_session_records, self.session)
+            archived_records = await asyncio.to_thread(_archived_session_records, self.session)
         except Exception as exc:  # noqa: BLE001 - keep local sessions usable
             if self.screen is picker:
                 picker.finish_loading()
                 self._notify(f"Could not load other projects: {exc}", severity="warning")
             return
         if await self._wait_for_open_session_picker(picker):
-            picker.update_records(records)
+            picker.update_records(records, archived_records=archived_records)
 
     async def _wait_for_open_session_picker(self, picker: SessionPickerScreen) -> bool:
         """Wait until this picker is mounted, or report that it was closed."""
@@ -6475,6 +6732,15 @@ class TauTuiApp(App[None]):
 
     def action_cycle_thinking(self) -> None:
         """Cycle the active thinking mode."""
+        preview = getattr(self.session, "preview_cycle_thinking_level", None)
+        if preview is not None:
+            try:
+                preview()
+            except Exception as exc:  # noqa: BLE001 - report invalid selections
+                self._notify(f"Could not change thinking mode: {exc}", severity="error")
+                return
+            self._refresh_chrome()
+            return
         self.run_worker(self._cycle_thinking_level(), exclusive=False)
 
     def action_cycle_model(self) -> None:
@@ -6488,6 +6754,15 @@ class TauTuiApp(App[None]):
     def _cycle_model(self, *, reverse: bool) -> None:
         if self.state.running:
             self._notify("Tau is already working. Press Escape to cancel.")
+            return
+        preview = getattr(self.session, "preview_cycle_scoped_model", None)
+        if preview is not None:
+            try:
+                preview(reverse=reverse)
+            except Exception as exc:  # noqa: BLE001 - report invalid selections
+                self._notify(f"Could not switch scoped model: {exc}", severity="error")
+                return
+            self._refresh_chrome()
             return
         self.run_worker(self._cycle_scoped_model(reverse=reverse), exclusive=False)
 
@@ -6516,6 +6791,74 @@ class TauTuiApp(App[None]):
         if session_id is None:
             return
         self.run_worker(self._resume_session(session_id), exclusive=False)
+
+    async def _archive_session_record(
+        self, record: SessionCompletionRecord, picker: SessionPickerScreen
+    ) -> None:
+        """Persist a session archive and update the open picker."""
+        manager = self.session.session_manager
+        archive = getattr(manager, "archive_session", None)
+        if not callable(archive):
+            self._notify("This session manager does not support archiving.", severity="warning")
+            return
+        try:
+            archived = await asyncio.to_thread(archive, record.id)
+        except Exception as exc:  # noqa: BLE001 - surface filesystem failures in the TUI
+            self._notify(f"Could not archive session: {exc}", severity="error")
+            return
+        if archived:
+            await picker._remove_records(record.cwd, record.id)
+            self._notify(f"Archived session: {record.id}")
+
+    async def _archive_session_project(self, cwd: Path, picker: SessionPickerScreen) -> None:
+        """Persist a project archive and update the open picker."""
+        manager = self.session.session_manager
+        archive = getattr(manager, "archive_project", None)
+        if not callable(archive):
+            self._notify("This session manager does not support archiving.", severity="warning")
+            return
+        try:
+            archived = await asyncio.to_thread(archive, cwd)
+        except Exception as exc:  # noqa: BLE001 - surface filesystem failures in the TUI
+            self._notify(f"Could not archive project: {exc}", severity="error")
+            return
+        if archived:
+            await picker._remove_records(cwd)
+            self._notify(f"Archived project: {_short_path(Path(cwd))}")
+
+    async def _unarchive_session_record(
+        self, record: SessionCompletionRecord, picker: SessionPickerScreen
+    ) -> None:
+        """Persist a session restore and update the open picker."""
+        manager = self.session.session_manager
+        unarchive = getattr(manager, "unarchive_session", None)
+        if not callable(unarchive):
+            self._notify("This session manager does not support restoring.", severity="warning")
+            return
+        try:
+            restored = await asyncio.to_thread(unarchive, record.id)
+        except Exception as exc:  # noqa: BLE001 - surface filesystem failures in the TUI
+            self._notify(f"Could not restore session: {exc}", severity="error")
+            return
+        if restored:
+            await picker._restore_records(record.cwd, record.id)
+            self._notify(f"Restored session: {record.id}")
+
+    async def _unarchive_session_project(self, cwd: Path, picker: SessionPickerScreen) -> None:
+        """Persist a project restore and update the open picker."""
+        manager = self.session.session_manager
+        unarchive = getattr(manager, "unarchive_project", None)
+        if not callable(unarchive):
+            self._notify("This session manager does not support restoring.", severity="warning")
+            return
+        try:
+            restored = await asyncio.to_thread(unarchive, cwd)
+        except Exception as exc:  # noqa: BLE001 - surface filesystem failures in the TUI
+            self._notify(f"Could not restore project: {exc}", severity="error")
+            return
+        if restored:
+            await picker._restore_records(cwd)
+            self._notify(f"Restored project: {_short_path(Path(cwd))}")
 
     async def _resume_session(self, session_id: str) -> None:
         try:
@@ -6645,7 +6988,13 @@ class TauTuiApp(App[None]):
             return None
         return item.apply(value)
 
-    def _append_command_message(self, command_text: str, message: str) -> None:
+    def _append_command_message(
+        self,
+        command_text: str,
+        message: str,
+        *,
+        system_prompt_inspection: SystemPromptInspection | None = None,
+    ) -> None:
         """Append non-persistent command output to the visible transcript."""
         is_system_prompt = command_text.split(maxsplit=1)[0].casefold() == "/system"
         separator = "\n\n" if is_system_prompt else "\n"
@@ -6656,6 +7005,9 @@ class TauTuiApp(App[None]):
             "status",
             f"{title}{separator}{message}",
             system_prompt=is_system_prompt,
+            system_prompt_sources=(
+                system_prompt_inspection.sources if system_prompt_inspection is not None else None
+            ),
         )
 
     def _show_command_message(self, command_text: str, message: str) -> None:
@@ -7005,70 +7357,79 @@ class TauTuiApp(App[None]):
     def _open_model_picker(self) -> None:
         choices = self._available_model_choices()
         scoped = tuple(getattr(self.session, "scoped_model_choices", ()))
-        if not choices and not scoped:
+        if (
+            not choices
+            and not scoped
+            and not getattr(self.session, "has_stale_active_model", False)
+        ):
             self._notify(
                 "No configured providers are usable. Run /login to set up a provider.",
                 severity="warning",
             )
             return
-        self.push_screen(
-            ModelPickerScreen(
-                choices,
-                scoped_choices=scoped,
-                current_model=self.session.model,
-                provider_name=self.session.provider_name,
-                theme=self.tui_settings.resolved_theme,
-                on_toggle_scoped=None,
-                picker_kind="model",
-            ),
-            callback=self._handle_model_picker_result,
+        picker = ModelPickerScreen(
+            choices,
+            scoped_choices=scoped,
+            current_model=self.session.model,
+            provider_name=self.session.provider_name,
+            theme=self.tui_settings.resolved_theme,
+            on_toggle_scoped=None,
+            picker_kind="model",
         )
-        self.run_worker(self._refresh_open_model_picker(), exclusive=False)
+        picker.on_first_refresh = lambda: self._start_model_picker_refresh(picker)
+        self.push_screen(
+            picker, callback=lambda choice: self._handle_model_picker_result(picker, choice)
+        )
 
-    async def _refresh_open_model_picker(self) -> None:
+    def _start_model_picker_refresh(self, picker: ModelPickerScreen) -> None:
+        if self.screen is picker:
+            picker.refresh_worker = self.run_worker(
+                self._refresh_open_model_picker(picker), exclusive=False
+            )
+
+    async def _refresh_open_model_picker(self, picker: ModelPickerScreen) -> None:
         refresh = getattr(self.session, "refresh_model_catalogs", None)
         if not callable(refresh):
             return
         try:
             await refresh()
         except Exception as error:
-            if isinstance(self.screen, ModelPickerScreen):
+            if self.screen is picker:
                 self._notify(f"Could not refresh model catalogs: {error}", severity="warning")
             return
-        if not isinstance(self.screen, ModelPickerScreen):
-            return
-        picker = self.screen
-        while not picker.is_mounted:
-            await asyncio.sleep(0)
-            if self.screen is not picker:
-                return
-        picker.update_choices(
-            self._available_model_choices(),
-            tuple(getattr(self.session, "scoped_model_choices", ())),
-        )
+        if self.screen is picker and picker.is_mounted:
+            picker.update_choices(
+                self._available_model_choices(),
+                tuple(getattr(self.session, "scoped_model_choices", ())),
+            )
 
     def _open_scoped_models_picker(self) -> None:
         choices = self._available_model_choices()
         scoped = tuple(getattr(self.session, "scoped_model_choices", ()))
-        if not choices and not scoped:
+        if (
+            not choices
+            and not scoped
+            and not getattr(self.session, "has_stale_active_model", False)
+        ):
             self._notify(
                 "No configured providers are usable. Run /login to set up a provider.",
                 severity="warning",
             )
             return
-        self.push_screen(
-            ModelPickerScreen(
-                choices,
-                scoped_choices=scoped,
-                current_model=self.session.model,
-                provider_name=self.session.provider_name,
-                theme=self.tui_settings.resolved_theme,
-                on_toggle_scoped=self._toggle_scoped_model,
-                picker_kind="scoped",
-            ),
-            callback=self._handle_scoped_models_picker_result,
+        picker = ModelPickerScreen(
+            choices,
+            scoped_choices=scoped,
+            current_model=self.session.model,
+            provider_name=self.session.provider_name,
+            theme=self.tui_settings.resolved_theme,
+            on_toggle_scoped=self._toggle_scoped_model,
+            picker_kind="scoped",
+            initial_thinking_level=self.session.thinking_level,
         )
-        self.run_worker(self._refresh_open_model_picker(), exclusive=False)
+        picker.on_first_refresh = lambda: self._start_model_picker_refresh(picker)
+        self.push_screen(
+            picker, callback=lambda choice: self._handle_scoped_models_picker_result(picker, choice)
+        )
 
     def _toggle_scoped_model(self, choice: ModelChoice) -> Sequence[ModelChoice]:
         toggle_scoped_model = getattr(self.session, "toggle_scoped_model", None)
@@ -7081,18 +7442,32 @@ class TauTuiApp(App[None]):
             self._notify(f"Could not update scoped models: {exc}", severity="error")
             return tuple(getattr(self.session, "scoped_model_choices", ()))
 
-    def _handle_scoped_models_picker_result(self, choice: ModelChoice | None) -> None:
+    def _handle_scoped_models_picker_result(
+        self, picker: ModelPickerScreen, choice: ModelChoice | None
+    ) -> None:
         del choice
-        self._refresh_chrome()
+        picker.cancel_refresh()
+        if (
+            picker.initial_thinking_level is not None
+            and picker.initial_thinking_level != self.session.thinking_level
+        ):
+            self.call_after_refresh(self._refresh_chrome)
 
-    def _handle_model_picker_result(self, choice: ModelChoice | None) -> None:
-        if choice is None:
-            return
+    def _handle_model_picker_result(
+        self, picker: ModelPickerScreen, choice: ModelChoice | None
+    ) -> None:
+        picker.cancel_refresh()
+        if choice is not None:
+            self.call_after_refresh(self._start_selected_model_switch, choice)
+
+    def _start_selected_model_switch(self, choice: ModelChoice) -> None:
         self.run_worker(self._switch_model(choice), exclusive=False)
 
     async def _switch_model(self, choice: ModelChoice) -> None:
         try:
-            select = getattr(self.session, "select_provider_model", None)
+            select = getattr(self.session, "preview_model_choice", None)
+            if select is None:
+                select = getattr(self.session, "select_provider_model", None)
             if select is not None:
                 result = select(choice)
                 if isawaitable(result):
@@ -7126,7 +7501,9 @@ class TauTuiApp(App[None]):
         self._set_tui_theme(theme)
 
     async def _set_thinking_level(self, level: str) -> None:
-        setter = getattr(self.session, "set_thinking_level", None)
+        setter = getattr(self.session, "preview_thinking_level", None)
+        if setter is None:
+            setter = getattr(self.session, "set_thinking_level", None)
         if setter is None:
             self._notify("Thinking controls are not available.", severity="warning")
             return
@@ -7417,10 +7794,11 @@ class TauTuiApp(App[None]):
         state = "shown" if self._sidebar_visibility_override else "hidden"
         self._notify(f"Sidebar {state} for this session.")
 
-    def _build_completion_state(self, text: str) -> CompletionState:
+    def _build_completion_state(self, text: str, *, cursor: int | None = None) -> CompletionState:
         registry = _session_command_registry(self.session)
         return build_completion_state(
             text,
+            cursor=cursor,
             command_registry=registry,
             skills=self.session.skills,
             prompt_templates=self.session.prompt_templates,
@@ -7698,6 +8076,15 @@ def _local_session_records(session: CodingSession) -> tuple[SessionCompletionRec
         records = manager.list_sessions()
     local_cwd = Path(session.cwd).resolve()
     return tuple(record for record in records if Path(record.cwd).resolve() == local_cwd)
+
+
+def _archived_session_records(session: CodingSession) -> tuple[SessionCompletionRecord, ...]:
+    """Return archived session metadata for the picker's archived tab."""
+    manager = getattr(session, "session_manager", None)
+    list_archived = getattr(manager, "list_archived_sessions", None)
+    if not callable(list_archived):
+        return ()
+    return tuple(list_archived())
 
 
 def _session_records(session: CodingSession) -> tuple[SessionCompletionRecord, ...]:

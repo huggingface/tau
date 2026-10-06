@@ -9,8 +9,42 @@ those locations and file formats.
 
 ## Tau home
 
+Tau stores user-level configuration and state in `~/.tau/` by default. Set
+`TAU_HOME` to select a different home for one invocation or shell profile:
+
+```bash
+TAU_HOME="$HOME/.tau-personal" tau
+```
+
+A non-empty override must be an absolute path after optional `~` expansion. An
+unset or empty value keeps the `~/.tau` default. Tau does not interpolate
+variables inside the value, so let your shell expand `$HOME` as in the example.
+Symlink paths are preserved rather than resolved.
+
+Every Tau-owned user path shown as `~/.tau/...` in this documentation follows
+`TAU_HOME`, including credentials, sessions, provider preferences, settings,
+trust decisions, extensions, logs, local-backend state, and model/update caches.
+The override does not relocate `~/.agents`, project-level `.tau`/`.agents`
+resources, explicit extension paths, or credentials supplied through environment
+variables. It is an application-profile boundary, not a security sandbox.
+Embedding applications that supply an explicit `TauPaths` keep using those
+paths regardless of the environment.
+
+For profiles containing OAuth credentials, create the directories with private
+permissions before signing in:
+
+```bash
+# POSIX shells
+install -d -m 700 "$HOME/.tau-personal" "$HOME/.tau-work"
+```
+
+On Windows, create the directories first and use the platform's access-control
+tools if other local users can read your profile. PowerShell can select a home
+for the current process with `$env:TAU_HOME = "$HOME\.tau-personal"` before
+launching `tau`.
+
 ```text
-~/.tau/
+<tau-home>/              # ~/.tau unless TAU_HOME is set
 ├── catalog.toml        # optional provider/model catalog overlay
 ├── providers.json      # provider/model preferences
 ├── models-store.json   # refreshed models.dev catalog cache

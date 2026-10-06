@@ -1,5 +1,5 @@
 # Tau built-in provider catalog, generated from Pi API-provider metadata.
-# User overrides live in ~/.tau/catalog.toml.
+# User overrides live in <Tau home>/catalog.toml (default: ~/.tau/catalog.toml).
 
 schema_version = 1
 

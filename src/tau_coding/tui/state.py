@@ -23,6 +23,7 @@ from tau_agent.tools import AgentToolResult, ToolCall
 from tau_agent.types import JSONValue
 from tau_coding.extensions.api import CustomMessageMarkup, ToolCallMarkup, ToolResultMarkup
 from tau_coding.skills import Skill, parse_skill_invocation
+from tau_coding.system_prompt import SystemPromptSource
 from tau_coding.tui.themes import TranscriptRole
 
 ChatItemRole = TranscriptRole
@@ -75,6 +76,7 @@ class ChatItem:
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
     system_prompt: bool = False
+    system_prompt_sources: tuple[SystemPromptSource, ...] | None = None
     highlight: Literal["alert", "update"] | None = None
 
 
@@ -125,6 +127,7 @@ class TuiState:
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
         system_prompt: bool = False,
+        system_prompt_sources: tuple[SystemPromptSource, ...] | None = None,
         highlight: Literal["alert", "update"] | None = None,
     ) -> None:
         """Append a transcript item."""
@@ -137,6 +140,7 @@ class TuiState:
             custom_type=custom_type,
             details=details,
             system_prompt=system_prompt,
+            system_prompt_sources=system_prompt_sources,
             highlight=highlight,
         )
         self.items.append(item)

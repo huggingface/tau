@@ -65,6 +65,10 @@ class CompletionItem:
         """Apply this completion to input text."""
         return f"{text[: self.start]}{self.replacement}{text[self.end :]}"
 
+    def cursor_after_apply(self) -> int:
+        """Return the cursor offset just after the applied replacement."""
+        return self.start + len(self.replacement)
+
 
 @dataclass(frozen=True, slots=True)
 class CompletionState:
@@ -102,6 +106,7 @@ class CompletionState:
 def build_completion_state(
     text: str,
     *,
+    cursor: int | None = None,
     command_registry: CommandRegistry,
     skills: Sequence[Skill],
     prompt_templates: Sequence[PromptTemplate],
@@ -114,12 +119,13 @@ def build_completion_state(
     cwd: Path | None = None,
 ) -> CompletionState:
     """Build autocomplete suggestions for the current prompt text."""
+    cursor = len(text) if cursor is None else max(0, min(cursor, len(text)))
     if not text.startswith("/") or text.startswith("//"):
         if cwd is not None:
-            shell_completions = _shell_path_completions(text=text, cwd=cwd)
+            shell_completions = _shell_path_completions(text=text, cursor=cursor, cwd=cwd)
             if shell_completions is not None:
                 return CompletionState(shell_completions)
-            return CompletionState(_file_reference_completions(text=text, cwd=cwd))
+            return CompletionState(_file_reference_completions(text=text, cursor=cursor, cwd=cwd))
         return CompletionState()
 
     token_end = _first_token_end(text)
@@ -129,7 +135,9 @@ def build_completion_state(
         if has_argument_text and _matches_skill_command(token, skills):
             # Skill arguments are prompt text, so @ file references stay available.
             if cwd is not None:
-                return CompletionState(_file_reference_completions(text=text, cwd=cwd))
+                return CompletionState(
+                    _file_reference_completions(text=text, cursor=cursor, cwd=cwd)
+                )
             return CompletionState()
         return CompletionState(_skill_completions(token=token, token_end=token_end, skills=skills))
 
@@ -151,7 +159,7 @@ def build_completion_state(
 
     if has_argument_text and _matches_prompt_template_command(token, prompt_templates):
         if cwd is not None:
-            return CompletionState(_file_reference_completions(text=text, cwd=cwd))
+            return CompletionState(_file_reference_completions(text=text, cursor=cursor, cwd=cwd))
         return CompletionState()
 
     if has_argument_text and _matches_registered_command(token, command_registry):
@@ -167,14 +175,16 @@ def build_completion_state(
     )
 
 
-def _file_reference_completions(*, text: str, cwd: Path) -> tuple[CompletionItem, ...]:
-    token = _active_file_reference_token(text)
+def _file_reference_completions(*, text: str, cursor: int, cwd: Path) -> tuple[CompletionItem, ...]:
+    token = _active_file_reference_token(text, cursor)
     if token is None:
         return ()
     start, end = token
-    prefix = text[start + 1 : end]
+    prefix = text[start + 1 : cursor]
+    existing = text[start:end]
     external_completions = _external_file_reference_completions(
         prefix=prefix,
+        existing=existing,
         start=start,
         end=end,
         cwd=cwd,
@@ -188,6 +198,8 @@ def _file_reference_completions(*, text: str, cwd: Path) -> tuple[CompletionItem
         if prefix.lower() not in relative.lower():
             continue
         display = f"@{relative}{'/' if path.is_dir() else ''}"
+        if display == existing:
+            continue
         suggestions.append(
             CompletionItem(
                 display=display,
@@ -204,13 +216,15 @@ def _file_reference_completions(*, text: str, cwd: Path) -> tuple[CompletionItem
 
 
 def _external_file_reference_completions(
-    *, prefix: str, start: int, end: int, cwd: Path
+    *, prefix: str, existing: str, start: int, end: int, cwd: Path
 ) -> tuple[CompletionItem, ...] | None:
     if prefix == ".." or prefix.endswith("/.."):
         target = cwd / prefix
         if not target.is_dir():
             return ()
         display = f"@{prefix}/"
+        if display == existing:
+            return ()
         return (
             CompletionItem(
                 display=display,
@@ -244,7 +258,7 @@ def _external_file_reference_completions(
         if not child.name.lower().startswith(name_prefix.lower()):
             continue
         display = f"@{parent_text}/{child.name}{'/' if child.is_dir() else ''}"
-        if display == f"@{prefix}":
+        if display == existing:
             continue
         suggestions.append(
             CompletionItem(
@@ -261,13 +275,15 @@ def _external_file_reference_completions(
     return tuple(suggestions)
 
 
-def _active_file_reference_token(text: str) -> tuple[int, int] | None:
-    cursor = len(text)
+def _active_file_reference_token(text: str, cursor: int) -> tuple[int, int] | None:
     token_start = max(text.rfind(" ", 0, cursor), text.rfind("\n", 0, cursor)) + 1
     at_index = text.rfind("@", token_start, cursor)
     if at_index == -1:
         return None
-    return at_index, cursor
+    end = cursor
+    while end < len(text) and not text[end].isspace():
+        end += 1
+    return at_index, end
 
 
 def _iter_file_reference_paths(cwd: Path) -> tuple[Path, ...]:
@@ -298,13 +314,17 @@ def _is_ignored_file_completion_path(path: Path, *, cwd: Path) -> bool:
     return any(part in IGNORED_FILE_COMPLETION_DIRS for part in relative_parts)
 
 
-def _shell_path_completions(*, text: str, cwd: Path) -> tuple[CompletionItem, ...] | None:
+def _shell_path_completions(
+    *, text: str, cursor: int, cwd: Path
+) -> tuple[CompletionItem, ...] | None:
     prefix_span = _shell_command_prefix_span(text)
     if prefix_span is None:
         return None
+    if cursor < prefix_span[1]:
+        return ()
 
-    start, end = _active_shell_path_token(text=text, command_start=prefix_span[1])
-    token = text[start:end]
+    start, end = _active_shell_path_token(text=text, cursor=cursor, command_start=prefix_span[1])
+    token = text[start:cursor]
     if not token:
         return ()
 
@@ -332,7 +352,7 @@ def _shell_path_completions(*, text: str, cwd: Path) -> tuple[CompletionItem, ..
             continue
         relative = child.relative_to(cwd).as_posix()
         replacement = f"{replacement_prefix}{relative}{'/' if child.is_dir() else ''}"
-        if replacement == token:
+        if replacement == text[start:end]:
             continue
         suggestions.append(
             CompletionItem(
@@ -359,8 +379,7 @@ def _shell_command_prefix_span(text: str) -> tuple[int, int] | None:
     return None
 
 
-def _active_shell_path_token(*, text: str, command_start: int) -> tuple[int, int]:
-    cursor = len(text)
+def _active_shell_path_token(*, text: str, cursor: int, command_start: int) -> tuple[int, int]:
     token_start = command_start
     escaped = False
     for index in range(cursor - 1, command_start - 1, -1):
@@ -374,7 +393,20 @@ def _active_shell_path_token(*, text: str, command_start: int) -> tuple[int, int
         if char.isspace():
             token_start = index + 1
             break
-    return token_start, cursor
+    return token_start, _shell_token_end(text, cursor)
+
+
+def _shell_token_end(text: str, cursor: int) -> int:
+    index = cursor
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char.isspace():
+            return index
+        index += 1
+    return len(text)
 
 
 def _parse_shell_path_token(token: str) -> tuple[str, str, str] | None:

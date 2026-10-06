@@ -4,6 +4,26 @@ A provider hosts models; a model is the exact ID accepted by that provider. Use
 `/login` for durable built-in credentials and `/model` to choose an available
 model.
 
+## Multiple account profiles
+
+Tau stores one saved credential per provider in its user-data home. The home is
+`~/.tau` by default; set `TAU_HOME` to a non-empty absolute path (after `~`
+expansion) to select another one. Separate homes isolate credentials, sessions,
+provider preferences, settings, extensions, and caches, which makes shell
+aliases useful for multiple provider accounts:
+
+```bash
+alias tau-work='TAU_HOME="$HOME/.tau-work" command tau'
+alias tau-personal='TAU_HOME="$HOME/.tau-personal" command tau'
+```
+
+Run `/login anthropic-subscription` once through each alias to connect a
+different Claude Pro/Max account. User-level `~/.agents` resources and project
+`.tau`/`.agents` resources remain shared; `TAU_HOME` is an application profile
+boundary, not a security sandbox. Environment-provided API keys also remain
+process-wide. An explicit `TauPaths` supplied by an embedding application takes
+precedence over `TAU_HOME`.
+
 ## Built-in llama.cpp
 
 Tau includes a trusted, hidden `llama.cpp` provider layer for local inference.
@@ -110,8 +130,13 @@ Tau thinking levels match Pi: `off`, `minimal`, `low`, `medium`, `high`,
 Empty or toggle-only reasoning options produce no generated override, matching
 Pi. Provider/manual behavior remains in effect for those models.
 
-Tau also refreshes catalogs like Pi. Opening `/model` shows the current snapshot
-immediately and refreshes in the background. `tau update --models` forces a
+Tau also refreshes catalogs like Pi. Opening `/model` or `/scoped-models` does
+not reload provider settings first: the pickers show the current snapshot
+immediately and refresh in the background. A refreshed catalog that drops the
+active model (including an empty catalog) updates the picker without replacing
+the already running provider. The missing model cannot be selected again until
+it reappears. A pending TUI preview is not used when rebuilding the committed
+runtime. `tau update --models` forces a
 refresh. Results are ETag-revalidated, throttled to four hours, and cached at
 `~/.tau/models-store.json`; a cache applies only when newer than the bundled
 snapshot. Since Tau has no hosted catalog service, it fetches models.dev and

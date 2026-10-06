@@ -2,6 +2,11 @@
 
 Tau is a minimalist Python coding-agent harness inspired by Pi. Use these installed references when a user asks how to configure, extend, or contribute to Tau.
 
+Tau's user-data home defaults to `~/.tau`. Set `TAU_HOME` to a non-empty
+absolute path (after `~` expansion) to select another home. All `~/.tau` paths
+in these references follow that override; `~/.agents` and project `.tau`
+resources remain separate.
+
 - [Extensions](extensions.md): build Python extensions, custom tools, commands, hooks, dialogs, and renderers.
 - [Skills](skills.md): install reusable task knowledge and prompt templates.
 - [Models](models.md): configure providers and models, including local inference.
