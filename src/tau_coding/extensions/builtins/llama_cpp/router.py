@@ -125,19 +125,7 @@ async def list_router_models(
             state = cast(RouterState, value)
         else:
             state = "unknown"
-        architecture = raw.get("architecture")
-        modalities_raw = (
-            architecture.get("input_modalities") if isinstance(architecture, Mapping) else None
-        )
-        modalities = None
-        if (
-            isinstance(modalities_raw, list)
-            and modalities_raw
-            and all(item in {"text", "image"} for item in modalities_raw)
-        ):
-            modalities = cast(
-                tuple[Literal["text", "image"], ...], tuple(dict.fromkeys(modalities_raw))
-            )
+        modalities = reported_input_modalities(raw)
         display = raw.get("name", raw.get("display_name"))
         downloaded_bytes, download_total_bytes = _download_progress(status)
         result.append(
@@ -154,6 +142,41 @@ async def list_router_models(
             )
         )
     return tuple(result)
+
+
+# Input modalities llama.cpp can report. Tau sends only text and images, so the
+# others are dropped; any other value makes the whole report untrusted.
+_LLAMA_CPP_INPUT_MODALITIES = frozenset({"text", "image", "audio", "video"})
+
+
+def reported_input_modalities(
+    model: Mapping[str, object],
+) -> tuple[Literal["text", "image"], ...] | None:
+    """Return the text and image inputs a llama.cpp ``/models`` entry reports.
+
+    llama.cpp reports them under ``architecture.input_modalities``; a top-level
+    ``input_modalities`` or ``modalities`` list is accepted for other servers.
+    Returns None when nothing is reported or the report holds an unknown value.
+    """
+    architecture = model.get("architecture")
+    value = architecture.get("input_modalities") if isinstance(architecture, Mapping) else None
+    if value is None:
+        value = model.get("input_modalities", model.get("modalities"))
+    if not isinstance(value, list) or not value:
+        return None
+    if not all(isinstance(entry, str) and entry in _LLAMA_CPP_INPUT_MODALITIES for entry in value):
+        return None
+    supported = tuple(dict.fromkeys(entry for entry in value if entry in {"text", "image"}))
+    return cast(tuple[Literal["text", "image"], ...], supported) or None
+
+
+def props_input_modalities(props: object) -> tuple[Literal["text", "image"], ...] | None:
+    """Return the inputs a standard server's ``/props`` reports as ``modalities.vision``."""
+    modalities = props.get("modalities") if isinstance(props, Mapping) else None
+    vision = modalities.get("vision") if isinstance(modalities, Mapping) else None
+    if not isinstance(vision, bool):
+        return None
+    return ("text", "image") if vision else ("text",)
 
 
 def _download_progress(status: object) -> tuple[int | None, int | None]:
@@ -311,5 +334,7 @@ __all__ = [
     "detect_router",
     "list_router_models",
     "mutate_router_model",
+    "props_input_modalities",
+    "reported_input_modalities",
     "watch_router_download_progress",
 ]

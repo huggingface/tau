@@ -6,7 +6,7 @@ import asyncio
 import secrets
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Literal, cast
@@ -70,6 +70,8 @@ from .router import (
     detect_router,
     list_router_models,
     mutate_router_model,
+    props_input_modalities,
+    reported_input_modalities,
     watch_router_download_progress,
 )
 from .state import (
@@ -322,6 +324,8 @@ class LlamaCppService:
             )
             payload = _json_object(response, "/v1/models")
             models = _parse_models(payload)
+            if len(models) == 1 and models[0].input_modalities is None:
+                models = (await self._with_props_modalities(client, headers, models[0]),)
             return LlamaCppDiscovery(
                 self.endpoint,
                 models,
@@ -1439,6 +1443,29 @@ class LlamaCppService:
                 ),
             )
 
+    async def _with_props_modalities(
+        self,
+        client: httpx.AsyncClient,
+        headers: Mapping[str, str],
+        model: ProviderModel,
+    ) -> ProviderModel:
+        """Fill a single model's inputs from ``/props`` when ``/v1/models`` omits them.
+
+        llama.cpp builds before October 2026 report image support only in
+        ``/props``, which describes the one loaded model of a standard server.
+        Any failure leaves the model unchanged.
+        """
+        try:
+            response = await client.get(self.endpoint.server_root + "/props", headers=dict(headers))
+        except asyncio.CancelledError:
+            raise
+        except httpx.HTTPError:
+            return model
+        if response.status_code != 200:
+            return model
+        modalities = props_input_modalities(_safe_json(response))
+        return model if modalities is None else replace(model, input_modalities=modalities)
+
     async def _get(
         self,
         client: httpx.AsyncClient,
@@ -1562,7 +1589,7 @@ def _parse_models(payload: Mapping[str, object]) -> tuple[ProviderModel, ...]:
         ids.add(model_id)
         display = item.get("name", item.get("display_name"))
         display_name = display if isinstance(display, str) and display.strip() else model_id
-        modalities = _modalities(item)
+        modalities = reported_input_modalities(item)
         context_window = _reported_context_window(item)
         models.append(
             ProviderModel(
@@ -1576,16 +1603,6 @@ def _parse_models(payload: Mapping[str, object]) -> tuple[ProviderModel, ...]:
             )
         )
     return tuple(models)
-
-
-def _modalities(item: Mapping[str, object]) -> tuple[Literal["text", "image"], ...] | None:
-    value = item.get("input_modalities", item.get("modalities"))
-    if not isinstance(value, list) or not value:
-        return None
-    if not all(isinstance(entry, str) and entry in {"text", "image"} for entry in value):
-        return None
-    result = tuple(dict.fromkeys(value))
-    return cast(tuple[Literal["text", "image"], ...], result) or None
 
 
 def _reported_context_window(item: Mapping[str, object]) -> int | None:
