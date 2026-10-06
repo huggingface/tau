@@ -9,7 +9,7 @@ export default defineConfig({
   publicDir: "./static",
   integrations: [sitemap()],
   markdown: {
-    shikiConfig: { theme: "monokai" },
+    shikiConfig: { theme: "min-light" },
     processor: unified({ remarkPlugins: [admonitions] }),
   },
 });
