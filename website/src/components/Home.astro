@@ -837,3 +837,65 @@ Renamed 6 call sites across 2 files.</pre>
     requestAnimationFrame(frame);
   })();
 </script>
+
+<script is:inline>
+  // Draw each hand-drawn figure, stroke by stroke, when it scrolls into view.
+  (function () {
+    if (!("IntersectionObserver" in window)) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var SKIP = { loopRadius: 1, loopWedge: 1, loopTheta: 1 };
+    var TOTAL = 1600,
+      DRAW = 500,
+      FADE = 400;
+    document.querySelectorAll("figure.sketch").forEach(function (fig) {
+      var els = Array.prototype.filter.call(
+        fig.querySelectorAll("svg path, svg circle, svg text"),
+        function (el) {
+          return !el.closest("defs") && !SKIP[el.id];
+        },
+      );
+      var step = Math.min(70, TOTAL / Math.max(els.length, 1));
+      var markers = [];
+      els.forEach(function (el, i) {
+        el.style.setProperty("--i", String(i));
+        el.style.setProperty("--step", step + "ms");
+        var stroked =
+          el.closest(".ink") &&
+          el.tagName !== "text" &&
+          !el.classList.contains("flow");
+        el.classList.add(stroked ? "draw" : "fade");
+        if (stroked) el.setAttribute("pathLength", "1");
+        var m = el.getAttribute("marker-end");
+        if (m) {
+          el.removeAttribute("marker-end");
+          markers.push({ el: el, m: m, at: i * step + DRAW });
+        }
+      });
+      fig.classList.add("pending");
+      var io = new IntersectionObserver(
+        function (entries) {
+          if (!entries[0].isIntersecting) return;
+          io.disconnect();
+          fig.classList.remove("pending");
+          markers.forEach(function (x) {
+            setTimeout(function () {
+              x.el.setAttribute("marker-end", x.m);
+            }, x.at);
+          });
+          // Hand control back to the figure's own styles once drawing is done.
+          setTimeout(
+            function () {
+              els.forEach(function (el) {
+                el.classList.remove("draw", "fade");
+                el.removeAttribute("pathLength");
+              });
+            },
+            els.length * step + DRAW + FADE + 300,
+          );
+        },
+        { threshold: 0.3 },
+      );
+      io.observe(fig);
+    });
+  })();
+</script>

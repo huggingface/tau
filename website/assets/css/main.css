@@ -625,3 +625,12 @@ section{ padding:80px 0; border-top:var(--hair); }
 .hero-loop .wedge{ stroke:rgba(194,64,42,.12); }
 .hero-loop .angle{ fill:var(--ink-soft); }
 ::selection{ background:var(--pen); color:#fff; }
+
+/* ---- figures draw themselves on scroll (classes set by Home.astro) ---- */
+.sketch .draw{
+  stroke-dasharray:1; stroke-dashoffset:0;
+  transition:stroke-dashoffset .5s ease-in-out calc(var(--i) * var(--step));
+}
+.sketch.pending .draw{ stroke-dashoffset:1; }
+.sketch .fade{ transition:opacity .4s ease calc(var(--i) * var(--step) + 250ms); }
+.sketch.pending .fade{ opacity:0; }
