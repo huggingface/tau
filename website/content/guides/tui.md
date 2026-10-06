@@ -216,8 +216,11 @@ when you want to reduce what is sent to the model.
 
 ## Picking models and themes
 
-- **`/model`** opens the model picker. It shows cached/bundled models immediately,
-  refreshes catalogs in the background, and updates the open list. The
+- **`/model`** opens the model picker from cached/bundled models immediately,
+  then refreshes catalogs in the background after the picker first renders.
+  Its model list renders only visible rows and updates the open list. Closing
+  either model picker stops its in-progress catalog refresh; cancelling a
+  scoped-model picker does not rebuild the sidebar unnecessarily. The
   account-scoped Codex snapshot is also reused across sessions, and `/model`
   refreshes it.
 - **`/scoped-models`** opens the favorite-model picker and refreshes provider
@@ -227,6 +230,11 @@ when you want to reduce what is sent to the model.
 - **Ctrl+P** quickly cycles forward through your *scoped* (favorite) models;
   **Shift+Ctrl+P** cycles backward. Neither opens the picker. Manage that list
   with `/scoped-models` or by pressing `Space` on a model in the `/model` picker.
+- Model and thinking selections update the status display immediately. Tau records
+  only the final selections when you send the next message, before that message
+  enters session history. Unsent selections disappear when you restart; cycling
+  does not change the default for future sessions. If the selected model cannot
+  be prepared, Tau reports an error instead of sending with the old model.
 - **`/theme`** switches between `tau-dark`, `tau-light`, `high-contrast`, and
   any custom themes you have installed. Each theme uses one shared selection
   palette for prompt autocomplete and modal lists such as `/resume`. In
@@ -331,6 +339,11 @@ forgotten when Tau restarts. A configured `off` sidebar can be shown temporarily
 on the default right side.
 
 ## Herdr compatibility
+
+In the prompt editor, Option/Alt+Left and Right move by word, including inside
+Herdr, whether forwarded as Alt arrows or Kitty Alt+b/Alt+f. Alt+b/Alt+f also
+move by word. Add Shift to arrows to select by word. No macOS Ctrl-arrow shortcut changes are
+needed. Existing Ctrl-arrow and terminal Esc+b/Esc+f navigation still work.
 
 When Tau detects that its TUI is running inside Herdr, it defaults Textual to
 cell-coordinate mouse input and standard terminal resize signals. This avoids a

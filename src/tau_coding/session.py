@@ -465,11 +465,16 @@ class CodingSession:
         self._resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
         self._auto_compact_token_threshold = config.auto_compact_token_threshold
         self._auto_compact_enabled = config.auto_compact_enabled
+        self._preview_model: ModelChoice | None = None
+        self._preview_thinking: ThinkingLevel | None = None
         self._thinking_level = _state_thinking_level(
             state,
             default=_default_thinking_level_for_active_model(self),
         )
         self._context_usage_cache: ContextUsageEstimate | None = None
+        self._session_stats_cache: tuple[SessionState, CodingSessionConfig, SessionStats] | None = (
+            None
+        )
         self._owned_providers: list[ClosableModelProvider] = []
         self._close_task: asyncio.Task[None] | None = None
         self._diagnostic_logger = AgentCallDiagnosticLogger.from_paths(self._resource_paths.paths)
@@ -806,11 +811,15 @@ class CodingSession:
     @property
     def model(self) -> str:
         """Return the active model for this session."""
+        if self._preview_model is not None:
+            return self._preview_model.model
         return self._harness.config.model
 
     @property
     def provider_name(self) -> str:
         """Return the active provider name."""
+        if self._preview_model is not None:
+            return self._preview_model.provider_name
         return self._provider_name
 
     @property
@@ -830,7 +839,7 @@ class CodingSession:
 
     @property
     def _active_dynamic_provider(self) -> DynamicProvider | None:
-        effective = self._provider_registry.effective(self._provider_name)
+        effective = self._provider_registry.effective(self.provider_name)
         if effective is None or not isinstance(effective.definition, DynamicProvider):
             return None
         return effective.definition
@@ -875,7 +884,7 @@ class CodingSession:
         if self._provider_settings is None:
             return (self.model,)
         try:
-            provider = self._provider_settings.get_provider(self._provider_name)
+            provider = self._provider_settings.get_provider(self.provider_name)
         except ProviderConfigError:
             return (self.model,)
         if not self._provider_is_usable(provider):
@@ -915,6 +924,13 @@ class CodingSession:
             if choice in available or self._stable_dynamic_scoped_provider(item.provider):
                 choices.append(choice)
         return tuple(choices)
+
+    @property
+    def has_stale_active_model(self) -> bool:
+        """Whether the committed runtime model disappeared from the picker snapshot."""
+        return ModelChoice(self._provider_name, self._harness.config.model) not in (
+            self.available_model_choices
+        )
 
     @property
     def unavailable_scoped_model_choices(self) -> tuple[ModelChoice, ...]:
@@ -1050,6 +1066,8 @@ class CodingSession:
             target_id = selected_entry.parent_id
             input_prefill = selected_entry.message.text
 
+        self._preview_model = None
+        self._preview_thinking = None
         self._last_parent_id = target_id
 
         # Plain navigation is in-memory only. A summary above is the sole write,
@@ -1078,6 +1096,8 @@ class CodingSession:
     @property
     def thinking_level(self) -> ThinkingLevel:
         """Return the active thinking mode for future turns."""
+        if self._preview_thinking is not None:
+            return self._preview_thinking
         return self._thinking_level
 
     @property
@@ -1091,7 +1111,7 @@ class CodingSession:
             return model.thinking_levels or ()
         if self._provider_settings is None:
             return THINKING_LEVELS
-        provider = self._active_provider_config()
+        provider = self._selected_provider_config()
         if provider is None:
             return ()
         return provider_thinking_levels(provider, model=self.model)
@@ -1112,7 +1132,7 @@ class CodingSession:
                     "thinking levels"
                 )
             return f"{self.provider_name}:{self.model} declares no configurable thinking levels"
-        provider = self._active_provider_config()
+        provider = self._selected_provider_config()
         if provider is None:
             return "Active provider settings are not available"
         return provider_thinking_unavailable_reason(provider, model=self.model)
@@ -1342,10 +1362,12 @@ class CodingSession:
     @property
     def session_stats(self) -> SessionStats:
         """Return cumulative activity and billed usage for the active branch."""
-        return calculate_session_stats(
-            self._state.entries,
-            pricing=self._pricing_for_response,
-        )
+        cached = self._session_stats_cache
+        if cached is not None and cached[0] is self._state and cached[1] is self._config:
+            return cached[2]
+        stats = calculate_session_stats(self._state.entries, pricing=self._pricing_for_response)
+        self._session_stats_cache = (self._state, self._config, stats)
+        return stats
 
     def _pricing_for_response(
         self,
@@ -1575,7 +1597,9 @@ class CodingSession:
         self._last_parent_id = entry.id
         await self._refresh_persisted_state(leaf_id=entry.id)
 
-    async def select_provider_model(self, choice: ModelChoice) -> ModelSelectionResult:
+    async def select_provider_model(
+        self, choice: ModelChoice, *, persist_default: bool = True
+    ) -> ModelSelectionResult:
         """Switch provider/model with candidate-first durable publication.
 
         No active state changes until the candidate runtime exists and the
@@ -1707,7 +1731,7 @@ class CodingSession:
         if old_provider is not candidate:
             with suppress(Exception):
                 await self._close_replaced_provider(old_provider)
-        if selected_config is not None:
+        if selected_config is not None and persist_default:
             self._persist_default_model_choice()
         return ModelSelectionResult(choice, changed=True)
 
@@ -1804,6 +1828,93 @@ class CodingSession:
         self._sync_thinking_level_to_active_model()
         return self.scoped_model_choices
 
+    @property
+    def has_pending_selection(self) -> bool:
+        """Whether a TUI selection has not yet been committed to history."""
+        return self._preview_model is not None or self._preview_thinking is not None
+
+    def preview_model_choice(self, choice: ModelChoice) -> None:
+        """Select a model for the next turn without constructing or persisting a provider."""
+        if self._harness.is_running:
+            raise RuntimeError("Cannot switch models while Tau is working")
+        if choice not in self.available_model_choices:
+            raise ProviderConfigError(
+                f"Model is not available: {choice.provider_name}:{choice.model}"
+            )
+        self._preview_model = choice
+        levels = self.available_thinking_levels
+        if not levels:
+            self._preview_thinking = "off"
+        elif self.thinking_level not in levels:
+            self._preview_thinking = levels[0]
+        self._invalidate_runtime_model_limits()
+
+    def preview_thinking_level(self, level: str) -> str:
+        """Select a thinking level for the next turn without touching durable settings."""
+        normalized = normalize_thinking_level(level)
+        levels = self.available_thinking_levels
+        if not levels:
+            raise ValueError(_unavailable_thinking_message(self))
+        if normalized not in levels:
+            raise ValueError(
+                f"Thinking mode {normalized} is not available. Available: {', '.join(levels)}"
+            )
+        self._preview_thinking = normalized
+        return f"Thinking mode: {normalized}"
+
+    def preview_cycle_thinking_level(self) -> str:
+        return self.preview_thinking_level(
+            next_thinking_level(self.thinking_level, available=self.available_thinking_levels)
+        )
+
+    def preview_cycle_scoped_model(self, *, reverse: bool = False) -> ModelChoice:
+        """Cycle through available scoped choices without changing durable state."""
+        available = set(self.available_model_choices)
+        scoped = tuple(choice for choice in self.scoped_model_choices if choice in available)
+        if not scoped:
+            raise ProviderConfigError("No scoped models configured.")
+        current = ModelChoice(self.provider_name, self.model)
+        try:
+            index = scoped.index(current)
+        except ValueError:
+            index = 0 if reverse else -1
+        choice = scoped[(index + (-1 if reverse else 1)) % len(scoped)]
+        self.preview_model_choice(choice)
+        return choice
+
+    async def _commit_preview(self) -> None:
+        """Commit the final pending selection before the next accepted user turn."""
+        choice, thinking = self._preview_model, self._preview_thinking
+        if choice is None and thinking is None:
+            return
+        self._preview_model = None
+        self._preview_thinking = None
+        try:
+            if choice is not None:
+                await self.select_provider_model(choice, persist_default=False)
+            if thinking is not None and thinking != self._state.thinking_level:
+                if thinking == "off" and not self.available_thinking_levels:
+                    # A non-reasoning model has no effort control to rebuild.
+                    self._thinking_level = "off"
+                if thinking != self._thinking_level and self.available_thinking_levels:
+                    await self.set_thinking_level(thinking, persist_preference=False)
+                elif thinking == self._thinking_level:
+                    # A model switch can clamp thinking before set_thinking_level
+                    # runs. Record that effective change on the same branch.
+                    entry = ThinkingLevelChangeEntry(
+                        parent_id=self._last_parent_id, thinking_level=thinking
+                    )
+                    await self._append_session_entry(entry)
+                    self._last_parent_id = entry.id
+                    await self._refresh_persisted_state(leaf_id=entry.id)
+                    await self._extension_runtime.emit_event(
+                        ThinkingLevelChangedEvent(level=thinking)
+                    )
+        except Exception:
+            self._preview_model = choice
+            self._preview_thinking = thinking
+            raise
+
     def cycle_scoped_model(self, *, reverse: bool = False) -> ModelChoice:
         """Switch to the next currently available configured scoped model."""
         available = set(self.available_model_choices)
@@ -1887,7 +1998,7 @@ class CodingSession:
                 preserve_inference_provider=False,
             )
 
-    async def set_thinking_level(self, level: str) -> str:
+    async def set_thinking_level(self, level: str, *, persist_preference: bool = True) -> str:
         """Persist and activate a thinking mode for future turns."""
         normalized = normalize_thinking_level(level)
         available = self.available_thinking_levels
@@ -1917,7 +2028,8 @@ class CodingSession:
         await self._append_session_entry(entry)
         self._last_parent_id = entry.id
 
-        self._persist_thinking_level_choice()
+        if persist_preference:
+            self._persist_thinking_level_choice()
         await self._refresh_persisted_state(leaf_id=entry.id)
         await self._extension_runtime.emit_event(ThinkingLevelChangedEvent(level=normalized))
         return f"Thinking mode: {normalized}"
@@ -1931,6 +2043,17 @@ class CodingSession:
             )
         )
 
+    def _selected_provider_config(self) -> ProviderConfig | None:
+        """Resolve displayed capabilities without changing the committed runtime."""
+        if self._preview_model is None:
+            return self._active_provider_config()
+        if self._provider_settings is None:
+            return None
+        try:
+            return self._provider_settings.get_provider(self.provider_name)
+        except ProviderConfigError:
+            return None
+
     def _active_provider_config(self) -> ProviderConfig | None:
         if self._provider_settings is None:
             return None
@@ -1941,10 +2064,10 @@ class CodingSession:
         runtime = self._runtime_provider_config
         if (
             isinstance(provider, OpenAICodexProviderConfig)
-            and self.model not in provider.models
+            and self._harness.config.model not in provider.models
             and runtime is not None
             and runtime.name == provider.name
-            and self.model in runtime.models
+            and self._harness.config.model in runtime.models
         ):
             # Picker visibility must not invalidate an already selected runtime.
             return runtime
@@ -1990,17 +2113,20 @@ class CodingSession:
         provider = self._active_provider_config()
         if provider is None:
             return
+        committed_model = self._harness.config.model
         self._thinking_level = _coerced_thinking_level(
             provider,
-            model=self.model,
+            model=committed_model,
             current=self._thinking_level,
-            preferred=provider.thinking_defaults.get(self.model),
+            preferred=provider.thinking_defaults.get(committed_model),
         )
 
     def _sync_image_support(self) -> None:
         provider = self._active_provider_config() or self._runtime_provider_config
         self._image_support.supported = (
-            provider_model_supports_images(provider, self.model) if provider is not None else None
+            provider_model_supports_images(provider, self._harness.config.model)
+            if provider is not None
+            else None
         )
 
     def _persist_default_model_choice(self) -> None:
@@ -2195,12 +2321,13 @@ class CodingSession:
         if self._runtime_provider_config is None:
             raise ProviderConfigError("Runtime provider configuration is unavailable")
         provider_config = self._active_provider_config() or self._runtime_provider_config
-        validate_provider_model(provider_config, self.model)
+        committed_model = self._harness.config.model
+        validate_provider_model(provider_config, committed_model)
         try:
             provider = _create_runtime_provider(
                 provider_config,
                 credential_store=self._credential_store,
-                model=self.model,
+                model=committed_model,
                 thinking_level=self._thinking_level,
                 inference_provider=inference_provider,
                 response_headers_observer=(
@@ -2602,6 +2729,11 @@ class CodingSession:
         previous_thinking_level = self._thinking_level
         self._durable_provider_settings = load_provider_settings(self._resource_paths.paths)
         self._apply_runtime_model_catalogs()
+        active_config = self._active_provider_config()
+        if active_config is None or self._harness.config.model not in active_config.models:
+            # The refreshed picker snapshot is authoritative for new selections,
+            # but cannot invalidate an already constructed, working provider.
+            return
         try:
             self._sync_thinking_level_to_active_model()
             self._refresh_runtime_provider()
@@ -2715,7 +2847,7 @@ class CodingSession:
                 # Only provider-less legacy records inherit the source model.
                 # The staged loader has already resolved provider-aware records
                 # against the destination's (possibly freshly discovered) catalog.
-                replacement._harness.config.model = self.model
+                replacement._harness.config.model = self._harness.config.model
                 replacement._sync_thinking_level_to_active_model()
                 replacement._refresh_runtime_provider()
                 replacement._sync_image_support()
@@ -2783,7 +2915,7 @@ class CodingSession:
             raise ValueError("Session manager is not available")
 
         provider_name = self._provider_name
-        model = self.model
+        model = self._harness.config.model
         runtime_provider_config = self._runtime_provider_config
         thinking_level = self._thinking_level
         if self._provider_settings is not None:
@@ -2838,7 +2970,11 @@ class CodingSession:
         replacement = await type(self).load(
             replace(
                 self._config,
-                provider=(None if dynamic_provider is not None else self._harness.config.provider),
+                # The old runtime may belong to a different provider. Stage a
+                # fresh runtime for the new session's default provider/model.
+                provider=(
+                    self._harness.config.provider if self._provider_settings is None else None
+                ),
                 model=record.model or model,
                 cwd=record.cwd,
                 storage=jsonl_session_storage(record.path),
@@ -2852,7 +2988,7 @@ class CodingSession:
                 provider_settings=self._durable_provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 dynamic_provider=dynamic_provider,
-                owns_initial_provider=dynamic_provider is not None,
+                owns_initial_provider=False,
                 defer_authoritative_writes=dynamic_provider is not None,
                 thinking_level=thinking_level,
                 index_on_first_persist=True,
@@ -2905,6 +3041,8 @@ class CodingSession:
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness
+        self._preview_model = None
+        self._preview_thinking = None
         # Detach the replacement's persistence listener so writes advance
         # this session's parent pointers, not the discarded replacement's.
         if replacement._persistence_unsubscribe is not None:
@@ -3187,6 +3325,7 @@ class CodingSession:
             )
 
         await self._flush_pending_message_writes(context=context)
+        await self._commit_preview()
         await self._refresh_runtime_model_limits()
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
         # id() values can be reused once earlier message objects are freed.
@@ -4475,7 +4614,7 @@ async def _prepare_provider_selection(
         inference_provider,
     )
     try:
-        runtime = create_model_provider(
+        runtime = _create_runtime_provider(
             selection.provider,
             credential_store=credential_store,
             model=selection.model,
@@ -4636,7 +4775,7 @@ def _state_thinking_level(
 def _create_runtime_provider(
     provider: ProviderConfig,
     *,
-    credential_store: FileCredentialStore,
+    credential_store: FileCredentialStore | None,
     model: str,
     thinking_level: ThinkingLevel | None,
     inference_provider: str | None,

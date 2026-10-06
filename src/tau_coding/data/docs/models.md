@@ -130,8 +130,13 @@ Tau thinking levels match Pi: `off`, `minimal`, `low`, `medium`, `high`,
 Empty or toggle-only reasoning options produce no generated override, matching
 Pi. Provider/manual behavior remains in effect for those models.
 
-Tau also refreshes catalogs like Pi. Opening `/model` shows the current snapshot
-immediately and refreshes in the background. `tau update --models` forces a
+Tau also refreshes catalogs like Pi. Opening `/model` or `/scoped-models` does
+not reload provider settings first: the pickers show the current snapshot
+immediately and refresh in the background. A refreshed catalog that drops the
+active model (including an empty catalog) updates the picker without replacing
+the already running provider. The missing model cannot be selected again until
+it reappears. A pending TUI preview is not used when rebuilding the committed
+runtime. `tau update --models` forces a
 refresh. Results are ETag-revalidated, throttled to four hours, and cached at
 `~/.tau/models-store.json`; a cache applies only when newer than the bundled
 snapshot. Since Tau has no hosted catalog service, it fetches models.dev and

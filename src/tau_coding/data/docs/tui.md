@@ -26,11 +26,21 @@ without persisted timing still count toward token usage but not these metrics.
 
 ## `/model` and `/scoped-models`
 
-The pickers render cached/bundled choices immediately, then refresh remote
-catalogs in the background and update the open list. This includes the
+The pickers open from cached/bundled choices immediately, then start remote
+catalog refresh only after the first screen refresh and update the open list.
+The virtualized model list renders only visible rows and does not mount the
+entire catalog twice. Closing either picker cancels its owned catalog refresh;
+closing scoped models without changing the effective thinking level avoids
+refreshing the sidebar. A model selected from the picker updates the session
+after the modal has closed. This includes the
 account-scoped OpenAI Codex model snapshot, so models discovered in an earlier
 session are available before a refresh. Both commands refresh the Codex catalog;
-refresh failures leave the existing list usable. Use `tau update --models` for
+refresh failures leave the existing list usable. A missing active model after a
+catalog refresh does not prevent either picker from opening or interrupt the
+committed provider. Model selections and thinking
+changes in the TUI update immediately, but only the final selection is recorded
+in session history before the next accepted user message. Unsent selections are
+lost on restart and do not update defaults for future sessions. Use `tau update --models` for
 forced public-catalog revalidation or `TAU_OFFLINE=1` to disable catalog network
 access.
 
@@ -69,8 +79,14 @@ counts, while the session-column header shows the selected project's full path.
 Its shell opens immediately, then the current project and other project indexes
 load in the background. Press Left to
 select the project column, Up/Down to choose a project, and Right to return to
-its sessions. Enter resumes the selected session. Search filters names and
-models within the selected project.
+its sessions. Enter resumes the selected session. Ctrl+Enter archives the
+highlighted session, or the whole project when the project column is active.
+Choose the Archived tab to review hidden sessions and projects; F2 opens that
+tab. Enter restores
+the highlighted session, or every session in the highlighted project. Restored
+items appear in the Active tab. Archiving and restoring never delete session
+files or project directories. Search filters names and models within the
+selected project.
 
 ## `/local`
 
@@ -108,6 +124,11 @@ deletion is separately confirmed. Tau never stops the external server or
 deletes model files. See `local-inference.md` and `security.md`.
 
 ## Herdr compatibility
+
+In the prompt editor, Option/Alt+Left and Right move by word, including when
+Herdr forwards them as Alt-arrow sequences or Kitty Alt+b/Alt+f.
+Alt+b/Alt+f also move by word. Add Shift to arrows to select by word.
+Existing Ctrl-arrow and terminal Esc+b/Esc+f word navigation still work.
 
 Herdr 0.9.0 can advertise SGR pixel mouse support while forwarding cell
 coordinates. Textual then interprets those coordinates as pixels, collapsing

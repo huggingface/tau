@@ -346,7 +346,7 @@ def test_model_command_requests_picker_and_switches_models(tmp_path: Path) -> No
     assert list_result.model_picker_requested is True
     assert switch_result.message == "Current model: other-model"
     assert session.model == "other-model"
-    assert session.provider_reload_called is True
+    assert session.provider_reload_called is False
 
 
 def test_scoped_models_command_requests_scoped_picker(tmp_path: Path) -> None:
@@ -358,7 +358,7 @@ def test_scoped_models_command_requests_scoped_picker(tmp_path: Path) -> None:
 
     assert dashed_result.scoped_models_picker_requested is True
     assert pi_style_result.scoped_models_picker_requested is True
-    assert session.provider_reload_called is True
+    assert session.provider_reload_called is False
 
 
 def test_model_command_rejects_unknown_model(tmp_path: Path) -> None:
@@ -371,15 +371,16 @@ def test_model_command_rejects_unknown_model(tmp_path: Path) -> None:
     assert session.model == "fake-model"
 
 
-def test_model_command_reports_provider_refresh_failure(tmp_path: Path) -> None:
+def test_model_pickers_open_even_if_provider_settings_cannot_reload(tmp_path: Path) -> None:
     class FailingRefreshSession(FakeSession):
         def reload_provider_settings(self) -> None:
-            raise ValueError("providers.json is invalid")
+            raise ValueError("active model is missing from the refreshed catalog")
 
-    result = create_default_command_registry().execute(FailingRefreshSession(tmp_path), "/model")
-
-    assert result.message == "Could not refresh provider settings: providers.json is invalid"
-    assert result.model_picker_requested is False
+    session = FailingRefreshSession(tmp_path)
+    registry = create_default_command_registry()
+    assert registry.execute(session, "/model").model_picker_requested is True
+    assert registry.execute(session, "/scoped-models").scoped_models_picker_requested is True
+    assert session.provider_reload_called is False
 
 
 def test_theme_command_requests_picker_and_sets_theme(tmp_path: Path) -> None:

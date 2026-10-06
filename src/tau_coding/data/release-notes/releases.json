@@ -1,5 +1,34 @@
 [
   {
+    "version": "0.4.7",
+    "date": "2026-10-01",
+    "sections": {
+      "New": [
+        "Archive sessions or whole projects from /resume with Ctrl+Enter without deleting files; use the Archived tab (F2) and Enter to restore them."
+      ],
+      "Fixed": [
+        "Restore Option/Alt-arrow word navigation in the prompt inside Herdr, including Kitty Alt+b/Alt+f forwarding; Shift+Option/Alt-arrows select by word.",
+        "Create a fresh provider runtime when a new session selects a different provider instead of reusing the previous session's runtime.",
+        "Handle Delete correctly in the /resume search field."
+      ]
+    }
+  },
+  {
+    "version": "0.4.6",
+    "date": "2026-09-29",
+    "sections": {
+      "Changed": [
+        "Preview model and thinking shortcuts immediately in the TUI and record only the final selection when sending a prompt; unsent choices remain session-only.",
+        "Open /model and /scoped-models from cached choices with a virtualized list, then refresh catalogs in the background after the picker renders.",
+        "Limit GitHub Actions token permissions per job and pin workflow actions to immutable commit SHAs."
+      ],
+      "Fixed": [
+        "Reduce model-switching and picker latency by avoiding provider rebuilds and session-history writes on each shortcut, cancelling picker-owned refreshes on close, and skipping unnecessary sidebar updates.",
+        "Keep the active provider working when a refreshed catalog drops its model, and preserve cross-provider preview model and thinking capabilities."
+      ]
+    }
+  },
+  {
     "version": "0.4.5",
     "date": "2026-09-23",
     "sections": {

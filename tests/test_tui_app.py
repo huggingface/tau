@@ -971,7 +971,7 @@ def test_session_sidebar_brand_includes_current_version() -> None:
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.4.5" in console.export_text()
+    assert "τ = 2π  0.4.7" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -7045,6 +7045,125 @@ async def test_tui_app_session_picker_resumes_selected_session() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_session_picker_archives_selected_session() -> None:
+    session = FakeSession()
+    record = CodingSessionRecord(
+        id="session-1",
+        path=Path("/tmp/session-1.jsonl"),
+        cwd=Path("/workspace/project"),
+        model="fake-model",
+        title="Session",
+        created_at=1.0,
+        updated_at=2.0,
+    )
+    manager = _FakeSessionManager([record])
+    session.session_manager = manager
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+        assert isinstance(app.screen, SessionPickerScreen)
+        search = app.screen.query_one("#session-picker-search", Input)
+        assert search.has_focus
+        search.value = "session"
+        await pilot.pause()
+        await pilot.press("ctrl+enter")
+        await pilot.pause()
+
+        assert manager.archived_session_ids == ["session-1"]
+        assert search.value == "session"
+        assert app.screen.query_one("#session-picker-list", OptionList).option_count == 0
+
+
+@pytest.mark.anyio
+async def test_tui_app_session_picker_archives_selected_project() -> None:
+    session = FakeSession()
+    first = CodingSessionRecord(
+        id="session-1",
+        path=Path("/tmp/session-1.jsonl"),
+        cwd=Path("/workspace/first"),
+        model="fake-model",
+        title="First",
+        created_at=1.0,
+        updated_at=3.0,
+    )
+    second = CodingSessionRecord(
+        id="session-2",
+        path=Path("/tmp/session-2.jsonl"),
+        cwd=Path("/workspace/second"),
+        model="other-model",
+        title="Second",
+        created_at=1.0,
+        updated_at=2.0,
+    )
+    manager = _FakeSessionManager([first, second])
+    session.session_manager = manager
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+        assert isinstance(app.screen, SessionPickerScreen)
+        await pilot.press("left", "down", "ctrl+enter")
+        await pilot.pause()
+
+        assert manager.archived_project_cwds == [first.cwd]
+        project_options = app.screen.query_one("#session-picker-project-list", OptionList)
+        assert project_options.option_count == 2
+
+
+@pytest.mark.anyio
+async def test_tui_app_session_picker_archived_tab_restores_session_and_project() -> None:
+    session = FakeSession()
+    active = CodingSessionRecord(
+        id="active",
+        path=Path("/tmp/active.jsonl"),
+        cwd=Path("/workspace/project"),
+        model="fake-model",
+        title="Active",
+        created_at=1.0,
+        updated_at=3.0,
+    )
+    archived_session = CodingSessionRecord(
+        id="archived-session",
+        path=Path("/tmp/archived-session.jsonl"),
+        cwd=Path("/workspace/project"),
+        model="fake-model",
+        title="Archived session",
+        created_at=1.0,
+        updated_at=2.0,
+    )
+    archived_project = CodingSessionRecord(
+        id="archived-project",
+        path=Path("/tmp/archived-project.jsonl"),
+        cwd=Path("/workspace/archived"),
+        model="other-model",
+        title="Archived project",
+        created_at=1.0,
+        updated_at=1.0,
+    )
+    manager = _FakeSessionManager([active], [archived_session, archived_project])
+    session.session_manager = manager
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert isinstance(app.screen, SessionPickerScreen)
+        await pilot.press("f2")
+        assert app.screen.showing_archived is True
+        assert app.screen.query_one("#session-picker-list", OptionList).option_count == 1
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert manager.restored_session_ids == ["archived-session"]
+
+        await pilot.press("left", "down", "enter")
+        await pilot.pause()
+        assert manager.restored_project_cwds == [archived_project.cwd]
+        assert app.screen.query_one("#session-picker-list", OptionList).option_count == 0
+
+
+@pytest.mark.anyio
 async def test_tui_app_session_picker_shows_human_readable_session_metadata() -> None:
     updated_at = datetime(2026, 6, 19, 14, 30).timestamp()
     session = FakeSession()
@@ -7772,6 +7891,21 @@ def test_tui_model_picker_guides_setup_when_no_provider_is_usable() -> None:
     assert notifications == [
         ("No configured providers are usable. Run /login to set up a provider.", "warning")
     ]
+
+
+@pytest.mark.anyio
+async def test_tui_model_picker_opens_with_empty_catalog_and_stale_active_model() -> None:
+    session = FakeSession()
+    session.available_models = ()
+    session.available_model_choices = ()
+    session.has_stale_active_model = True  # type: ignore[attr-defined]
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        app._open_model_picker()
+        await pilot.pause()
+        assert isinstance(app.screen, ModelPickerScreen)
+        assert app.screen.visible_choices == ()
 
 
 @pytest.mark.anyio
@@ -8935,8 +9069,10 @@ async def test_tui_model_opens_interactive_picker() -> None:
         assert isinstance(app.screen, ModelPickerScreen)
         tabs = app.screen.query_one("#model-picker-tabs", Static)
         assert str(tabs.render()) == "Tabs: ● All models  ○ Scoped models"
-        model_list = app.screen.query_one("#model-picker-list", ListView)
-        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        model_list = app.screen.query_one("#model-picker-list", OptionList)
+        labels = [
+            str(model_list.get_option_at_index(i).prompt) for i in range(model_list.option_count)
+        ]
         assert labels == [
             "* openai:fake-model",
             "  openai:other-model",
@@ -8948,7 +9084,9 @@ async def test_tui_model_opens_interactive_picker() -> None:
         search.value = "local"
         await pilot.pause()
 
-        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        labels = [
+            str(model_list.get_option_at_index(i).prompt) for i in range(model_list.option_count)
+        ]
         assert labels == ["  local:local-model"]
 
         await pilot.press("tab")
@@ -8965,6 +9103,165 @@ async def test_tui_model_opens_interactive_picker() -> None:
     assert session.prompt_texts == []
     assert session.model_catalog_refresh_count == 1
     assert notifications == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("command", ["/model", "/scoped-models"])
+async def test_tui_closing_model_picker_cancels_its_refresh_without_chrome_rebuild(
+    command: str,
+) -> None:
+    class PendingCatalogSession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def refresh_model_catalogs(self) -> None:
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    session = PendingCatalogSession()
+    app = TauTuiApp(session)
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = command
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, ModelPickerScreen)
+        assert session.started.is_set()
+        chrome_refreshes = 0
+        original_refresh_chrome = app._refresh_chrome
+
+        def track_chrome(*args: object, **kwargs: object) -> None:
+            nonlocal chrome_refreshes
+            chrome_refreshes += 1
+            original_refresh_chrome(*args, **kwargs)
+
+        app._refresh_chrome = track_chrome  # type: ignore[method-assign]
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, ModelPickerScreen)
+        assert session.cancelled.is_set()
+        assert chrome_refreshes == 0
+
+
+@pytest.mark.anyio
+async def test_tui_scoped_picker_refreshes_chrome_when_thinking_changes() -> None:
+    session = FakeSession()
+    original_toggle = session.toggle_scoped_model
+
+    def toggle_and_change_thinking(choice: ModelChoice) -> tuple[ModelChoice, ...]:
+        session.thinking_level = "high"
+        return original_toggle(choice)
+
+    session.toggle_scoped_model = toggle_and_change_thinking  # type: ignore[method-assign]
+    app = TauTuiApp(session)
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/scoped-models"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, ModelPickerScreen)
+        assert app.screen.initial_thinking_level == "medium"
+        assert session.thinking_level == "high"
+        refreshes = 0
+        original_refresh_chrome = app._refresh_chrome
+
+        def track_chrome(*args: object, **kwargs: object) -> None:
+            nonlocal refreshes
+            refreshes += 1
+            original_refresh_chrome(*args, **kwargs)
+
+        app._refresh_chrome = track_chrome  # type: ignore[method-assign]
+        await pilot.press("escape")
+        await pilot.pause()
+        assert refreshes == 1
+
+
+@pytest.mark.anyio
+async def test_tui_model_selection_runs_after_picker_closes() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    was_closed: list[bool] = []
+    async with app.run_test() as pilot:
+
+        async def track_switch(choice: ModelChoice) -> None:
+            del choice
+            was_closed.append(not isinstance(app.screen, ModelPickerScreen))
+
+        app._switch_model = track_switch  # type: ignore[method-assign]
+        prompt = app.query_one("#prompt")
+        prompt.value = "/model"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert was_closed == [True]
+
+
+@pytest.mark.anyio
+async def test_tui_model_picker_virtualizes_large_cached_catalog() -> None:
+    session = FakeSession()
+    session.available_model_choices = tuple(
+        ModelChoice("openai", f"model-{index}") for index in range(1200)
+    )
+    app = TauTuiApp(session)
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/model"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, ModelPickerScreen)
+        model_list = app.screen.query_one("#model-picker-list", OptionList)
+        assert model_list.option_count == 1200
+        assert not list(model_list.query(ListItem))
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("command", ["/model", "/scoped-models"])
+async def test_tui_model_picker_shows_cached_choices_before_remote_refresh(command: str) -> None:
+    class SlowCatalogSession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.refresh_started = asyncio.Event()
+            self.finish_refresh = asyncio.Event()
+
+        async def refresh_model_catalogs(self) -> None:
+            self.refresh_started.set()
+            await self.finish_refresh.wait()
+            self.available_model_choices = (
+                ModelChoice("openai", "fake-model"),
+                ModelChoice("openai", "new-model"),
+            )
+
+    session = SlowCatalogSession()
+    app = TauTuiApp(session)
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = command
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ModelPickerScreen)
+        picker = app.screen
+        model_list = picker.query_one("#model-picker-list", OptionList)
+        assert model_list.option_count == 3
+        assert picker.visible_choices[1] == ModelChoice("openai", "other-model")
+        assert session.refresh_started.is_set()
+
+        session.finish_refresh.set()
+        await pilot.pause()
+        assert model_list.option_count == 2
+        assert picker.visible_choices[1] == ModelChoice("openai", "new-model")
+        first = model_list.get_option_at_index(0)
+        picker.update_choices(session.available_model_choices, ())
+        assert model_list.get_option_at_index(0) is first
 
 
 @pytest.mark.anyio
@@ -8990,8 +9287,10 @@ async def test_tui_scoped_models_picker_toggles_scoped_models_without_switching_
         )
         assert session.provider_name == "openai"
         assert session.model == "fake-model"
-        model_list = app.screen.query_one("#model-picker-list", ListView)
-        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        model_list = app.screen.query_one("#model-picker-list", OptionList)
+        labels = [
+            str(model_list.get_option_at_index(i).prompt) for i in range(model_list.option_count)
+        ]
         assert labels[0] == "* openai:fake-model [scoped]"
 
         await pilot.press("enter")
@@ -9024,8 +9323,10 @@ async def test_tui_scoped_models_picker_tab_shows_only_scoped_models_for_unselec
 
         tabs = app.screen.query_one("#model-picker-tabs", Static)
         assert str(tabs.render()) == "Tabs: ○ All models  ● Scoped models"
-        model_list = app.screen.query_one("#model-picker-list", ListView)
-        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        model_list = app.screen.query_one("#model-picker-list", OptionList)
+        labels = [
+            str(model_list.get_option_at_index(i).prompt) for i in range(model_list.option_count)
+        ]
         assert labels == [
             "* openai:fake-model [scoped]",
             "  openai:other-model [scoped]",
@@ -9039,7 +9340,9 @@ async def test_tui_scoped_models_picker_tab_shows_only_scoped_models_for_unselec
         )
         assert session.provider_name == "openai"
         assert session.model == "fake-model"
-        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        labels = [
+            str(model_list.get_option_at_index(i).prompt) for i in range(model_list.option_count)
+        ]
         assert labels == ["  openai:other-model [scoped]"]
 
         await pilot.press("tab")
@@ -9760,6 +10063,34 @@ async def test_tui_prompt_ctrl_c_clears_text() -> None:
         await pilot.pause()
 
         assert prompt.text == ""
+
+
+@pytest.mark.anyio
+async def test_tui_shortcuts_use_immediate_preview_when_available() -> None:
+    session = FakeSession()
+    session.scoped_model_choices = (
+        ModelChoice("openai", "fake-model"),
+        ModelChoice("openai", "other-model"),
+    )
+
+    def preview_model(*, reverse: bool = False) -> ModelChoice:
+        del reverse
+        choice = session.scoped_model_choices[1]
+        session.model = choice.model
+        return choice
+
+    def preview_thinking() -> str:
+        session.thinking_level = "high"
+        return "Thinking mode: high"
+
+    session.preview_cycle_scoped_model = preview_model  # type: ignore[attr-defined]
+    session.preview_cycle_thinking_level = preview_thinking  # type: ignore[attr-defined]
+    app = TauTuiApp(session)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+p")
+        assert session.model == "other-model"
+        await pilot.press("shift+tab")
+        assert session.thinking_level == "high"
 
 
 @pytest.mark.anyio
@@ -11217,12 +11548,64 @@ async def test_run_tui_app_ignores_uncredentialed_provider_when_matching_resume_
 
 
 class _FakeSessionManager:
-    def __init__(self, records: list[CodingSessionRecord]) -> None:
+    def __init__(
+        self,
+        records: list[CodingSessionRecord],
+        archived_records: list[CodingSessionRecord] | None = None,
+    ) -> None:
         self._records = records
+        self._archived_records = archived_records or []
+        self.archived_session_ids: list[str] = []
+        self.archived_project_cwds: list[Path] = []
+        self.restored_session_ids: list[str] = []
+        self.restored_project_cwds: list[Path] = []
 
     def list_sessions(self, cwd: Path | None = None) -> list[CodingSessionRecord]:
         del cwd
         return self._records
+
+    def list_archived_sessions(self, cwd: Path | None = None) -> list[CodingSessionRecord]:
+        del cwd
+        return self._archived_records
+
+    def archive_session(self, session_id: str) -> bool:
+        self.archived_session_ids.append(session_id)
+        moved = [record for record in self._records if record.id == session_id]
+        self._records = [record for record in self._records if record.id != session_id]
+        self._archived_records.extend(moved)
+        return bool(moved)
+
+    def archive_project(self, cwd: Path) -> bool:
+        resolved = Path(cwd).resolve()
+        self.archived_project_cwds.append(Path(cwd))
+        before = len(self._records)
+        moved = [record for record in self._records if Path(record.cwd).resolve() == resolved]
+        self._records = [
+            record for record in self._records if Path(record.cwd).resolve() != resolved
+        ]
+        self._archived_records.extend(moved)
+        return len(self._records) != before
+
+    def unarchive_session(self, session_id: str) -> bool:
+        self.restored_session_ids.append(session_id)
+        moved = [record for record in self._archived_records if record.id == session_id]
+        self._archived_records = [
+            record for record in self._archived_records if record.id != session_id
+        ]
+        self._records.extend(moved)
+        return bool(moved)
+
+    def unarchive_project(self, cwd: Path) -> bool:
+        resolved = Path(cwd).resolve()
+        self.restored_project_cwds.append(Path(cwd))
+        moved = [
+            record for record in self._archived_records if Path(record.cwd).resolve() == resolved
+        ]
+        self._archived_records = [
+            record for record in self._archived_records if Path(record.cwd).resolve() != resolved
+        ]
+        self._records.extend(moved)
+        return bool(moved)
 
 
 # --- component seam pilot tests ---------------------------------------------
