@@ -49,6 +49,7 @@ from tau_coding.thinking import (
     normalize_thinking_levels,
     reasoning_effort_for_level,
 )
+from tau_coding.version import current_version
 
 DEFAULT_PROVIDER_NAME = "openai"
 DEFAULT_MODEL = "gpt-5.4"
@@ -1558,7 +1559,10 @@ def _model_base_url(provider: ProviderConfig, model: str | None = None) -> str:
 def _model_headers(provider: ProviderConfig, model: str | None = None) -> dict[str, str]:
     selected_model = model or provider.default_model
     metadata = _metadata_for_model(provider, selected_model)
-    return {**provider.headers, **(metadata.headers if metadata is not None else {})}
+    merged = {**provider.headers, **(metadata.headers if metadata is not None else {})}
+    if provider.name == "opencode-go" and not any(key.casefold() == "user-agent" for key in merged):
+        merged["User-Agent"] = f"tau/{current_version()}"
+    return merged
 
 
 def _model_compat(provider: ProviderConfig, model: str | None = None) -> dict[str, Any]:

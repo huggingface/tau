@@ -223,7 +223,11 @@ or model:
 
 Unknown gateways retain their existing request shape by default. Enable only fields
 documented by the target service. Codex uses its dedicated `session-id` header
-mapping and does not read these OpenAI-compatible settings.
+mapping and does not read these OpenAI-compatible settings. The
+`anthropic-messages` transport also honors `sendSessionAffinityHeaders` with
+`sessionAffinityFormat = "opencode"`; other formats send no header there.
+`opencode-go` additionally sends a Tau-specific `User-Agent` (`tau/<version>`)
+unless the active provider preferences already define one.
 
 ### Anthropic prompt-cache compat keys
 

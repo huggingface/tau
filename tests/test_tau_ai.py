@@ -500,6 +500,134 @@ async def test_openai_chat_completions_sends_opencode_session_header() -> None:
 
 
 @pytest.mark.anyio
+async def test_openai_responses_sends_opencode_session_header() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.output_text.delta","delta":"ok"}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://opencode.ai/zen/go/v1",
+                api="openai-responses",
+                compat={
+                    "sendSessionAffinityHeaders": True,
+                    "sessionAffinityFormat": "opencode",
+                },
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="muse-spark-1.3-contributor",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+                session_id="stable-session-id",
+            )
+        )
+
+    assert requests[0].url.path.endswith("/responses")
+    assert requests[0].headers["x-opencode-session"] == "stable-session-id"
+
+
+@pytest.mark.anyio
+async def test_anthropic_messages_sends_opencode_session_header_with_api_key() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"message_start","message":{"content":[]}}\n\n'
+                'data: {"type":"content_block_delta","index":0,'
+                '"delta":{"type":"text_delta","text":"ok"}}\n\n'
+                'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n'
+                'data: {"type":"message_stop"}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://opencode.ai/zen/go/v1",
+                headers={"User-Agent": "tau/test"},
+                compat={
+                    "sendSessionAffinityHeaders": True,
+                    "sessionAffinityFormat": "opencode",
+                },
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="minimax-m3",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+                session_id="stable-session-id",
+            )
+        )
+
+    assert requests[0].url.path.endswith("/messages")
+    assert requests[0].headers["x-opencode-session"] == "stable-session-id"
+    assert requests[0].headers["x-api-key"] == "test-key"
+    assert "Authorization" not in requests[0].headers
+
+
+@pytest.mark.anyio
+async def test_anthropic_messages_omits_session_header_without_opt_in() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"message_start","message":{"content":[]}}\n\n'
+                'data: {"type":"content_block_delta","index":0,'
+                '"delta":{"type":"text_delta","text":"ok"}}\n\n'
+                'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n'
+                'data: {"type":"message_stop"}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.com/v1",
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+                session_id="stable-session-id",
+            )
+        )
+
+    assert "x-opencode-session" not in requests[0].headers
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_includes_configured_reasoning_effort() -> None:
     requests: list[httpx.Request] = []
 
