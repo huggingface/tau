@@ -463,6 +463,43 @@ async def test_openai_chat_completions_sends_prompt_cache_key_without_affinity_h
 
 
 @pytest.mark.anyio
+async def test_openai_chat_completions_sends_opencode_session_header() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://opencode.ai/zen/go/v1",
+                compat={
+                    "sendSessionAffinityHeaders": True,
+                    "sessionAffinityFormat": "opencode",
+                },
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="deepseek-v4.1-flash",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+                session_id="stable-session-id",
+            )
+        )
+
+    assert requests[0].headers["x-opencode-session"] == "stable-session-id"
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_includes_configured_reasoning_effort() -> None:
     requests: list[httpx.Request] = []
 

@@ -66,6 +66,21 @@ def test_direct_openai_runtime_enables_responses_cache_affinity(tmp_path) -> Non
     assert provider._config.compat["sessionAffinityFormat"] == "openai"
 
 
+def test_opencode_go_runtime_enables_session_affinity(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("opencode-go", "go-test")
+
+    provider = create_model_provider(
+        provider_config_from_catalog_entry("opencode-go"),
+        credential_store=store,
+        model="deepseek-v4-flash",
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.compat["sendSessionAffinityHeaders"] is True
+    assert provider._config.compat["sessionAffinityFormat"] == "opencode"
+
+
 def test_huggingface_runtime_pins_backing_provider_with_model_alias(tmp_path) -> None:
     store = FileCredentialStore(tmp_path / "credentials.json")
     store.set_api_key("huggingface", "hf-test")

@@ -6594,6 +6594,7 @@ models = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5.1", "glm-5.2", "kimi-k2
 default_model = "kimi-k2.7-code"
 docs_url = "https://opencode.ai/docs/go"
 api = "openai-completions"
+compat = { sendSessionAffinityHeaders = true, sessionAffinityFormat = "opencode" }
 thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
