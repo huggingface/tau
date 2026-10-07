@@ -81,6 +81,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "opencode-go",
         "opencode",
         "github-copilot",
+        "yolo-auto",
     ]
 
 
@@ -333,6 +334,21 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
     assert gpt_oss_metadata.reasoning is True
     assert gpt_oss_metadata.context_window == 128_000
     assert gpt_oss_metadata.max_tokens == 8_192
+
+
+def test_builtin_catalog_golden_yolo_auto_entry() -> None:
+    entry = builtin_provider_entry("yolo-auto")
+    assert entry is not None
+    assert entry.display_name == "Yolo-Auto"
+    assert entry.kind == "openai-compatible"
+    assert entry.base_url == "https://yolo-auto.com/v1"
+    assert entry.api_key_env == "YOLO_AUTO_API_KEY"
+    assert entry.credential_name == "yolo-auto"
+    assert entry.models == ("yolo", "yolo-small")
+    assert entry.default_model == "yolo"
+    assert entry.docs_url == "https://yolo-auto.com/docs"
+    assert entry.api == "openai-completions"
+    assert entry.auth_methods == ("api_key",)
 
 
 def test_builtin_catalog_huggingface_model_expansion() -> None:
