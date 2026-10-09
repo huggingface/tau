@@ -29,7 +29,7 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
-from tau_agent.loop import run_agent_loop
+from tau_agent.loop import _execute_tool_call, run_agent_loop
 from tau_agent.provider_events import ThinkingDeltaEvent
 from tau_agent.types import JSONValue
 from tau_ai import CancellationToken, FakeProvider
@@ -278,6 +278,104 @@ async def test_agent_loop_passes_call_id_signal_and_progress_to_tool() -> None:
     assert observed == [("call-1", signal)]
     updates = [event for event in events if isinstance(event, ToolExecutionUpdateEvent)]
     assert [event.partial_result.text for event in updates] == ["working"]
+
+
+@pytest.mark.anyio
+async def test_agent_loop_streams_tool_updates_while_the_tool_runs() -> None:
+    # Regression test for issue #382: partials were buffered and only emitted
+    # after the tool returned, so progress events carried no information at a
+    # time a consumer could act on them.
+    reported_first = asyncio.Event()
+    release = asyncio.Event()
+
+    async def execute(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal: CancellationToken | None = None,
+        on_update=None,  # noqa: ANN001
+    ) -> AgentToolResult:
+        del tool_call_id, arguments, signal
+        assert on_update is not None
+        on_update(AgentToolResult(content="step 1"))
+        reported_first.set()
+        await release.wait()
+        on_update(AgentToolResult(content="step 2"))
+        return AgentToolResult(content="done")
+
+    call = ToolCall(id="call-1", name="work", arguments={})
+    outcome: list[tuple[AgentToolResult, bool]] = []
+    events: list[AgentEvent] = []
+
+    async def consume() -> None:
+        async for event in _execute_tool_call(
+            call=call,
+            tools={"work": _tool("work", execute)},
+            signal=None,
+            before_tool_call=None,
+            after_tool_call=None,
+        ):
+            events.append(event)
+
+    consumer = asyncio.create_task(consume())
+    await reported_first.wait()
+    for _ in range(10):
+        if any(isinstance(event, ToolExecutionUpdateEvent) for event in events):
+            break
+        await asyncio.sleep(0)
+
+    # The first partial must be observable before the tool finishes.
+    assert [
+        event.partial_result.text
+        for event in events
+        if isinstance(event, ToolExecutionUpdateEvent)
+    ] == ["step 1"]
+
+    release.set()
+    await consumer
+    del outcome
+
+    assert [
+        event.partial_result.text
+        for event in events
+        if isinstance(event, ToolExecutionUpdateEvent)
+    ] == ["step 1", "step 2"]
+    end_events = [event for event in events if isinstance(event, ToolExecutionEndEvent)]
+    assert [event.result.text for event in end_events] == ["done"]
+    assert [event.is_error for event in end_events] == [False]
+
+
+@pytest.mark.anyio
+async def test_agent_loop_keeps_tool_updates_reported_before_a_failure() -> None:
+    async def execute(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal: CancellationToken | None = None,
+        on_update=None,  # noqa: ANN001
+    ) -> AgentToolResult:
+        del tool_call_id, arguments, signal
+        assert on_update is not None
+        on_update(AgentToolResult(content="partial"))
+        raise ValueError("kaboom")
+
+    events = [
+        event
+        async for event in _execute_tool_call(
+            call=ToolCall(id="call-1", name="work", arguments={}),
+            tools={"work": _tool("work", execute)},
+            signal=None,
+            before_tool_call=None,
+            after_tool_call=None,
+        )
+    ]
+
+    assert [
+        event.partial_result.text
+        for event in events
+        if isinstance(event, ToolExecutionUpdateEvent)
+    ] == ["partial"]
+    end_events = [event for event in events if isinstance(event, ToolExecutionEndEvent)]
+    assert [event.is_error for event in end_events] == [True]
+    assert [event.result.text for event in end_events] == ["kaboom"]
 
 
 @pytest.mark.anyio
