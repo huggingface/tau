@@ -113,12 +113,13 @@ class LeafEntry(BaseSessionEntry):
 
 
 class SessionInfoEntry(BaseSessionEntry):
-    """Basic session metadata entry."""
+    """Initial session metadata or an append-only session name change."""
 
     type: Literal["session_info"] = "session_info"
     created_at: float = Field(default_factory=current_timestamp)
     cwd: str | None = None
     title: str | None = None
+    name: str | None = None
 
 
 class CustomEntry(BaseSessionEntry):
