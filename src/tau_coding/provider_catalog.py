@@ -81,6 +81,7 @@ class ProviderCatalogEntry:
     default_model: str
     docs_url: str
     api: ProviderApi | None = None
+    anthropic_auth: str | None = None
     context_windows: dict[str, int] | None = None
     headers: dict[str, str] = field(default_factory=dict)
     compat: dict[str, JSONValue] = field(default_factory=dict)

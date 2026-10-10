@@ -311,12 +311,13 @@ def create_model_provider(
             )
         selected_api = compatible_config.api
         if selected_api == "anthropic-messages":
-            if credential is None:
+            if credential is None and provider.anthropic_auth != "api-key":
                 raise ProviderConfigError(
                     "Anthropic-protocol models on openai-compatible providers require OAuth"
                 )
+            use_oauth = credential is not None
             gateway_retention, gateway_cache_control_on_tools = anthropic_cache_settings(
-                provider, model, oauth=True
+                provider, model, oauth=use_oauth
             )
             anthropic_config = AnthropicConfig(
                 api_key=compatible_config.api_key,
@@ -327,9 +328,10 @@ def create_model_provider(
                 max_retries=compatible_config.max_retries,
                 max_retry_delay_seconds=compatible_config.max_retry_delay_seconds,
                 max_tokens=provider_model_max_tokens(provider, model),
-                bearer_auth=True,
+                bearer_auth=use_oauth,
                 credential_resolver=compatible_config.credential_resolver,
                 supports_images=compatible_config.supports_images,
+                compat=dict(compatible_config.compat or {}),
                 # Resolved from compat like the first-party path, so a gateway
                 # proxying real Claude can opt back in per provider or per model.
                 cache_retention=gateway_retention,

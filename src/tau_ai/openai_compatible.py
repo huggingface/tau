@@ -433,6 +433,9 @@ def _apply_session_affinity_headers(
     if affinity_format == "openrouter":
         headers["x-session-id"] = session_id
         return
+    if affinity_format == "opencode":
+        headers["x-opencode-session"] = session_id
+        return
     if affinity_format == "openai":
         headers["session_id"] = session_id
 

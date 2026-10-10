@@ -49,6 +49,7 @@ from tau_coding.thinking import (
     normalize_thinking_levels,
     reasoning_effort_for_level,
 )
+from tau_coding.version import current_version
 
 DEFAULT_PROVIDER_NAME = "openai"
 DEFAULT_MODEL = "gpt-5.4"
@@ -119,6 +120,7 @@ class OpenAICompatibleProviderConfig:
     api: ProviderApi = "openai-completions"
     api_key_env: str = "OPENAI_API_KEY"
     credential_name: str | None = None
+    anthropic_auth: str | None = None
     models: tuple[str, ...] = (DEFAULT_MODEL,)
     default_model: str = DEFAULT_MODEL
     context_windows: dict[str, int] = field(default_factory=dict)
@@ -162,6 +164,7 @@ class OpenAICompatibleProviderConfig:
             "api": self.api,
             "api_key_env": self.api_key_env,
             "credential_name": self.credential_name,
+            "anthropic_auth": self.anthropic_auth,
             "models": list(self.models),
             "default_model": self.default_model,
             "context_windows": dict(self.context_windows),
@@ -444,6 +447,7 @@ def provider_config_from_entry(entry: ProviderCatalogEntry) -> ProviderConfig:
         api=entry.api or _default_api_for_kind(entry.kind),
         api_key_env=entry.api_key_env,
         credential_name=entry.credential_name,
+        anthropic_auth=entry.anthropic_auth,
         models=entry.models,
         default_model=entry.default_model,
         context_windows=context_windows,
@@ -1558,7 +1562,10 @@ def _model_base_url(provider: ProviderConfig, model: str | None = None) -> str:
 def _model_headers(provider: ProviderConfig, model: str | None = None) -> dict[str, str]:
     selected_model = model or provider.default_model
     metadata = _metadata_for_model(provider, selected_model)
-    return {**provider.headers, **(metadata.headers if metadata is not None else {})}
+    merged = {**provider.headers, **(metadata.headers if metadata is not None else {})}
+    if provider.name == "opencode-go" and not any(key.casefold() == "user-agent" for key in merged):
+        merged["User-Agent"] = f"tau/{current_version()}"
+    return merged
 
 
 def _model_compat(provider: ProviderConfig, model: str | None = None) -> dict[str, Any]:
