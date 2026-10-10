@@ -144,6 +144,23 @@ def test_opencode_go_sets_tau_user_agent_only_for_go(tmp_path) -> None:
     assert zen_provider._config.compat.get("sendSessionAffinityHeaders") is not True
 
 
+def test_anthropic_auth_api_key_allows_anthropic_protocol_without_oauth(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("test", "key")
+    config = OpenAICompatibleProviderConfig(
+        name="test",
+        api_key_env="TEST_KEY",
+        credential_name="test",
+        anthropic_auth="api-key",
+        models=("m",),
+        default_model="m",
+        model_metadata={"m": ProviderModelMetadata(api="anthropic-messages")},
+    )
+
+    provider = create_model_provider(config, credential_store=store, model="m")
+    assert isinstance(provider, AnthropicProvider)
+
+
 def test_huggingface_runtime_pins_backing_provider_with_model_alias(tmp_path) -> None:
     store = FileCredentialStore(tmp_path / "credentials.json")
     store.set_api_key("huggingface", "hf-test")

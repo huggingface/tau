@@ -311,7 +311,7 @@ def create_model_provider(
             )
         selected_api = compatible_config.api
         if selected_api == "anthropic-messages":
-            if credential is None and provider.name != "opencode-go":
+            if credential is None and provider.anthropic_auth != "api-key":
                 raise ProviderConfigError(
                     "Anthropic-protocol models on openai-compatible providers require OAuth"
                 )

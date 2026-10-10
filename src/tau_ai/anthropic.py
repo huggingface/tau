@@ -47,6 +47,7 @@ from tau_ai.env import (
 from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
+from tau_ai.openai_compatible import _apply_session_affinity_headers
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import (
     RETRYABLE_TRANSPORT_ERRORS,
@@ -172,9 +173,7 @@ class AnthropicProvider:
                 headers.setdefault("Authorization", f"Bearer {api_key}")
             else:
                 headers["x-api-key"] = api_key
-            _apply_anthropic_session_affinity_headers(
-                headers, session_id, self._session_affinity_format()
-            )
+            _apply_session_affinity_headers(headers, session_id, self._session_affinity_format())
             url = f"{base_url.rstrip('/')}/messages"
 
             attempt = 0
@@ -717,17 +716,6 @@ def _anthropic_tool(
     if cache_control is not None:
         payload["cache_control"] = dict(cache_control)
     return payload
-
-
-def _apply_anthropic_session_affinity_headers(
-    headers: dict[str, str],
-    session_id: str | None,
-    affinity_format: str | None,
-) -> None:
-    """Send stable session affinity for gateways that opt in via compat."""
-    if not session_id or affinity_format != "opencode":
-        return
-    headers["x-opencode-session"] = session_id
 
 
 def _parse_sse_line(line: str) -> str | None:

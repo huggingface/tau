@@ -120,6 +120,7 @@ class OpenAICompatibleProviderConfig:
     api: ProviderApi = "openai-completions"
     api_key_env: str = "OPENAI_API_KEY"
     credential_name: str | None = None
+    anthropic_auth: str | None = None
     models: tuple[str, ...] = (DEFAULT_MODEL,)
     default_model: str = DEFAULT_MODEL
     context_windows: dict[str, int] = field(default_factory=dict)
@@ -163,6 +164,7 @@ class OpenAICompatibleProviderConfig:
             "api": self.api,
             "api_key_env": self.api_key_env,
             "credential_name": self.credential_name,
+            "anthropic_auth": self.anthropic_auth,
             "models": list(self.models),
             "default_model": self.default_model,
             "context_windows": dict(self.context_windows),
@@ -445,6 +447,7 @@ def provider_config_from_entry(entry: ProviderCatalogEntry) -> ProviderConfig:
         api=entry.api or _default_api_for_kind(entry.kind),
         api_key_env=entry.api_key_env,
         credential_name=entry.credential_name,
+        anthropic_auth=entry.anthropic_auth,
         models=entry.models,
         default_model=entry.default_model,
         context_windows=context_windows,

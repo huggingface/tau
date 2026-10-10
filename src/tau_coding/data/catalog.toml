@@ -6594,6 +6594,7 @@ models = ["deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro"
 default_model = "kimi-k2.7-code"
 docs_url = "https://opencode.ai/docs/go"
 api = "openai-completions"
+anthropic_auth = "api-key"
 compat = { sendSessionAffinityHeaders = true, sessionAffinityFormat = "opencode" }
 thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
 thinking_default = "medium"
