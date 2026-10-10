@@ -26,6 +26,7 @@ command palette with **Ctrl+K**.
 | `/sidebar` | Toggle the sidebar for this session without changing `tui.json` |
 | `/logout [provider]` | Remove saved credentials for a provider |
 | `/reload` | Reload local skills, prompts, extensions, and project context |
+| `/learn` | Review the settled session and save durable memory entries and lessons for future sessions |
 | `/prompts` | Search loaded prompt templates; press Enter to insert an invocation or Ctrl+E to edit the file |
 | `/hotkeys` | Show the keyboard shortcuts |
 | `/skills` | Open a searchable picker of loaded skills and insert a selection into the prompt |

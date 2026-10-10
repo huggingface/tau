@@ -128,6 +128,7 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "compact",
         "export",
         "hotkeys",
+        "learn",
         "local",
         "login",
         "logout",
