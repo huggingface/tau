@@ -53,7 +53,7 @@ session-entry/session-info changes, thinking-level changes, and automatic-retry
 events. Extensions observe those same event names, but the session-to-extension
 adapter enriches `turn_start` with a zero-based `turn_index` and millisecond
 `timestamp`, and `turn_end` with the matching index. See
-[Extensions]({{< relref "../guides/extensions.md#events" >}}) for their complete
+[Extensions](/guides/extensions/#events) for their complete
 payload table.
 
 The final `AssistantMessage` is authoritative: it persists text, thinking, and tool
@@ -72,5 +72,5 @@ Provider there while `provider` remains `huggingface`.
 Because the contract is *events*, a frontend's job is reduced to: send a prompt,
 consume the stream, draw what you see.
 
-→ See [Build your own frontend]({{< relref "./custom-frontend.md" >}}) for the concrete API, and
-[Architecture overview]({{< relref "./architecture.md" >}}) for where the loop sits.
+→ See [Build your own frontend](/internals/custom-frontend/) for the concrete API, and
+[Architecture overview](/internals/architecture/) for where the loop sits.

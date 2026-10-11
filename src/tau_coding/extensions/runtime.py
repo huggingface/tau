@@ -76,7 +76,11 @@ from tau_coding.extensions.provider_registry import (
 from tau_coding.extensions.providers import CredentialReader, DynamicProvider
 from tau_coding.local_backends import LocalBackend, LocalBackendRegistry
 from tau_coding.paths import TauPaths
-from tau_coding.project_trust import ExtensionTrustResult, ProjectTrustEvent
+from tau_coding.project_trust import (
+    ExtensionTrustResult,
+    ProjectTrustEvent,
+    ProjectTrustResolution,
+)
 from tau_coding.provider_config import ProviderConfig
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 from tau_coding.system_prompt import PromptSection
@@ -86,6 +90,16 @@ from tau_coding.system_prompt import PromptSection
 # queued message so custom messages render correctly whether they trigger a new
 # turn or are injected into a running one.
 TurnRequestedCallback = Callable[[str, "str | None", "dict[str, JSONValue] | None"], None]
+
+
+class BoundModelChoice(Protocol):
+    """Provider/model identifiers exposed by a bound session."""
+
+    @property
+    def provider_name(self) -> str: ...
+
+    @property
+    def model(self) -> str: ...
 
 
 class BoundSession(Protocol):
@@ -99,6 +113,12 @@ class BoundSession(Protocol):
 
     @property
     def provider_name(self) -> str: ...
+
+    @property
+    def available_providers(self) -> tuple[str, ...]: ...
+
+    @property
+    def available_model_choices(self) -> tuple[BoundModelChoice, ...]: ...
 
     @property
     def inference_provider(self) -> str | None: ...
@@ -117,6 +137,9 @@ class BoundSession(Protocol):
 
     @property
     def system_prompt(self) -> str: ...
+
+    @property
+    def project_trust_resolution(self) -> ProjectTrustResolution | None: ...
 
     @property
     def is_running(self) -> bool: ...

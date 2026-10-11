@@ -93,7 +93,7 @@ Providers that speak the Anthropic protocol through a gateway rather than being
 Anthropic itself — `minimax`, `minimax-cn`, `fireworks`, and `vercel-ai-gateway` —
 send no cache breakpoints, since not every gateway accepts them. Watch the
 sidebar's cache hit rate to see caching working; see
-[The interactive session]({{< relref "./tui.md" >}}) for how to read it.
+[The interactive session](/guides/tui/) for how to read it.
 
 Anthropic reports `input_tokens` as the fresh, uncached portion after the last
 cache breakpoint. Tau preserves that value as fresh input, retains the separate
@@ -258,7 +258,7 @@ prefix-cache misses caused by cross-provider routing, but cannot prevent evictio
 TTL expiry, or load balancing among workers within the chosen provider. A reroute
 may require a cold prefix prefill, and account-wide rate limits may still fail on
 the automatic retry. See
-[Configuration]({{< relref "../reference/configuration.md#provider-preferences" >}}).
+[Configuration](/reference/configuration/#provider-preferences).
 
 ### Moonshot AI API vs. Kimi Code
 
@@ -345,21 +345,20 @@ Run each alias or function and authenticate that profile once:
 `TAU_HOME` must be an absolute path after optional `~` expansion. User-level
 `~/.agents` resources and project `.tau`/`.agents` resources remain shared, as
 do credentials supplied directly through environment variables. See
-[Configuration]({{< relref "../reference/configuration.md#tau-home" >}}) for the
+[Configuration](/reference/configuration/#tau-home) for the
 complete boundary.
 
-{{% note title="OAuth troubleshooting" %}}
-Browser login can fall back to a pasted redirect URL/code when the callback
-port is unavailable or the browser runs on another machine. In that flow the
-login screen copies the authorization URL to your clipboard and renders it as
-a link, so paste or click it rather than selecting the wrapped text — a URL
-reassembled by hand loses characters at the line breaks and the provider
-rejects it. Copilot uses a device code instead: open the short verification
-URL and enter the code shown beneath it. A denied or expired code requires a
-new `/login`. If a Copilot model reports that it is unsupported, enable it in
-Copilot Chat's model selector or ask your organization administrator;
-provider/model access varies by plan and policy.
-{{% /note %}}
+> [!NOTE] OAuth troubleshooting
+> Browser login can fall back to a pasted redirect URL/code when the callback
+> port is unavailable or the browser runs on another machine. In that flow the
+> login screen copies the authorization URL to your clipboard and renders it as
+> a link, so paste or click it rather than selecting the wrapped text — a URL
+> reassembled by hand loses characters at the line breaks and the provider
+> rejects it. Copilot uses a device code instead: open the short verification
+> URL and enter the code shown beneath it. A denied or expired code requires a
+> new `/login`. If a Copilot model reports that it is unsupported, enable it in
+> Copilot Chat's model selector or ask your organization administrator;
+> provider/model access varies by plan and policy.
 
 ## Choosing and switching models
 
@@ -428,8 +427,8 @@ trusted built-in llama.cpp provider is the narrow scoped-model exception: Tau
 may persist only its stable provider ID plus exact model ID. An unloaded/stale
 reference remains visible as unavailable and cannot trigger load or download.
 User and project dynamic providers cannot opt into durable references. See
-the [local backends guide]({{< relref "./local-inference.md" >}}) and
-[Extensions]({{< relref "./extensions.md#dynamic-providers" >}}).
+the [local backends guide](/guides/local-inference/) and
+[Extensions](/guides/extensions/#dynamic-providers).
 
 ## Adding a custom / local provider
 
@@ -484,7 +483,7 @@ The configured endpoint and safe model snapshot are stored under
 `~/.tau/state/extensions/llama.cpp.json`; secrets stay in the credential store.
 A cached snapshot allows explicit startup during temporary server downtime.
 `/local` never scans ports or processes, stops the external server, or deletes
-model files. See the [complete llama.cpp guide]({{< relref "./local-inference.md" >}})
+model files. See the [complete llama.cpp guide](/guides/local-inference/)
 for endpoint precedence, Doctor, reset, and troubleshooting.
 
 An older manually configured provider named `llama-cpp` remains separate and is
@@ -552,30 +551,29 @@ request options such as custom HTTP headers, timeouts, or retry settings. Put
 those in `~/.tau/providers.json` instead. Saved `providers.json` entries support
 `headers`, `timeout_seconds`, `max_retries`, and `max_retry_delay_seconds`. For
 the full JSON shape, the catalog TOML shape, and `thinking_levels` for custom
-models, see [Configuration]({{< relref "../reference/configuration.md#providers" >}}).
+models, see [Configuration](/reference/configuration/#providers).
 
-{{% tip title="Hugging Face org billing" %}}
-To send a Hugging Face billing header, keep the provider definition in the
-catalog, then add the header to the matching provider preference in
-`~/.tau/providers.json`:
-
-```json
-{
-  "default_provider": "huggingface",
-  "provider_preferences": {
-    "huggingface": {
-      "default_model": "openai/gpt-oss-120b",
-      "headers": { "X-HF-Bill-To": "my-org" },
-      "thinking_defaults": { "openai/gpt-oss-120b": "low" },
-      "timeout_seconds": 60,
-      "max_retries": 2,
-      "max_retry_delay_seconds": 1
-    }
-  },
-  "scoped_models": []
-}
-```
-{{% /tip %}}
+> [!TIP] Hugging Face org billing
+> To send a Hugging Face billing header, keep the provider definition in the
+> catalog, then add the header to the matching provider preference in
+> `~/.tau/providers.json`:
+>
+> ```json
+> {
+>   "default_provider": "huggingface",
+>   "provider_preferences": {
+>     "huggingface": {
+>       "default_model": "openai/gpt-oss-120b",
+>       "headers": { "X-HF-Bill-To": "my-org" },
+>       "thinking_defaults": { "openai/gpt-oss-120b": "low" },
+>       "timeout_seconds": 60,
+>       "max_retries": 2,
+>       "max_retry_delay_seconds": 1
+>     }
+>   },
+>   "scoped_models": []
+> }
+> ```
 
 ## How credentials are resolved
 

@@ -178,10 +178,17 @@ class ExtensionAPI:
     def context(self) -> ExtensionContext: ...
 ```
 
-`ExtensionContext` exposes `cwd`, `model`, `provider_name`, `inference_provider`, `session_id`,
-`session_name`, `thinking_level`, `system_prompt`, `is_running`, `has_ui`, and `transcript`. It is a live view
-over the bound `CodingSession`; action methods raise `ExtensionError` if
-called before binding (Pi's throwing-stubs-then-`bindCore` model).
+`ExtensionContext` exposes `cwd`, `model`, `provider_name`, `available_providers`,
+`available_model_choices`, `inference_provider`, `session_id`, `session_name`,
+`thinking_level`, `system_prompt`, `is_running`, `has_ui`, and `transcript`. It is a
+live view over the bound `CodingSession`; action methods raise `ExtensionError`
+if called before binding (Pi's throwing-stubs-then-`bindCore` model).
+
+`available_providers` and `available_model_choices` project the session's effective
+runtime inventory rather than reloading durable provider settings. They therefore
+preserve the session's credential filtering, dynamic provider layers, and
+runtime-refreshed account catalogs. Model pairs cross the extension boundary as
+frozen `ModelChoice` values containing only `provider_name` and `model`.
 
 `context.paths -> TauPaths` is the resolved, read-only filesystem-path snapshot
 for the active extension generation. A host-supplied `TauResourcePaths.paths`

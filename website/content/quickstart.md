@@ -36,10 +36,9 @@ Check it worked:
 tau --version
 ```
 
-{{% tip title="Already have a package manager?" %}}
-Install Tau directly with `uv tool install tau-ai`, `pipx install tau-ai`, or
-`python -m pip install tau-ai`.
-{{% /tip %}}
+> [!TIP] Already have a package manager?
+> Install Tau directly with `uv tool install tau-ai`, `pipx install tau-ai`, or
+> `python -m pip install tau-ai`.
 
 ### Upgrade Tau
 
@@ -86,7 +85,7 @@ Then run one of these inside Tau:
 ```
 
 Tau ships with built-in entries for OpenAI, Anthropic, OpenAI Codex,
-OpenRouter, and Hugging Face. See [Providers & models]({{< relref "./guides/providers-and-models.md" >}})
+OpenRouter, and Hugging Face. See [Providers & models](/guides/providers-and-models/)
 for switching models or adding a custom/local OpenAI-compatible endpoint.
 
 ## 3. Start a session
@@ -113,11 +112,10 @@ add a docstring to every function in src/utils.py
 
 You'll see each tool call (read, edit, bash) as it happens.
 
-{{% tip title="Useful first keys" %}}
-**Enter** submits · **Esc** cancels the current run · **Ctrl+K** opens the
-command palette · **Ctrl+D** quits. Full list in
-[Keyboard shortcuts]({{< relref "./reference/keybindings.md" >}}).
-{{% /tip %}}
+> [!TIP] Useful first keys
+> **Enter** submits · **Esc** cancels the current run · **Ctrl+K** opens the
+> command palette · **Ctrl+D** quits. Full list in
+> [Keyboard shortcuts](/reference/keybindings/).
 
 ## 4. Come back later
 
@@ -134,7 +132,7 @@ tau --session <session-id>
 ```
 
 …or open the picker inside the TUI with `/resume`. See
-[Sessions]({{< relref "./guides/sessions.md" >}}) for resuming, branching, and exporting.
+[Sessions](/guides/sessions/) for resuming, branching, and exporting.
 
 ## One-shot mode
 
@@ -145,11 +143,11 @@ scripts and pipes:
 tau -p "summarize the changes in the last commit"
 ```
 
-More in [Print mode & scripting]({{< relref "./guides/print-mode.md" >}}).
+More in [Print mode & scripting](/guides/print-mode/).
 
 ## Where to go next
 
-- **[Core concepts]({{< relref "./concepts.md" >}})** — understand what's actually happening.
-- **[The interactive session]({{< relref "./guides/tui.md" >}})** — get fluent in the TUI.
-- **[Providers & models]({{< relref "./guides/providers-and-models.md" >}})** — switch models,
+- **[Core concepts](/concepts/)** — understand what's actually happening.
+- **[The interactive session](/guides/tui/)** — get fluent in the TUI.
+- **[Providers & models](/guides/providers-and-models/)** — switch models,
   add providers, use local models.
