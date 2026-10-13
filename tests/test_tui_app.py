@@ -3359,7 +3359,7 @@ async def test_tui_app_omits_footer_but_keeps_shortcuts_active() -> None:
         assert len(app.query("#shortcut-hints")) == 0
         assert _visible_footer_bindings(app) == {
             "Quit": "ctrl+d",
-            "Clear": "ctrl+c",
+            "Copy/Clear": "ctrl+c",
             "Commands": "ctrl+k",
             "Submit": "enter",
             "Newline": "shift+enter",
