@@ -219,11 +219,15 @@ or model:
 | --- | --- |
 | `supportsPromptCacheKey` | Sends the stable session-derived `prompt_cache_key` body field |
 | `sendSessionAffinityHeaders` | Sends headers using `sessionAffinityFormat` |
-| `sessionAffinityFormat` | `openai` sends `session_id`; `openrouter` sends `x-session-id` |
+| `sessionAffinityFormat` | `openai` sends `session_id`; `openrouter` sends `x-session-id`; `opencode` sends `x-opencode-session` |
 
 Unknown gateways retain their existing request shape by default. Enable only fields
 documented by the target service. Codex uses its dedicated `session-id` header
-mapping and does not read these OpenAI-compatible settings.
+mapping and does not read these OpenAI-compatible settings. The
+`anthropic-messages` transport honors `sendSessionAffinityHeaders` and all three
+formats; `google-generative-ai` and `mistral-conversations` currently ignore them.
+`opencode-go` additionally sends a Tau-specific `User-Agent` (`tau/<version>`)
+unless the active provider preferences already define one.
 
 ### Anthropic prompt-cache compat keys
 

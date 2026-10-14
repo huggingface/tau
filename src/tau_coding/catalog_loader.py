@@ -100,6 +100,7 @@ class _CatalogProvider(BaseModel):
     default_model: _NonEmptyString
     docs_url: _NonEmptyString
     api: ProviderApi | None = None
+    anthropic_auth: _NonEmptyString | None = None
     context_windows: dict[_NonEmptyString, _PositiveInt] | None = None
     headers: dict[_NonEmptyString, _NonEmptyString] = {}
     compat: dict[_NonEmptyString, Any] = {}
@@ -470,6 +471,7 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
         default_model=provider.default_model,
         docs_url=provider.docs_url,
         api=provider.api,
+        anthropic_auth=provider.anthropic_auth,
         context_windows=context_windows or None,
         headers=dict(provider.headers),
         compat=_json_object(provider.compat, f"{prefix}.compat"),
