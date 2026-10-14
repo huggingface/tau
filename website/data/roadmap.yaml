@@ -2,30 +2,30 @@ groups:
   - label: What's next
     note: "the frontier"
     phases:
-      - id: "29"
-        title: "Python SDK"
-        summary: "A typed Python client for embedding Tau's harness and sessions directly in other Python programs, without going through the CLI."
-        status: planned
-      - id: "28"
-        title: "RPC support"
-        summary: "Drive Tau as a subprocess over a structured RPC protocol, so other apps and editors can embed the agent without shelling out to the TUI."
-        status: planned
-      - id: "27"
-        title: "Native local model integration"
-        summary: "First-class llama.cpp integration for discovering, configuring, and running local models directly from Tau."
-        status: planned
       - id: "26.1"
         title: "Extensions marketplace"
         summary: "Discover, install, update, and share community-built Tau extensions."
-        status: planned
-      - id: "26"
-        title: "Extensions"
-        summary: "Local extension loading; extension-contributed tools, commands, prompt snippets/guidelines; event subscriptions."
         status: in_progress
 
   - label: Since then
     note: "shipped post-roadmap"
     phases:
+      - id: "29"
+        title: "Python SDK"
+        summary: "A typed Python client for embedding Tau's harness and sessions directly in other Python programs, without going through the CLI."
+        status: shipped
+      - id: "28"
+        title: "RPC support"
+        summary: "Drive Tau as a subprocess over a structured RPC protocol, so other apps and editors can embed the agent without shelling out to the TUI."
+        status: shipped
+      - id: "27"
+        title: "Native local model integration"
+        summary: "First-class llama.cpp integration for discovering, configuring, and running local models directly from Tau."
+        status: shipped
+      - id: "26"
+        title: "Extensions"
+        summary: "Local extension loading; extension-contributed tools, commands, prompt snippets/guidelines; event subscriptions."
+        status: shipped
       - id: "25"
         title: "System prompt display command"
         summary: "/system shows the effective system prompt Tau will send to the provider, without touching the transcript."

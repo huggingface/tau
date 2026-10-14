@@ -4320,6 +4320,126 @@ async def test_codex_missing_active_model_survives_settings_refresh(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("refreshed_models", [(), ("new-model",)])
+@pytest.mark.parametrize("preview_other_provider", [False, True])
+async def test_provider_reload_keeps_committed_runtime_when_catalog_drops_active_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    refreshed_models: tuple[str, ...],
+    preview_other_provider: bool,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    active = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("gpt-6-sol",),
+        default_model="gpt-6-sol",
+    )
+    other = OpenAICompatibleProviderConfig(
+        name="local",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("qwen",),
+        default_model="qwen",
+    )
+    settings = ProviderSettings(providers=(active, other))
+    refreshed = ProviderSettings(
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="huggingface",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=refreshed_models,
+                default_model="gpt-6-sol",
+            ),
+            other,
+        )
+    )
+    runtime = FakeProvider([])
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=runtime,
+            model="gpt-6-sol",
+            provider_name="huggingface",
+            provider_settings=settings,
+            runtime_provider_config=active,
+            system="Test",
+            cwd=tmp_path,
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            extensions_enabled=False,
+        )
+    )
+    runtime = session.provider
+    monkeypatch.setattr(coding_session_module, "load_provider_settings", lambda *a: refreshed)
+    if preview_other_provider:
+        session.preview_model_choice(ModelChoice("local", "qwen"))
+    before = await session._config.storage.read_all()
+
+    session.reload_provider_settings()
+
+    assert session.provider is runtime
+    assert session._harness.config.model == "gpt-6-sol"
+    assert session.model == ("qwen" if preview_other_provider else "gpt-6-sol")
+    assert session.provider_config("huggingface").models == refreshed_models
+    assert ModelChoice("huggingface", "gpt-6-sol") not in session.available_model_choices
+    assert session.handle_command("/model").model_picker_requested is True
+    assert await session._config.storage.read_all() == before
+
+
+@pytest.mark.anyio
+async def test_provider_reload_uses_committed_model_with_cross_provider_preview(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    active = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("gpt-6-sol",),
+        default_model="gpt-6-sol",
+    )
+    other = OpenAICompatibleProviderConfig(
+        name="local",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("qwen",),
+        default_model="qwen",
+    )
+    settings = ProviderSettings(providers=(active, other))
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-6-sol",
+            provider_name="huggingface",
+            provider_settings=settings,
+            runtime_provider_config=active,
+            system="Test",
+            cwd=tmp_path,
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            extensions_enabled=False,
+        )
+    )
+    session.preview_model_choice(ModelChoice("local", "qwen"))
+    created: list[str] = []
+
+    def create_provider(*args: object, **kwargs: object) -> FakeProvider:
+        del args
+        created.append(str(kwargs["model"]))
+        return FakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "load_provider_settings", lambda *a: settings)
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session.reload_provider_settings()
+
+    assert created == ["gpt-6-sol"]
+    assert session._harness.config.model == "gpt-6-sol"
+    assert session.model == "qwen"
+    assert session.provider_name == "local"
+    assert session.has_pending_selection
+
+
+@pytest.mark.anyio
 async def test_session_skips_codex_catalog_discovery_offline(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -5555,6 +5675,165 @@ async def test_available_model_choices_include_stored_credentials(
 
 
 @pytest.mark.anyio
+async def test_cross_provider_preview_uses_previewed_models_and_thinking_capabilities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    settings = ProviderSettings(
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="provider-a",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("alpha",),
+                default_model="alpha",
+                thinking_levels=("off", "high"),
+            ),
+            OpenAICompatibleProviderConfig(
+                name="provider-b",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("beta", "no-think"),
+                default_model="beta",
+                thinking_levels=("off", "low"),
+                thinking_models=("beta",),
+            ),
+        ),
+    )
+    storage = JsonlSessionStorage(tmp_path / "preview.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="alpha",
+            system="Test",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="provider-a",
+            provider_settings=settings,
+            runtime_provider_config=settings.get_provider("provider-a"),
+            extensions_enabled=False,
+        )
+    )
+    before = await storage.read_all()
+    assert session._provider_registry.effective("provider-b") is not None
+
+    session.preview_model_choice(ModelChoice("provider-b", "no-think"))
+    assert session.available_models == ("beta", "no-think")
+    assert session.available_thinking_levels == ()
+    assert "provider-b:no-think" in (session.thinking_unavailable_reason or "")
+    assert "thinking_models" in (session.thinking_unavailable_reason or "")
+
+    session.preview_model_choice(ModelChoice("provider-b", "beta"))
+    assert session.available_thinking_levels == ("off", "low")
+    assert session.preview_thinking_level("low") == "Thinking mode: low"
+    result = session.handle_command("/model beta")
+    assert result.model_selection_provider == "provider-b"
+    assert result.model_selection_model == "beta"
+    unknown = session.handle_command("/model alpha")
+    assert "Unknown model for provider provider-b: alpha" in (unknown.message or "")
+    assert "Available models: beta, no-think" in (unknown.message or "")
+    assert session._harness.config.model == "alpha"
+    assert await storage.read_all() == before
+
+
+@pytest.mark.anyio
+async def test_preview_selection_commits_only_at_next_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("qwen", "llama"),
+                default_model="qwen",
+                thinking_levels=("off", "high"),
+                thinking_models=("llama",),
+            ),
+        ),
+        scoped_models=(
+            ScopedModelConfig(provider="local", model="qwen"),
+            ScopedModelConfig(provider="local", model="llama"),
+        ),
+    )
+    storage = JsonlSessionStorage(tmp_path / "preview.jsonl")
+    config = CodingSessionConfig(
+        provider=FakeProvider([]),
+        model="qwen",
+        system="You are Tau.",
+        storage=storage,
+        cwd=tmp_path,
+        provider_name="local",
+        provider_settings=settings,
+        runtime_provider_config=settings.get_provider("local"),
+    )
+    session = await CodingSession.load(config)
+    before = await storage.read_all()
+    constructed: list[str] = []
+
+    def create_provider(*args: object, **kwargs: object) -> FakeProvider:
+        del args
+        constructed.append(str(kwargs["model"]))
+        return FakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    assert session.preview_cycle_scoped_model() == ModelChoice("local", "llama")
+    assert session.preview_cycle_thinking_level() == "Thinking mode: high"
+    assert session.model == "llama"
+    assert session.thinking_level == "high"
+    assert session.state.model == "qwen"
+    assert await storage.read_all() == before
+    assert constructed == []
+
+    await _collect_session_events(session.prompt("hello"))
+    entries = await storage.read_all()
+    assert constructed == ["llama", "llama"]
+    assert [
+        (entry.type, getattr(entry, "model", getattr(entry, "thinking_level", "")))
+        for entry in entries
+        if entry.type in {"model_change", "thinking_level_change"}
+    ][-2:] == [
+        ("model_change", "llama"),
+        ("thinking_level_change", "high"),
+    ]
+    assert session.state.model == "llama"
+
+    # An invalid candidate must not send with the previous model or lose the
+    # pending choice; the user can retry once the provider is available.
+    session.preview_model_choice(ModelChoice("local", "qwen"))
+    assert session.thinking_level == "off"
+    before_failure = await storage.read_all()
+
+    def fail_provider(*args: object, **kwargs: object) -> FakeProvider:
+        del args, kwargs
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", fail_provider)
+    with pytest.raises(Exception, match="provider unavailable"):
+        await _collect_session_events(session.prompt("retry later"))
+    assert await storage.read_all() == before_failure
+    assert session.has_pending_selection
+    assert session.model == "qwen"
+    assert session.state.model == "llama"
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    await _collect_session_events(session.prompt("retry now"))
+    entries = await storage.read_all()
+    assert session.state.thinking_level == "off"
+    assert [
+        (entry.type, getattr(entry, "thinking_level", None))
+        for entry in entries
+        if entry.type in {"model_change", "thinking_level_change"}
+    ][-2:] == [
+        ("model_change", None),
+        ("thinking_level_change", "off"),
+    ]
+
+
+@pytest.mark.anyio
 async def test_session_toggles_and_cycles_scoped_models(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -6042,8 +6321,9 @@ async def test_session_set_model_preserves_newer_provider_file_changes(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("owns_initial_provider", [False, True])
 async def test_session_new_session_uses_default_provider_model(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owns_initial_provider: bool
 ) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     current_record = manager.create_session(
@@ -6076,15 +6356,18 @@ async def test_session_new_session_uses_default_provider_model(
         credential_store: FileCredentialStore | None = None,
         model: str | None = None,
         thinking_level: str | None = None,
+        inference_provider: str | None = None,
     ) -> SwitchableFakeProvider:
-        del credential_store, thinking_level
+        del credential_store, thinking_level, inference_provider
         created.append((provider_config.name, model))  # type: ignore[attr-defined]
         return SwitchableFakeProvider(provider_config)
 
     monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    old_provider = SwitchableFakeProvider(settings.get_provider("openrouter"))
     session = await CodingSession.load(
         CodingSessionConfig(
-            provider=FakeProvider([]),
+            provider=old_provider,
+            owns_initial_provider=owns_initial_provider,
             model="openai/gpt-5.5",
             system="You are Tau.",
             storage=JsonlSessionStorage(current_record.path),
@@ -6105,6 +6388,8 @@ async def test_session_new_session_uses_default_provider_model(
     assert session.model == "gpt-5"
     assert manager.get_session(session.session_id) is None
     assert created == [("openai", "gpt-5")]
+    assert session.provider is not old_provider
+    assert session.provider.config.name == "openai"
 
 
 @pytest.mark.anyio

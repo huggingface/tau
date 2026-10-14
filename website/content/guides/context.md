@@ -108,7 +108,7 @@ Thinking is model-aware: Tau enables it only when the active provider declares
 supported levels for the active model. When it's unavailable, `/session` shows
 the reason (e.g. the provider doesn't declare `thinking_levels`, or the model
 isn't listed). Custom providers can opt in via `thinking_levels` in their config
-— see [Configuration]({{< relref "../reference/configuration.md#providers" >}}).
+— see [Configuration](/reference/configuration/#providers).
 
 At startup Tau picks a valid level for the selected model automatically: a
 remembered per-model choice wins, then `medium`, then the provider's own

@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from tau_coding.extensions.runtime import ExtensionRuntime
     from tau_coding.local_backends import LocalBackend
     from tau_coding.paths import TauPaths
+    from tau_coding.project_trust import ProjectTrustResolution
+    from tau_coding.session import ModelChoice
     from tau_coding.tui.config import TuiTheme
 
 AGENT_EVENT_TYPES: frozenset[str] = frozenset(
@@ -910,6 +912,18 @@ class ExtensionContext:
         return self._runtime.session_view.provider_name
 
     @property
+    def available_providers(self) -> tuple[str, ...]:
+        """Return provider IDs that the active session can call."""
+        self._generation.assert_active()
+        return tuple(self._runtime.session_view.available_providers)
+
+    @property
+    def available_model_choices(self) -> tuple[ModelChoice, ...]:
+        """Return provider/model IDs from the active session's runtime view."""
+        self._generation.assert_active()
+        return cast("tuple[ModelChoice, ...]", self._runtime.session_view.available_model_choices)
+
+    @property
     def inference_provider(self) -> str | None:
         """Return the active Hugging Face inference-provider pin, if any."""
         self._generation.assert_active()
@@ -944,6 +958,33 @@ class ExtensionContext:
         """Return the active system prompt."""
         self._generation.assert_active()
         return self._runtime.session_view.system_prompt
+
+    @property
+    def project_trust_resolution(self) -> ProjectTrustResolution | None:
+        """Return the completed project-input trust decision for the session cwd.
+
+        The resolution is a frozen snapshot with the ``trusted`` decision plus
+        ``source``/``saved_path`` diagnostics. It is ``None`` only for sessions
+        that never resolved trust (for example a bare ``CodingSession`` built
+        outside ``CodingSession.load``). During a ``session_start("reload")``
+        hook it still reflects the outgoing generation's decision, like every
+        other session property read at that point.
+        """
+        self._generation.assert_active()
+        return self._runtime.session_view.project_trust_resolution
+
+    @property
+    def project_trusted(self) -> bool:
+        """Return whether the session cwd's project inputs were approved.
+
+        A host that constructs child ``CodingSession``s (e.g. subagents) should
+        forward this as ``CodingSessionConfig(trust_override="approve")`` when
+        ``True`` and ``"decline"`` when ``False``, so children inherit the
+        user's decision instead of re-resolving headlessly as untrusted.
+        """
+        self._generation.assert_active()
+        resolution = self._runtime.session_view.project_trust_resolution
+        return resolution is not None and resolution.trusted
 
     @property
     def is_running(self) -> bool:

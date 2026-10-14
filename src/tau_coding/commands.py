@@ -99,8 +99,6 @@ class CommandSession(Protocol):
 
     def set_model(self, model: str) -> None: ...
 
-    def reload_provider_settings(self) -> None: ...
-
 
 @dataclass(frozen=True, slots=True)
 class CommandResult:
@@ -676,10 +674,8 @@ def _tools_command(context: CommandContext) -> CommandResult:
 
 
 def _model_command(context: CommandContext) -> CommandResult:
-    refresh_error = _refresh_provider_settings(context.session)
-    if refresh_error is not None:
-        return refresh_error
-
+    # The picker uses the current snapshot and refreshes catalogs after opening.
+    # Rebuilding the active provider here can prevent the picker from opening.
     if context.args:
         model = context.args.strip()
         available_models = set(context.session.available_models)
@@ -703,10 +699,6 @@ def _model_command(context: CommandContext) -> CommandResult:
 
 
 def _scoped_models_command(context: CommandContext) -> CommandResult:
-    refresh_error = _refresh_provider_settings(context.session)
-    if refresh_error is not None:
-        return refresh_error
-
     if context.args:
         return CommandResult(handled=True, message="Usage: /scoped-models")
     return CommandResult(handled=True, scoped_models_picker_requested=True)
@@ -859,17 +851,6 @@ def _format_diagnostics(
     lines = ["Resource diagnostics:"]
     lines.extend(f"- {diagnostic.format()}" for diagnostic in filtered)
     return lines
-
-
-def _refresh_provider_settings(session: CommandSession) -> CommandResult | None:
-    try:
-        session.reload_provider_settings()
-    except ValueError as exc:
-        return CommandResult(
-            handled=True,
-            message=f"Could not refresh provider settings: {exc}",
-        )
-    return None
 
 
 def format_reload_summary(summary: CodingReloadSummary) -> str:

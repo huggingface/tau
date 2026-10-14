@@ -49,7 +49,12 @@ from tau_ai.model_catalog import RuntimeModel, RuntimeModelCatalog, RuntimeThink
 from tau_ai.model_limits import RuntimeModelLimits
 from tau_ai.openai_cache import openai_prompt_cache_key
 from tau_ai.provider import CancellationToken
-from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.retry import (
+    RETRYABLE_TRANSPORT_ERRORS,
+    provider_retry_event,
+    retry_delay_seconds,
+    wait_for_retry,
+)
 from tau_ai.stream import canonicalize_provider_stream
 
 DEFAULT_OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
@@ -311,7 +316,7 @@ class OpenAICodexProvider:
                         if not await wait_for_retry(delay, signal=signal):
                             return
                         continue
-                except httpx.HTTPError as exc:
+                except RETRYABLE_TRANSPORT_ERRORS as exc:
                     if not emitted_content and self._should_retry(attempt):
                         delay = retry_delay_seconds(
                             attempt,
