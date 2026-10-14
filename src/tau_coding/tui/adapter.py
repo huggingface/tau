@@ -137,13 +137,22 @@ class TuiEventAdapter:
                 event.is_error,
             )
             return
-        if isinstance(event, CompactionStartEvent) and event.reason == "overflow":
-            self.state.add_item("status", "… Context limit reached; compacting and retrying")
+        if isinstance(event, CompactionStartEvent):
+            if event.reason == "overflow":
+                self.state.add_item("status", "… Context limit reached; compacting and retrying")
+            elif event.reason == "threshold":
+                self.state.add_item("status", "… Compacting context")
             return
-        if isinstance(event, CompactionEndEvent) and event.reason == "overflow":
-            if (event.aborted or event.error_message) and self._pending_overflow_error is not None:
-                self.state.add_assistant_error(self._pending_overflow_error)
-                self._pending_overflow_error = None
+        if isinstance(event, CompactionEndEvent):
+            if event.reason == "overflow":
+                if (
+                    event.aborted or event.error_message
+                ) and self._pending_overflow_error is not None:
+                    self.state.add_assistant_error(self._pending_overflow_error)
+                    self._pending_overflow_error = None
+            elif event.reason == "threshold" and (event.aborted or event.error_message):
+                detail = f": {event.error_message}" if event.error_message else ""
+                self.state.add_item("status", f"… Auto-compaction failed{detail}")
             return
         if isinstance(event, AutoRetryStartEvent):
             if self.state.items and self.state.items[-1].role == "error":

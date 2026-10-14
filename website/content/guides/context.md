@@ -67,9 +67,12 @@ tau --auto-compact-threshold 100000
 ```
 
 Automatic compaction is best-effort: if summarization fails, Tau logs it and keeps
-the original context. During successful overflow recovery, the TUI shows compaction
-and retry progress instead of presenting the intermediate provider rejection as a
-terminal error. The error becomes visible only if recovery cannot complete.
+the original context. Threshold-based compaction is visible in the TUI: a
+`… Compacting context` status item explains the summarization request while it runs,
+and a failed attempt shows `… Auto-compaction failed` instead of passing silently.
+During successful overflow recovery, the TUI shows compaction and retry progress
+instead of presenting the intermediate provider rejection as a terminal error. The
+error becomes visible only if recovery cannot complete.
 
 ## Manual compaction
 

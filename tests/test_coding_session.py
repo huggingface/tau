@@ -70,7 +70,13 @@ from tau_coding import (
 )
 from tau_coding import session as coding_session_module
 from tau_coding.codex_model_store import cached_codex_model_catalog, save_codex_model_catalog
-from tau_coding.events import AgentSettledEvent, QueueUpdateEvent
+from tau_coding.context_window import SUMMARIZATION_SYSTEM_PROMPT
+from tau_coding.events import (
+    AgentSettledEvent,
+    CompactionEndEvent,
+    CompactionStartEvent,
+    QueueUpdateEvent,
+)
 from tau_coding.extensions import (
     DynamicProvider,
     OpenAICompatibleTransport,
@@ -3898,6 +3904,214 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
             UserMessage(content="Next."),
         ],
     )
+
+
+@pytest.mark.anyio
+async def test_threshold_auto_compaction_emits_exactly_one_start_end_pair(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    large_prompt = "Explain sessions.\n" + ("old context " * 12_000)
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="First answer")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Generated automatic summary")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Third answer")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            auto_compact_token_threshold=1,
+        )
+    )
+
+    all_events: list[object] = []
+    for text in (large_prompt, "Continue.", "Next."):
+        all_events.extend(await _collect_session_events(session.prompt(text)))
+
+    compaction_events = [
+        event
+        for event in all_events
+        if isinstance(event, (CompactionStartEvent, CompactionEndEvent))
+    ]
+    assert len(compaction_events) == 2
+    start, end = compaction_events
+    assert isinstance(start, CompactionStartEvent)
+    assert start.reason == "threshold"
+    assert isinstance(end, CompactionEndEvent)
+    assert end.reason == "threshold"
+    assert end.aborted is False
+    assert end.error_message is None
+    # The pair wraps the summarization request with nothing in between.
+    start_index = all_events.index(start)
+    assert all_events[start_index + 1] is end
+    # Compaction is part of the enclosing turn, not an extra one.
+    settled = [event for event in all_events if isinstance(event, AgentSettledEvent)]
+    assert len(settled) == 3
+
+
+@pytest.mark.anyio
+async def test_auto_compact_check_without_work_emits_no_compaction_events(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Hi there")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            auto_compact_token_threshold=1,
+        )
+    )
+
+    events = await _collect_session_events(session.prompt("Hello"))
+
+    assert not any(
+        isinstance(event, (CompactionStartEvent, CompactionEndEvent)) for event in events
+    )
+    assert any(isinstance(event, AgentSettledEvent) for event in events)
+
+
+@pytest.mark.anyio
+async def test_threshold_auto_compaction_failure_emits_aborted_end_event(
+    tmp_path: Path,
+) -> None:
+    class FailingSummaryProvider(FakeProvider):
+        def stream_response(
+            self, *, system: str, **kwargs: object
+        ) -> AsyncIterator[AssistantMessageEvent]:
+            if system == SUMMARIZATION_SYSTEM_PROMPT:
+                raise RuntimeError("summary provider unavailable")
+            return super().stream_response(system=system, **kwargs)
+
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    large_prompt = "Explain sessions.\n" + ("old context " * 12_000)
+    provider = FailingSummaryProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="First answer")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Third answer")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            auto_compact_token_threshold=1,
+        )
+    )
+
+    all_events: list[object] = []
+    for text in (large_prompt, "Continue.", "Next."):
+        all_events.extend(await _collect_session_events(session.prompt(text)))
+
+    # A failed compaction persists nothing, so every later turn boundary retries
+    # it: expect one adjacent start/aborted-end pair per attempt.
+    compaction_events = [
+        event
+        for event in all_events
+        if isinstance(event, (CompactionStartEvent, CompactionEndEvent))
+    ]
+    assert len(compaction_events) >= 2
+    assert len(compaction_events) % 2 == 0
+    for start, end in zip(compaction_events[::2], compaction_events[1::2], strict=True):
+        assert isinstance(start, CompactionStartEvent)
+        assert start.reason == "threshold"
+        assert isinstance(end, CompactionEndEvent)
+        assert end.reason == "threshold"
+        assert end.aborted is True
+        assert end.error_message == "summary provider unavailable"
+    # A failed auto-compaction must not lose the turn.
+    assert any(
+        isinstance(event, MessageEndEvent)
+        and isinstance(event.message, AssistantMessage)
+        and event.message.text == "Third answer"
+        for event in all_events
+    )
+    entries = await storage.read_all()
+    assert not any(entry.type == "compaction" for entry in entries)
+
+
+@pytest.mark.anyio
+async def test_manual_compaction_emits_events_for_extensions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(coding_session_module, "DEFAULT_COMPACTION_KEEP_RECENT_TOKENS", 1)
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Session answer")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Generated session summary")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(_config(tmp_path, provider, storage))
+    extension_events = _record_extension_events(session, monkeypatch)
+    await _collect_session_events(session.prompt("Explain sessions."))
+
+    result = await session.compact("Focus on session persistence.")
+
+    compaction_events = [
+        event
+        for event in extension_events
+        if isinstance(event, (CompactionStartEvent, CompactionEndEvent))
+    ]
+    assert len(compaction_events) == 2
+    start, end = compaction_events
+    assert isinstance(start, CompactionStartEvent)
+    assert start.reason == "manual"
+    assert isinstance(end, CompactionEndEvent)
+    assert end.reason == "manual"
+    assert end.aborted is False
+    assert end.error_message is None
+    assert end.result is not None
+    assert result.startswith("Compacted")
 
 
 @pytest.mark.anyio

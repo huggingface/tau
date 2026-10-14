@@ -3119,27 +3119,50 @@ class CodingSession:
         plan = self._recent_preserving_compaction_plan()
         if plan is None:
             raise ValueError("Not enough context to compact while preserving recent entries")
-        tokens_before = self.context_token_estimate
-        generated = await self._generate_compaction_summary(
-            plan.messages_to_summarize,
-            custom_instructions=instructions,
-        )
-        await self._append_compaction(
-            generated.text,
-            first_kept_entry_id=plan.first_kept_entry_id,
-            tokens_before=tokens_before,
-            usage=generated.usage,
-            provider=generated.provider,
-            model=generated.model,
-            response_provider=generated.response_provider,
-        )
-        return ManualCompactionResult(
+        compaction_start = CompactionStartEvent(reason="manual")
+        await self._extension_runtime.emit_event(compaction_start)
+        try:
+            tokens_before = self.context_token_estimate
+            generated = await self._generate_compaction_summary(
+                plan.messages_to_summarize,
+                custom_instructions=instructions,
+            )
+            await self._append_compaction(
+                generated.text,
+                first_kept_entry_id=plan.first_kept_entry_id,
+                tokens_before=tokens_before,
+                usage=generated.usage,
+                provider=generated.provider,
+                model=generated.model,
+                response_provider=generated.response_provider,
+            )
+        except Exception as exc:
+            await self._extension_runtime.emit_event(
+                CompactionEndEvent(
+                    reason="manual",
+                    aborted=True,
+                    will_retry=False,
+                    error_message=str(exc),
+                )
+            )
+            raise
+        result = ManualCompactionResult(
             summary=generated.text,
             first_kept_entry_id=plan.first_kept_entry_id,
             tokens_before=tokens_before,
             estimated_tokens_after=self.context_token_estimate,
             replaced_entry_count=plan.replaced_entry_count,
         )
+        await self._extension_runtime.emit_event(
+            CompactionEndEvent(
+                reason="manual",
+                result=result,
+                aborted=False,
+                will_retry=False,
+                error_message=None,
+            )
+        )
+        return result
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
@@ -3344,7 +3367,10 @@ class CodingSession:
         await self._flush_pending_message_writes(context=context)
         await self._commit_preview()
         await self._refresh_runtime_model_limits()
-        await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
+        async for compaction_event in self._auto_compact_events(
+            context=context, phase="auto_compact_before_prompt"
+        ):
+            yield compaction_event
         # id() values can be reused once earlier message objects are freed.
         self._ended_message_ids.clear()
         self._persisted_message_ids.clear()
@@ -3467,7 +3493,10 @@ class CodingSession:
                 async for failover_event in self._run_huggingface_route_failover(context=context):
                     yield failover_event
             else:
-                await self._try_auto_compact(context=context, phase="auto_compact_after_prompt")
+                async for compaction_event in self._auto_compact_events(
+                    context=context, phase="auto_compact_after_prompt"
+                ):
+                    yield compaction_event
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -3523,7 +3552,10 @@ class CodingSession:
             if route_failure_message is not None:
                 async for failover_event in self._run_huggingface_route_failover(context=context):
                     yield failover_event
-            await self._try_auto_compact(context=context, phase="auto_compact_after_continue")
+            async for compaction_event in self._auto_compact_events(
+                context=context, phase="auto_compact_after_continue"
+            ):
+                yield compaction_event
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -3853,21 +3885,74 @@ class CodingSession:
             session_id=self._config.session_id,
         )
 
-    async def _try_auto_compact(
+    def _auto_compact_plan(self) -> CompactionPlan | None:
+        threshold = self.auto_compact_token_threshold
+        if threshold is None or threshold <= 0:
+            return None
+        if len(self._state.context_entry_ids) < 2:
+            return None
+        if self.context_token_estimate <= threshold:
+            return None
+        return self._recent_preserving_compaction_plan()
+
+    async def _auto_compact_events(
         self,
         *,
         context: AgentCallDiagnosticContext,
         phase: str,
-    ) -> bool:
+    ) -> AsyncIterator[CodingSessionEvent]:
+        """Run threshold auto-compaction, emitting events only when it actually runs."""
         try:
-            return await self._maybe_auto_compact()
+            plan = self._auto_compact_plan()
         except Exception as exc:  # noqa: BLE001 - automatic compaction must not lose a turn
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
                 phase=phase,
                 exc=exc,
             )
-            return False
+            return
+        if plan is None:
+            return
+        compaction_start = CompactionStartEvent(reason="threshold")
+        await self._extension_runtime.emit_event(compaction_start)
+        yield compaction_start
+        try:
+            tokens_before = self.context_token_estimate
+            generated = await self._generate_compaction_summary(plan.messages_to_summarize)
+            await self._append_compaction(
+                generated.text,
+                first_kept_entry_id=plan.first_kept_entry_id,
+                tokens_before=tokens_before,
+                usage=generated.usage,
+                provider=generated.provider,
+                model=generated.model,
+                response_provider=generated.response_provider,
+            )
+        except Exception as exc:  # noqa: BLE001 - automatic compaction must not lose a turn
+            self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
+                context=context,
+                phase=phase,
+                exc=exc,
+            )
+            compaction_end = CompactionEndEvent(
+                reason="threshold",
+                result=None,
+                aborted=True,
+                will_retry=False,
+                error_message=str(exc),
+            )
+            await self._extension_runtime.emit_event(compaction_end)
+            yield compaction_end
+            return
+        compaction_end = CompactionEndEvent(
+            reason="threshold",
+            result=None,
+            aborted=False,
+            will_retry=False,
+            error_message=None,
+        )
+        await self._extension_runtime.emit_event(compaction_end)
+        yield compaction_end
 
     async def _try_overflow_compact(
         self,
@@ -3973,30 +4058,6 @@ class CodingSession:
             for provider in self._provider_settings.providers
             if self._provider_is_usable(provider)
         )
-
-    async def _maybe_auto_compact(self) -> bool:
-        threshold = self.auto_compact_token_threshold
-        if threshold is None or threshold <= 0:
-            return False
-        if len(self._state.context_entry_ids) < 2:
-            return False
-        if self.context_token_estimate <= threshold:
-            return False
-        plan = self._recent_preserving_compaction_plan()
-        if plan is None:
-            return False
-        tokens_before = self.context_token_estimate
-        generated = await self._generate_compaction_summary(plan.messages_to_summarize)
-        await self._append_compaction(
-            generated.text,
-            first_kept_entry_id=plan.first_kept_entry_id,
-            tokens_before=tokens_before,
-            usage=generated.usage,
-            provider=generated.provider,
-            model=generated.model,
-            response_provider=generated.response_provider,
-        )
-        return True
 
     async def _generate_compaction_summary(
         self,

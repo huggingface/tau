@@ -93,6 +93,25 @@ def test_tui_adapter_replaces_recovered_overflow_with_terminal_retry_error() -> 
     assert "context window exceeded" not in state.error
 
 
+def test_tui_adapter_renders_threshold_compaction_status() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(CompactionStartEvent(reason="threshold"))
+    assert state.items[-1].role == "status"
+    assert "Compacting context" in state.items[-1].text
+    item_count = len(state.items)
+
+    adapter.apply(CompactionEndEvent(reason="threshold"))
+    assert len(state.items) == item_count
+
+    adapter.apply(CompactionStartEvent(reason="threshold"))
+    adapter.apply(CompactionEndEvent(reason="threshold", aborted=True, error_message="boom"))
+    assert state.items[-1].role == "status"
+    assert "Auto-compaction failed" in state.items[-1].text
+    assert "boom" in state.items[-1].text
+
+
 def test_tui_adapter_builds_assistant_item_from_nested_stream_events() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)

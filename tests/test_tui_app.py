@@ -10328,6 +10328,42 @@ async def test_tui_prompt_worker_shows_recovery_status_instead_of_overflow_error
 
 
 @pytest.mark.anyio
+async def test_tui_prompt_worker_explains_threshold_compaction_pause() -> None:
+    session = FakeSession(
+        events=[
+            AgentStartEvent(),
+            MessageEndEvent(message=AssistantMessage(content="All set.")),
+            SessionAgentEndEvent(will_retry=False),
+            CompactionStartEvent(reason="threshold"),
+            CompactionEndEvent(reason="threshold"),
+            AgentSettledEvent(),
+        ]
+    )
+    app = TauTuiApp(session)
+    app._refresh = lambda: None  # type: ignore[method-assign]
+    app._app_has_focus = False
+    notifications = 0
+
+    def _count_notification() -> None:
+        nonlocal notifications
+        notifications += 1
+
+    app._terminal_notification.notify_turn_finished = _count_notification  # type: ignore[method-assign]
+
+    await app._run_prompt("thanks")
+
+    assert any(
+        item.role == "status" and "Compacting context" in item.text for item in app.state.items
+    )
+    # The status lands after the fully rendered answer, explaining the extra wait.
+    assert app.state.items[-1].role == "status"
+    assert app.state.error is None
+    assert app.state.running is False
+    # Compaction does not raise a second turn-finished notification.
+    assert notifications == 1
+
+
+@pytest.mark.anyio
 async def test_tui_prompt_worker_surfaces_overflow_when_compaction_fails() -> None:
     message = AssistantMessage(
         stop_reason="error",
