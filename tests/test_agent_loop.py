@@ -237,6 +237,97 @@ async def test_agent_loop_executes_tool_and_emits_tool_result_message_lifecycle(
 
 
 @pytest.mark.anyio
+async def test_hook_that_stops_the_run_issues_no_further_request() -> None:
+    async def execute(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal: CancellationToken | None = None,
+        on_update=None,  # noqa: ANN001
+    ) -> AgentToolResult:
+        raise AssertionError("a blocked call must not run")
+
+    signal = SimpleCancellationToken()
+
+    async def stop_run(call: ToolCall) -> tuple[bool, str | None]:
+        del call
+        signal.cancel()
+        return True, "Stopped by hook."
+
+    tool_call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    first = AssistantMessage(content=[tool_call], model="fake")
+    unreached = AssistantMessage(content="Should not be requested.", model="fake")
+    provider = FakeProvider(
+        [
+            [assistant_start(), tool_call_end(tool_call), assistant_done(first, "toolUse")],
+            [assistant_start(), assistant_done(unreached)],
+        ]
+    )
+    messages: list[AgentMessage] = [UserMessage(content="Read README.md")]
+
+    events = await _collect(
+        run_agent_loop(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[_tool("read", execute)],
+            signal=signal,
+            before_tool_call=stop_run,
+        )
+    )
+
+    assert len(provider.calls) == 1
+    final = messages[-1]
+    assert isinstance(final, AssistantMessage)
+    assert final.stop_reason == "aborted"
+    assert final.error_message == "Stopped by hook."
+    assert events[-1].type == "agent_end"
+
+
+@pytest.mark.anyio
+async def test_cancel_while_a_tool_runs_issues_no_further_request() -> None:
+    signal = SimpleCancellationToken()
+
+    async def execute(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal_arg: CancellationToken | None = None,
+        on_update=None,  # noqa: ANN001
+    ) -> AgentToolResult:
+        # Like bash when the user cancels a running command.
+        signal.cancel()
+        return AgentToolResult(content=[TextContent(text="Command cancelled")])
+
+    tool_call = ToolCall(id="call-1", name="bash", arguments={"command": "sleep 60"})
+    first = AssistantMessage(content=[tool_call], model="fake")
+    unreached = AssistantMessage(content="Should not be requested.", model="fake")
+    provider = FakeProvider(
+        [
+            [assistant_start(), tool_call_end(tool_call), assistant_done(first, "toolUse")],
+            [assistant_start(), assistant_done(unreached)],
+        ]
+    )
+    messages: list[AgentMessage] = [UserMessage(content="Wait a minute")]
+
+    await _collect(
+        run_agent_loop(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[_tool("bash", execute)],
+            signal=signal,
+        )
+    )
+
+    assert len(provider.calls) == 1
+    final = messages[-1]
+    assert isinstance(final, AssistantMessage)
+    assert final.stop_reason == "aborted"
+    assert final.error_message == "Operation aborted"
+
+
+@pytest.mark.anyio
 async def test_agent_loop_passes_call_id_signal_and_progress_to_tool() -> None:
     observed: list[tuple[str, CancellationToken | None]] = []
 
