@@ -18,10 +18,9 @@ It's two things at once:
   organized into small, honest layers so you can see exactly how a coding agent
   works — from model streaming, to the agent loop, to tools and sessions.
 
-{{% note title="Why \"Tau\"?" %}}
-The name is a small joke about picking the *right* foundation. See
-[Why "Tau"?](../why-tau/) for the (genuinely fun) math rant behind it.
-{{% /note %}}
+> [!NOTE] Why "Tau"?
+> The name is a small joke about picking the *right* foundation. See
+> [Why "Tau"?](/why-tau/) for the (genuinely fun) math rant behind it.
 
 ## What can it do?
 
@@ -41,18 +40,18 @@ The name is a small joke about picking the *right* foundation. See
 ## Who is it for?
 
 - **You want a coding agent you can run and shape** — install it, point it at a
-  model, and work. Start with the [Quickstart]({{< relref "./quickstart.md" >}}).
+  model, and work. Start with the [Quickstart](/quickstart/).
 - **You want to understand how coding agents are built** — read the
-  [core concepts]({{< relref "./concepts.md" >}}), then the [How Tau works]({{< relref "./internals/architecture.md" >}})
+  [core concepts](/concepts/), then the [How Tau works](/internals/architecture/)
   section.
 
 ## Where to go next
 
-- **[Quickstart]({{< relref "./quickstart.md" >}})** — install Tau and run your first session in
+- **[Quickstart](/quickstart/)** — install Tau and run your first session in
   a few minutes.
-- **[Core concepts]({{< relref "./concepts.md" >}})** — the handful of ideas (agent loop,
+- **[Core concepts](/concepts/)** — the handful of ideas (agent loop,
   providers, tools, sessions, skills) that everything else builds on.
-- **[Guides]({{< relref "./guides/tui.md" >}})** — task-focused how-tos for the TUI, sessions,
+- **[Guides](/guides/tui/)** — task-focused how-tos for the TUI, sessions,
   providers, and more.
-- **[Reference]({{< relref "./reference/cli.md" >}})** — exact CLI commands, slash commands, and
+- **[Reference](/reference/cli/)** — exact CLI commands, slash commands, and
   keyboard shortcuts.

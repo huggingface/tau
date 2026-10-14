@@ -71,8 +71,7 @@ Tau also reads user-level `.agents` resources: `~/.agents/skills/`,
 "never"`. It is user-global only; a project cannot choose its own trust
 policy. The default is `ask`. Interactive `ask` opens the trust modal; headless
 `ask` safely declines. `trust.json` is managed atomically by Tau; do not add
-relative paths or unknown fields. See [Project trust]({{< relref
-"../guides/project-trust.md" >}}).
+relative paths or unknown fields. See [Project trust](/guides/project-trust/).
 
 Startup update checks cache their latest PyPI result in
 `~/.tau/cache/update-check.json` and refresh at most once per day. Set
@@ -163,8 +162,7 @@ stable `llama.cpp` provider ID and exact model ID; stale entries do not create
 availability or router work. For Hugging Face GGUF search, Tau reads `HF_TOKEN`
 or standard Hugging Face token files but never stores or forwards that token to
 the llama.cpp server. The independent server needs its own `HF_TOKEN` for gated
-downloads. See the [local inference guide]({{< relref
-"../guides/local-inference.md" >}}).
+downloads. See the [local inference guide](/guides/local-inference/).
 
 Tau intentionally reads catalog overlays only from the user-level
 `~/.tau/catalog.toml`. There is no project-level `.tau/catalog.toml`, so cloning a
@@ -372,7 +370,7 @@ Provider preferences live in `~/.tau/providers.json`:
 Writes after `/login`, `/model`, or scoped-model changes reload the file first,
 apply only the requested change, write atomically, and keep a `.bak` backup.
 
-See the [Providers & models guide]({{< relref "../guides/providers-and-models.md" >}}) for usage.
+See the [Providers & models guide](/guides/providers-and-models/) for usage.
 
 ## Shell settings
 
@@ -439,7 +437,7 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
 
 Built-in themes: `tau-dark` (default), `tau-light`, `high-contrast`. Custom
 themes are JSON files in `~/.tau/themes/` or a project's `.tau/themes/` — see
-[Themes]({{< relref "../guides/themes.md" >}}). Set one with `/theme`.
+[Themes](/guides/themes/). Set one with `/theme`.
 Textual's native theme picker is mapped to the same Tau themes and persists
 the same `theme` setting. A configured theme that cannot be found falls back
 to `tau-dark` with a startup notice, without overwriting the setting. Keys use
@@ -463,7 +461,7 @@ Tau rejects invalid values, empty keys, and duplicate assignments.
   play a sound. Desktop notifications can also use the operating system's
   configured notification sound. No notification is emitted while Tau has focus.
 
-Full list in [Keyboard shortcuts]({{< relref "./keybindings.md" >}}).
+Full list in [Keyboard shortcuts](/reference/keybindings/).
 
 ## Sessions
 
@@ -478,13 +476,13 @@ readable but are ignored. Per-entry bookmarks are append-only `label` changes
 with `target_id` and an optional `label`; the latest change per target wins and
 `null`/empty clears it. Session display names remain `session_info.title`.
 Metadata is indexed per project. See the
-[Sessions guide]({{< relref "../guides/sessions.md" >}}).
+[Sessions guide](/guides/sessions/).
 
 ## Skills, prompts & project context
 
 Resource discovery order (later overrides earlier) is documented in
-[Skills & prompt templates]({{< relref "../guides/skills-and-prompts.md" >}}) and
-[Project instructions]({{< relref "../guides/project-instructions.md" >}}). In short: user-level
+[Skills & prompt templates](/guides/skills-and-prompts/) and
+[Project instructions](/guides/project-instructions/). In short: user-level
 `~/.tau` and `~/.agents`, then project-level `.tau` and `.agents`, with
 `AGENTS.md` discovered from the project root down to your current directory.
 
@@ -492,4 +490,4 @@ Resource discovery order (later overrides earlier) is documented in
 
 `/session` reports a rough context estimate and breakdown. Auto-compaction
 triggers near the model's context window minus a reserve; override per run with
-`--auto-compact-threshold`. Details in [Managing context]({{< relref "../guides/context.md" >}}).
+`--auto-compact-threshold`. Details in [Managing context](/guides/context/).

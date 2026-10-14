@@ -16,11 +16,11 @@
   var canvas = document.getElementById("tauCanvas");
   if(!canvas) return;
   var ctx = canvas.getContext("2d");
-  var INK   = "#13213C";
-  var BLUE  = "#1B3FA0";
-  var RED   = "#D6435B";
-  var SOFT  = "#9FB0D0";
-  var GRID  = "#C9D6EE";
+  var INK   = "#111111";
+  var BLUE  = "#111111";
+  var RED   = "#C2402A";
+  var SOFT  = "#9A9A9A";
+  var GRID  = "#E2E2E2";
   var TAU   = Math.PI * 2;
 
   var W = canvas.width, H = canvas.height, DPR = 1;
@@ -98,11 +98,11 @@
     ctx.strokeStyle = GRID; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.stroke();
     // vertical diameter guide
-    ctx.strokeStyle = "rgba(159,176,208,.45)"; ctx.lineWidth = 1; ctx.setLineDash([2,3]);
+    ctx.strokeStyle = "rgba(0,0,0,.45)"; ctx.lineWidth = 1; ctx.setLineDash([2,3]);
     ctx.beginPath(); ctx.moveTo(cx, cy-R); ctx.lineTo(cx, cy+R); ctx.stroke(); ctx.setLineDash([]);
 
     // --- swept angle wedge + arc ---
-    ctx.fillStyle = "rgba(27,63,160,.10)";
+    ctx.fillStyle = "rgba(0,0,0,.05)";
     ctx.beginPath(); ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, R*0.42, 0, -theta, true); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = BLUE; ctx.lineWidth = 1.4;
@@ -110,7 +110,7 @@
 
     // --- traced sine wave so far (with soft glow) ---
     ctx.save();
-    ctx.shadowColor = "rgba(27,63,160,.35)"; ctx.shadowBlur = 6;
+    ctx.shadowColor = "rgba(0,0,0,0)"; ctx.shadowBlur = 6;
     ctx.strokeStyle = BLUE; ctx.lineWidth = 2.2; ctx.lineJoin = "round";
     ctx.beginPath();
     for(var i=0; i<=theta; i+=0.02){
@@ -126,7 +126,7 @@
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(px, py); ctx.stroke();
 
     // --- height (sin) bar on circle ---
-    ctx.strokeStyle = "rgba(214,67,91,.55)"; ctx.lineWidth = 1.4;
+    ctx.strokeStyle = "rgba(194,64,42,.6)"; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.moveTo(px, cy); ctx.lineTo(px, py); ctx.stroke();
 
     // --- projection line linking circle point to wave point ---
@@ -136,7 +136,7 @@
 
     // --- moving points (glow) ---
     ctx.save();
-    ctx.shadowColor = "rgba(214,67,91,.5)"; ctx.shadowBlur = 8;
+    ctx.shadowColor = "rgba(0,0,0,0)"; ctx.shadowBlur = 8;
     ctx.fillStyle = RED;
     ctx.beginPath(); ctx.arc(px, py, 4.2, 0, TAU); ctx.fill();
     ctx.beginPath(); ctx.arc(ex, ey, 4.2, 0, TAU); ctx.fill();
@@ -264,8 +264,8 @@
     ctx.fillText("r", (cx + mx)/2 + 8, (cy + my)/2 - 8);
 
     dot(ctx, cx, cy, 2.4, INK);
-    dot(ctx, mx, my, 4, RED, "rgba(214,67,91,.5)");
-    dot(ctx, contactX, baseY, 4, RED, "rgba(214,67,91,.5)");
+    dot(ctx, mx, my, 4, RED, "rgba(0,0,0,0)");
+    dot(ctx, contactX, baseY, 4, RED, "rgba(0,0,0,0)");
 
     // readout
     ctx.fillStyle = BLUE;
@@ -283,7 +283,7 @@
     ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.stroke();
 
     // swept wedge
-    ctx.fillStyle = "rgba(27,63,160,.12)";
+    ctx.fillStyle = "rgba(0,0,0,.05)";
     ctx.beginPath(); ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, R, 0, -theta, true); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = BLUE; ctx.lineWidth = 2;
@@ -308,11 +308,11 @@
     ctx.strokeStyle = INK; ctx.lineWidth = 1.8;
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(px, py); ctx.stroke();
     dot(ctx, cx, cy, 2.4, INK);
-    dot(ctx, px, py, 4, RED, "rgba(214,67,91,.5)");
+    dot(ctx, px, py, 4, RED, "rgba(0,0,0,0)");
 
     // centre readout
     ctx.fillStyle = BLUE; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.font = "600 18px 'Space Grotesk', sans-serif";
+    ctx.font = "600 18px 'STIX Two Text', serif";
     ctx.fillText((theta/TAU).toFixed(2) + " of a turn", cx, cy + R + 40);
   }, 320);
 
@@ -336,14 +336,14 @@
     // the landing point "1"
     var near = Math.min(theta, TAU - theta) < 0.18;
     ctx.fillStyle = near ? BLUE : SOFT;
-    dot(ctx, cx + R, cy, near ? 5 : 3.2, near ? BLUE : SOFT, near ? "rgba(27,63,160,.5)" : null);
+    dot(ctx, cx + R, cy, near ? 5 : 3.2, near ? BLUE : SOFT, near ? "rgba(0,0,0,0)" : null);
     ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.font = "12px 'JetBrains Mono', monospace";
     ctx.fillText("1", cx + R, cy + 8);
 
     // rotating phasor e^{i theta}
     var px = cx + Math.cos(theta)*R, py = cy - Math.sin(theta)*R;
     // projections
-    ctx.strokeStyle = "rgba(159,176,208,.6)"; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
+    ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
     ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, cy); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(cx, py); ctx.stroke();
     ctx.setLineDash([]);
@@ -354,7 +354,7 @@
     ctx.strokeStyle = INK; ctx.lineWidth = 1.8;
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(px, py); ctx.stroke();
     dot(ctx, cx, cy, 2.4, INK);
-    dot(ctx, px, py, 4.2, RED, "rgba(214,67,91,.5)");
+    dot(ctx, px, py, 4.2, RED, "rgba(0,0,0,0)");
 
     // label
     ctx.fillStyle = near ? BLUE : INK;

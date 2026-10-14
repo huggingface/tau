@@ -19,12 +19,12 @@ decision records live **in the repository**, under `dev-notes/`:
 
 These are intentionally **not** published on this site — they're contributor
 material. The published docs distill the result; see
-[How Tau works]({{< relref "./internals/architecture.md" >}}).
+[How Tau works](/internals/architecture/).
 
 ## Roadmap
 
 The published, phase-by-phase roadmap and status lives on the
-[roadmap page]({{< relref "./roadmap.md" >}}). The underlying checklist is
+[roadmap page](/roadmap/). The underlying checklist is
 tracked in [GitHub issue #1](https://github.com/huggingface/tau/issues/1).
 
 ## Running the project locally
@@ -47,17 +47,30 @@ uv run mypy
 
 ## The docs site
 
-The site (this site) is a [Hugo](https://gohugo.io/) project under `website/`:
+The site (this site) is an [Astro](https://astro.build/) project under `website/`.
+Use Node 22.12 or newer:
 
 ```bash
 cd website
-hugo server -D    # http://localhost:1313/
-hugo --minify     # static output in website/public/
+npm ci
+npm run dev          # http://localhost:4321/
+npm run check        # Astro and TypeScript diagnostics
+npm run format:check
+npm run build        # static output and Pagefind index in website/dist/
+npm test             # built-site and clipboard regression tests
+npm run preview      # preview the built site, including search
 ```
+
+Search requires the built Pagefind index: use `build` followed by `preview`,
+not the development server, to validate search.
 
 User-facing docs live in `website/content/`; the landing and "Why Tau?" pages
 are `website/content/_index.md` and `website/content/why-tau.md`, rendered by
-templates in `website/layouts/`. Code blocks on documentation pages include a
+Astro components in `website/src/components/`. Content collections validate page
+metadata and preserve the existing trailing-slash URLs. Internal links use normal
+Markdown paths; callouts use blockquotes beginning with `[!NOTE]`, `[!TIP]`, or
+`[!CAUTION]`, optionally followed by a title. GitHub Pages still hosts the site
+at the same custom domain. Code blocks on documentation pages include a
 keyboard-focusable **Copy** button. Copy success or clipboard failures are also
 announced to assistive technology.
 

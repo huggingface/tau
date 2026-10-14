@@ -91,7 +91,7 @@ and a timestamp. API keys are kept separately in `~/.tau/credentials.json` or
 read from `LLAMA_API_KEY`; no key means no `Authorization` header. Secrets do
 not enter snapshots, sessions, exports, or diagnostics. Resetting settings and
 deleting a stored credential are separate confirmations. See the [local
-inference guide]({{< relref "./local-inference.md" >}}) for troubleshooting.
+inference guide](/guides/local-inference/) for troubleshooting.
 
 The built-in integration does not import or rewrite an existing `llama-cpp`
 catalog entry. Configure `llama.cpp` separately through `/local`; Ollama and

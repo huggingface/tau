@@ -3,7 +3,7 @@ title: Slash commands
 description: Every in-session slash command in the Tau TUI.
 ---
 
-Type these inside the interactive [TUI]({{< relref "../guides/tui.md" >}}). Open the searchable
+Type these inside the interactive [TUI](/guides/tui/). Open the searchable
 command palette with **Ctrl+K**.
 
 | Command | Description |
@@ -38,22 +38,20 @@ each section uses a separate faint background matching its source-name color.
 If the active prompt no longer matches Tau's deterministic composition, Tau conservatively
 shows one runtime-composed source instead of guessing.
 
-{{% note title="Live HTML exports include the system prompt" %}}
-`/export` includes the current system prompt in a collapsed section when it
-creates HTML. Review it before sharing because it may expose project
-instructions or other local context. JSONL exports do not include the prompt.
-Offline `tau export` from stored JSONL cannot recover it and omits the section.
-The HTML export's **Usage** view charts token and cache activity. Its prompt-input
-chart marks compactions, model and thinking-level changes, and branch summaries
-against the next model request so cache changes have session context.
-{{% /note %}}
+> [!NOTE] Live HTML exports include the system prompt
+> `/export` includes the current system prompt in a collapsed section when it
+> creates HTML. Review it before sharing because it may expose project
+> instructions or other local context. JSONL exports do not include the prompt.
+> Offline `tau export` from stored JSONL cannot recover it and omits the section.
+> The HTML export's **Usage** view charts token and cache activity. Its prompt-input
+> chart marks compactions, model and thinking-level changes, and branch summaries
+> against the next model request so cache changes have session context.
 
-{{% note title="`/skill:` is special" %}}
-`/skill:<name>` is a *prompt-expansion* path, not a normal command — Tau expands
-the named skill into your prompt and runs it as a turn. Its optional request may
-start on the same line or on following lines. See
-[Skills & prompt templates]({{< relref "../guides/skills-and-prompts.md" >}}).
-{{% /note %}}
+> [!NOTE] `/skill:` is special
+> `/skill:<name>` is a *prompt-expansion* path, not a normal command — Tau expands
+> the named skill into your prompt and runs it as a turn. Its optional request may
+> start on the same line or on following lines. See
+> [Skills & prompt templates](/guides/skills-and-prompts/).
 
 Only registered commands are consumed locally. Other slash-prefixed input, including
 absolute paths such as `/tmp` or `/Users/me/file.png`, is sent to the model as a normal
@@ -62,5 +60,5 @@ prompt.
 Related:
 
 - **Thinking mode** is keyboard-driven, not a slash command — see
-  [Keyboard shortcuts]({{< relref "./keybindings.md" >}}) and [Managing context]({{< relref "../guides/context.md#thinking-modes" >}}).
+  [Keyboard shortcuts](/reference/keybindings/) and [Managing context](/guides/context/#thinking-modes).
 - **Prompt templates** use slash invocations (for example, `/wt …`). Use `/prompts` to search loaded templates, insert an invocation without submitting it, or edit a selected template with **Ctrl+E**.
