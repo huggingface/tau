@@ -381,6 +381,17 @@ def main(
         bool,
         typer.Option("--models", help="With `tau update`, refresh model catalogs only."),
     ] = False,
+    show_full_output: Annotated[
+        bool,
+        typer.Option(
+            "--show-full-output",
+            help=(
+                "Start the TUI with untruncated tool and terminal-command output "
+                "instead of previews. Also available in-session via the "
+                "tool-results toggle."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Run the Tau CLI."""
     current_version = _current_version()
@@ -569,9 +580,13 @@ def main(
                 resolved_append_system_prompt,
             )
             tui_runner = (
-                partial(run_openai_tui, thinking_level_override=thinking_level_override)
+                partial(
+                    run_openai_tui,
+                    thinking_level_override=thinking_level_override,
+                    show_full_output=show_full_output,
+                )
                 if thinking_level_override is not None
-                else run_openai_tui
+                else partial(run_openai_tui, show_full_output=show_full_output)
             )
             resumable_session_id = (
                 anyio.run(tui_runner, *tui_args)
@@ -646,6 +661,7 @@ async def run_openai_tui(
     trust_override: TrustOverride | None = None,
     *,
     thinking_level_override: ThinkingLevel | None = None,
+    show_full_output: bool = False,
 ) -> str | None:
     """Run the Textual TUI and return its resumable session id, if any."""
     release_notes_notice = startup_release_notes_notice(_current_version())
@@ -667,6 +683,7 @@ async def run_openai_tui(
         append_system_prompt=append_system_prompt,
         trust_override=trust_override,
         thinking_level_override=thinking_level_override,
+        show_full_output=show_full_output,
     )
 
 
