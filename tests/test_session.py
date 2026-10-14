@@ -559,6 +559,38 @@ def test_session_state_applies_compaction_and_branch_summary() -> None:
     assert "A side branch explored storage." in state.messages[1].text
 
 
+def test_compaction_and_branch_summary_messages_keep_entry_timestamps() -> None:
+    historical_ts = 1700000000.0
+    entries = [
+        MessageEntry(
+            id="user",
+            timestamp=historical_ts,
+            message=UserMessage(content="Explain sessions.", timestamp=round(historical_ts * 1000)),
+        ),
+        CompactionEntry(
+            id="compact",
+            parent_id="user",
+            timestamp=historical_ts + 10,
+            summary="The user asked about sessions.",
+            first_kept_entry_id="user",
+        ),
+        BranchSummaryEntry(
+            id="branch",
+            parent_id="compact",
+            timestamp=historical_ts + 20,
+            summary="A side branch explored storage.",
+        ),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [message.timestamp for message in state.messages] == [
+        round((historical_ts + 10) * 1000),
+        round(historical_ts * 1000),
+        round((historical_ts + 20) * 1000),
+    ]
+
+
 @pytest.mark.parametrize(
     ("boundary", "expected"),
     [
