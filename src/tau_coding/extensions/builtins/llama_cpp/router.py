@@ -19,6 +19,13 @@ import httpx
 LLAMA_CPP_ROUTER_MIN_BUILD = 9688
 LLAMA_CPP_ROUTER_MAX_BUILD = 10595
 
+InputModalities = tuple[Literal["text", "image"], ...]
+
+# Every input modality llama.cpp can report. A report with any other value is
+# not trusted. Tau sends only text and images, so it ignores audio and video.
+_KNOWN_INPUT_MODALITIES = frozenset({"text", "image", "audio", "video"})
+_SENT_INPUT_MODALITIES = ("text", "image")
+
 RouterState = Literal[
     "loaded", "sleeping", "unloaded", "loading", "downloading", "failed", "unknown"
 ]
@@ -44,7 +51,7 @@ class RouterModel:
     id: str
     state: RouterState
     display_name: str | None = None
-    input_modalities: tuple[Literal["text", "image"], ...] | None = None
+    input_modalities: InputModalities | None = None
     failed: bool = False
     downloaded_bytes: int | None = None
     download_total_bytes: int | None = None
@@ -125,19 +132,7 @@ async def list_router_models(
             state = cast(RouterState, value)
         else:
             state = "unknown"
-        architecture = raw.get("architecture")
-        modalities_raw = (
-            architecture.get("input_modalities") if isinstance(architecture, Mapping) else None
-        )
-        modalities = None
-        if (
-            isinstance(modalities_raw, list)
-            and modalities_raw
-            and all(item in {"text", "image"} for item in modalities_raw)
-        ):
-            modalities = cast(
-                tuple[Literal["text", "image"], ...], tuple(dict.fromkeys(modalities_raw))
-            )
+        modalities = reported_input_modalities(raw)
         display = raw.get("name", raw.get("display_name"))
         downloaded_bytes, download_total_bytes = _download_progress(status)
         result.append(
@@ -154,6 +149,34 @@ async def list_router_models(
             )
         )
     return tuple(result)
+
+
+def reported_input_modalities(model: Mapping[str, object]) -> InputModalities | None:
+    """Return the text and image inputs that a llama.cpp ``/models`` entry reports.
+
+    llama.cpp reports them as ``architecture.input_modalities``. Other servers may
+    use a top-level ``input_modalities`` or ``modalities`` list. Returns None when
+    the entry reports nothing, or reports a value Tau does not know.
+    """
+    architecture = model.get("architecture")
+    reported = architecture.get("input_modalities") if isinstance(architecture, Mapping) else None
+    if reported is None:
+        reported = model.get("input_modalities", model.get("modalities"))
+    if not isinstance(reported, list) or not reported:
+        return None
+    if not all(isinstance(entry, str) and entry in _KNOWN_INPUT_MODALITIES for entry in reported):
+        return None
+    sent = tuple(entry for entry in _SENT_INPUT_MODALITIES if entry in reported)
+    return cast(InputModalities, sent) or None
+
+
+def props_input_modalities(props: object) -> InputModalities | None:
+    """Return the inputs that ``modalities.vision`` in a standard server's ``/props`` reports."""
+    modalities = props.get("modalities") if isinstance(props, Mapping) else None
+    vision = modalities.get("vision") if isinstance(modalities, Mapping) else None
+    if not isinstance(vision, bool):
+        return None
+    return ("text", "image") if vision else ("text",)
 
 
 def _download_progress(status: object) -> tuple[int | None, int | None]:
@@ -311,5 +334,7 @@ __all__ = [
     "detect_router",
     "list_router_models",
     "mutate_router_model",
+    "props_input_modalities",
+    "reported_input_modalities",
     "watch_router_download_progress",
 ]

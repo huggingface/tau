@@ -126,6 +126,15 @@ headless startup requires the exact `--model`; Tau never silently chooses a
 different explicit model. Local inference is not an automatic global-provider
 fallback.
 
+Image input follows what the server reports. A model whose `/v1/models` entry
+lists `image` in `architecture.input_modalities` (llama.cpp reports this when it
+was started with a vision projector, `--mmproj`) receives images, for example
+from the read tool. Reported `audio` and `video` inputs are ignored because Tau
+does not send them. For older single-model servers that report no usable inputs
+in `/v1/models`, Tau checks `/props.modalities.vision`. If neither endpoint
+reports usable capabilities, the model is treated as text-only; declare its
+image input with a [`catalog.toml`](/guides/providers-and-models/) entry instead.
+
 The safe integration snapshot is stored at
 `~/.tau/state/extensions/llama.cpp.json`. It contains only the normalized
 endpoint, selected model reference, allowlisted model metadata, and a timestamp.

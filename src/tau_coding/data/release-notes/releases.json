@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.4.8",
+    "date": "2026-10-14",
+    "sections": {
+      "New": [
+        "Expose the active session's provider and model inventory to extensions with `ExtensionContext.available_providers` and `ExtensionContext.available_model_choices`.",
+        "Expose the session's project-trust decision on `ExtensionContext` and let hosts restrict child sessions with `CodingSessionConfig.allowed_tool_names`."
+      ],
+      "Changed": [
+        "Migrate the documentation website from Hugo to Astro and redesign it as a typeset math paper."
+      ],
+      "Fixed": [
+        "Retry provider requests on raw TLS record errors (`ssl.SSLError`) before any content is streamed.",
+        "Detect vision-capable llama.cpp models from `/models` architecture and `/props` modalities so they are no longer treated as text-only.",
+        "Restore spacing between paragraphs in TUI markdown rendering."
+      ]
+    }
+  },
+  {
     "version": "0.4.7",
     "date": "2026-10-01",
     "sections": {
