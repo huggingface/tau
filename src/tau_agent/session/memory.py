@@ -34,6 +34,9 @@ class SessionState:
     compaction_entries: tuple[CompactionEntry, ...]
     context_entry_ids: tuple[str, ...]
     entries: tuple[SessionEntry, ...]
+    # Names are session-wide, not tied to the selected branch. Legacy root
+    # titles remain in session_info so hosts can prefer an old index-only rename.
+    session_name: str | None = None
 
     @classmethod
     def from_entries(
@@ -94,7 +97,8 @@ class SessionState:
                 case "leaf":
                     pass  # Backward-compatible historical record; never selects the tip.
                 case "session_info":
-                    session_info = entry
+                    if session_info is None or entry.name is None:
+                        session_info = entry
                 case "custom":
                     custom_entries.append(entry)
                 case "compaction":
@@ -122,6 +126,14 @@ class SessionState:
             compaction_entries=tuple(compaction_entries),
             context_entry_ids=tuple(entry_id for entry_id, _message in message_rows),
             entries=tuple(replay_entries),
+            session_name=next(
+                (
+                    entry.name
+                    for entry in reversed(entries)
+                    if isinstance(entry, SessionInfoEntry) and entry.name
+                ),
+                None,
+            ),
         )
 
 
