@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
+from types import MappingProxyType
 
 from tau_coding.resources import (
     ResourceDiagnostic,
@@ -20,12 +22,35 @@ _PROMPT_ARGUMENT_RE = re.compile(
     r"\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)"
 )
 _ARGUMENT_TEMPLATE_VARIABLES = {"arguments", "args"}
-_RESERVED_TEMPLATE_NAMES = frozenset({"prompts", "skills", "tools", "reload"})
+
+
+@cache
+def builtin_prompt_template_reservations() -> Mapping[str, str]:
+    """Map reserved prompt-template stems to the built-in command they collide with.
+
+    Keys are case-folded markdown filename stems; values are the conflicting
+    built-in invocation (for example ``"/new"`` or the alias ``"/exit"``).
+    The set is derived from the default command registry so it cannot drift
+    from the actual built-in commands. Extension-provided commands are dynamic
+    and deliberately not reserved here.
+    """
+    # Imported lazily: tau_coding.commands imports PromptTemplate from this module.
+    from tau_coding.commands import create_default_command_registry
+
+    reservations: dict[str, str] = {}
+    for command in create_default_command_registry().list_commands():
+        reservations[command.name.casefold()] = f"/{command.name}"
+        for alias in command.aliases:
+            reservations[alias.casefold()] = f"/{alias}"
+    return MappingProxyType(reservations)
 
 
 def is_prompt_template_candidate(path: Path) -> bool:
     """Return whether a directory entry is eligible for prompt loading."""
-    return path.suffix.lower() == ".md" and path.stem.casefold() not in _RESERVED_TEMPLATE_NAMES
+    return (
+        path.suffix.lower() == ".md"
+        and path.stem.casefold() not in builtin_prompt_template_reservations()
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,17 +262,19 @@ def _load_prompt_templates_from_dir_with_diagnostics(
     templates: list[PromptTemplate] = []
     diagnostics: list[ResourceDiagnostic] = []
     seen: set[str] = set()
+    reserved_names = builtin_prompt_template_reservations()
     for path in sorted(prompts_dir.glob("*.md"), key=lambda item: item.name):
         name = path.stem
-        if not is_prompt_template_candidate(path):
+        reserved_command = reserved_names.get(name.casefold())
+        if reserved_command is not None:
             diagnostics.append(
                 ResourceDiagnostic(
                     kind="prompt",
                     name=name,
                     path=path,
                     message=(
-                        f"prompt template name is reserved by the built-in /{name.casefold()} "
-                        "command; template ignored"
+                        f"prompt template name is reserved by the built-in "
+                        f"{reserved_command} command; template ignored"
                     ),
                 )
             )

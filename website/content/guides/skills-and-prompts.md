@@ -123,9 +123,12 @@ A prompt template is a saved prompt you trigger by its filename. For example,
 `~/.agents/prompts/wt.md` is invoked with `/wt`. Run `/prompts` in the TUI to
 search every loaded template. Press **Enter** to insert its invocation without
 submitting it, or **Ctrl+E** to edit its Markdown directly. Save with **Ctrl+S**;
-Tau reloads resources automatically. The filenames `prompts.md` and `tools.md` are
-reserved for built-in commands; Tau ignores templates with those names and
-reports a resource diagnostic. Templates use the same argument variables as Pi:
+Tau reloads resources automatically. A template whose filename matches a built-in
+slash command or alias — for example `new.md`, `quit.md`, or `exit.md` — is
+reserved: Tau ignores it at load time and reports a resource diagnostic naming
+the file and the conflicting command, so built-ins like `/new` and `/quit` stay
+reachable. Matching is case-insensitive on the filename stem. Templates use the
+same argument variables as Pi:
 
 - `$1`, `$2`, ... for positional arguments
 - `$@` or `$ARGUMENTS` for all arguments joined with spaces
@@ -149,9 +152,11 @@ positional argument, for example `/wt add "shared caching"`. Legacy
 If a template has no argument placeholder, your arguments are appended after a
 blank line.
 
-The filenames `prompts.md` and `skills.md` are reserved for the built-in `/prompts`
-and `/skills` pickers. Tau ignores either template and reports a resource diagnostic;
-rename the file to load it as a custom prompt.
+Every built-in command name and alias is reserved, not just picker names such as
+`prompts.md` or `skills.md`. If you previously relied on a template shadowing a
+command — say `new.md` expanding a custom prompt instead of starting a new
+session — rename the file to a non-conflicting name like `new-feature.md` and
+invoke it with `/new-feature`.
 
 ## Skill vs. prompt template — which?
 
