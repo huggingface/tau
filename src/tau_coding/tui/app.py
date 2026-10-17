@@ -673,7 +673,10 @@ class PromptInput(TextArea):
 
     def action_clear_prompt(self) -> None:
         """Clear the current prompt."""
-        if self.selected_text:
+        selection = self.selected_text or self.screen.get_selected_text()
+        if selection:
+            self.app.copy_to_clipboard(selection)
+            self.app.notify("Copied selection to clipboard.")
             return
         if self.text:
             self.text = ""
@@ -861,13 +864,9 @@ class PromptInput(TextArea):
             event.stop()
             self._completion_target().action_toggle_thinking()
         elif event.key == keybindings.copy_message:
-            if self.selected_text:
-                return
             event.stop()
             event.prevent_default()
-            if self.text:
-                self.text = ""
-                self.move_cursor((0, 0))
+            self.action_clear_prompt()
         elif event.key == keybindings.completion_next:
             event.stop()
             if self._has_completion_options():
@@ -8411,7 +8410,7 @@ def _app_bindings(keybindings: TuiKeybindings) -> list[Binding]:
         ),
         Binding(keybindings.toggle_tool_results, "toggle_tool_results", "Tool results"),
         Binding(keybindings.toggle_thinking, "toggle_thinking", "Thinking tokens"),
-        Binding(keybindings.copy_message, "clear_prompt", "Clear input"),
+        Binding(keybindings.copy_message, "clear_prompt", "Copy/Clear"),
         Binding(keybindings.quit, "quit", "Quit"),
     ]
 
@@ -8490,7 +8489,7 @@ def _prompt_bindings(
         Binding(
             keybindings.copy_message,
             "clear_prompt",
-            "Clear",
+            "Copy/Clear",
             priority=True,
         ),
         Binding(keybindings.quit, "quit", "Quit", priority=True),
