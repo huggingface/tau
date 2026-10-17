@@ -10081,6 +10081,96 @@ async def test_tui_prompt_ctrl_c_clears_text() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_prompt_ctrl_c_copies_selected_prompt_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession(messages=(UserMessage(content="User prompt"),)))
+    copied: list[str] = []
+    notifications: list[str] = []
+    monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+    monkeypatch.setattr(app, "notify", lambda message, **_: notifications.append(message))
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.focus()
+        prompt.text = "keep this prompt"
+        prompt.select_all()
+        await pilot.pause()
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert copied == ["keep this prompt"]
+        assert prompt.text == "keep this prompt"
+        assert notifications == ["Copied selection to clipboard."]
+
+
+@pytest.mark.anyio
+async def test_tui_prompt_ctrl_c_copies_selected_transcript_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="copy this")]))
+    copied: list[str] = []
+    monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.focus()
+        prompt.text = "draft"
+        message = app.query_one(TranscriptMessageWidget)
+        app.screen.selections = {message: SELECT_ALL}
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert copied == ["copy this"]
+        assert prompt.text == "draft"
+
+
+@pytest.mark.anyio
+async def test_tui_prompt_ctrl_c_prefers_prompt_selection_over_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="transcript text")]))
+    copied: list[str] = []
+    monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.focus()
+        prompt.text = "prompt text"
+        prompt.select_all()
+        message = app.query_one(TranscriptMessageWidget)
+        app.screen.selections = {message: SELECT_ALL}
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert copied == ["prompt text"]
+
+
+@pytest.mark.anyio
+async def test_tui_prompt_ctrl_c_without_selection_or_text_does_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession(messages=(UserMessage(content="User prompt"),)))
+    copied: list[str] = []
+    notifications: list[str] = []
+    monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+    monkeypatch.setattr(app, "notify", lambda message, **_: notifications.append(message))
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert copied == []
+        assert notifications == []
+        assert prompt.text == ""
+
+
+@pytest.mark.anyio
 async def test_tui_shortcuts_use_immediate_preview_when_available() -> None:
     session = FakeSession()
     session.scoped_model_choices = (
