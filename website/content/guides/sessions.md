@@ -206,7 +206,7 @@ context.
 
 Tau's persisted entry wrappers use snake_case names such as `parent_id` and
 `custom_type`. The Pi-compatible RPC inspection API projects those fields as
-`parentId` and `customType`; see the [RPC reference]({{< relref "../reference/rpc.md" >}}).
+`parentId` and `customType`; see the [RPC reference](/reference/rpc/).
 
 ## Where sessions live
 
@@ -257,4 +257,4 @@ the learned snapshot is taken when a session starts. See
 [Slash commands]({{< relref "../reference/slash-commands.md" >}}).
 
 See
-[Configuration]({{< relref "../reference/configuration.md#sessions" >}}) for the exact layout.
+[Configuration](/reference/configuration/#sessions) for the exact layout.

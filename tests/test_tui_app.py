@@ -974,7 +974,7 @@ def test_session_sidebar_brand_includes_current_version() -> None:
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.4.7" in console.export_text()
+    assert "τ = 2π  0.4.8" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -1720,6 +1720,21 @@ async def test_textual_markdown_widget_uses_theme_link_style() -> None:
     assert block.styles.link_style_hover.underline is True
     assert [(span.start, span.end) for span in link_spans] == [(5, 9)]
     assert block.content.plain[5:9] == "docs"
+
+
+@pytest.mark.anyio
+async def test_transcript_markdown_paragraphs_keep_bottom_margin() -> None:
+    app = TauTuiApp(
+        FakeSession([AssistantMessage(content="First paragraph.\n\nSecond paragraph.")]),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        blocks = list(app.query(TauMarkdownBlock))
+
+    assert len(blocks) == 2
+    assert [block.styles.margin.bottom for block in blocks] == [1, 1]
 
 
 def test_system_prompt_markdown_highlights_markup_tags_as_inline_code() -> None:

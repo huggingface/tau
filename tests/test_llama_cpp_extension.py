@@ -19,6 +19,8 @@ from tau_coding.extensions.builtins.llama_cpp import service as llama_service
 from tau_coding.extensions.builtins.llama_cpp.huggingface import discover_hf_token
 from tau_coding.extensions.builtins.llama_cpp.router import (
     RouterCapability,
+    props_input_modalities,
+    reported_input_modalities,
     watch_router_download_progress,
 )
 from tau_coding.extensions.builtins.llama_cpp.service import (
@@ -403,6 +405,135 @@ async def test_malformed_model_payloads_raise_without_guessing_metadata(tmp_path
         )
     )
     assert "secret_metadata" not in state_store.path.read_text()
+    await client.aclose()
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ({"architecture": {"input_modalities": ["text", "image"]}}, ("text", "image")),
+        # llama.cpp also reports audio and video; Tau keeps only what it can send.
+        ({"architecture": {"input_modalities": ["text", "image", "audio"]}}, ("text", "image")),
+        ({"architecture": {"input_modalities": ["text", "audio", "video"]}}, ("text",)),
+        ({"input_modalities": ["text", "image"]}, ("text", "image")),
+        ({"modalities": ["text"]}, ("text",)),
+        ({"architecture": {"input_modalities": ["text", "unknown"]}}, None),
+        ({"architecture": {"input_modalities": ["audio"]}}, None),
+        ({"architecture": {"input_modalities": ["text", {"kind": "image"}]}}, None),
+        ({"architecture": {"input_modalities": []}}, None),
+        ({"architecture": "text"}, None),
+        ({}, None),
+    ],
+)
+def test_reported_input_modalities_follows_llama_cpp_architecture(
+    model: Mapping[str, object], expected: tuple[str, ...] | None
+) -> None:
+    assert reported_input_modalities(model) == expected
+
+
+@pytest.mark.anyio
+async def test_discovery_reads_llama_cpp_architecture_modalities(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "vision-local",
+                        "object": "model",
+                        "architecture": {
+                            "input_modalities": ["text", "image", "audio"],
+                            "output_modalities": ["text"],
+                        },
+                    }
+                ]
+            },
+        )
+
+    client, _ = _client(handler)
+    service, _, _ = _service(tmp_path, client=client)
+    discovery = await service.discover(ResolvedProviderAuth())
+    assert discovery.models[0].input_modalities == ("text", "image")
+    await client.aclose()
+
+
+@pytest.mark.parametrize(
+    ("props", "expected"),
+    [
+        ({"modalities": {"vision": True, "audio": False}}, ("text", "image")),
+        ({"modalities": {"vision": False, "audio": True}}, ("text",)),
+        ({"modalities": {"vision": "yes"}}, None),
+        ({"modalities": None}, None),
+        ({}, None),
+        (None, None),
+    ],
+)
+def test_props_input_modalities_reads_only_a_boolean_vision_flag(
+    props: object, expected: tuple[str, ...] | None
+) -> None:
+    assert props_input_modalities(props) == expected
+
+
+def _standard_server(
+    models: list[dict[str, object]], props: httpx.Response
+) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/props":
+            return props
+        return httpx.Response(200, json={"data": models})
+
+    return handler
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("models", "props", "expected"),
+    [
+        # Builds before llama.cpp #29987 report vision only in /props.
+        (
+            [{"id": "vision-local"}],
+            httpx.Response(200, json={"role": "model", "modalities": {"vision": True}}),
+            ("text", "image"),
+        ),
+        (
+            [{"id": "text-local"}],
+            httpx.Response(200, json={"modalities": {"vision": False}}),
+            ("text",),
+        ),
+        # A failing /props never fails discovery.
+        ([{"id": "vision-local"}], httpx.Response(500), None),
+        # /models wins over /props.
+        (
+            [{"id": "vision-local", "architecture": {"input_modalities": ["text"]}}],
+            httpx.Response(200, json={"modalities": {"vision": True}}),
+            ("text",),
+        ),
+    ],
+)
+async def test_standard_discovery_falls_back_to_props_vision(
+    tmp_path: Path,
+    models: list[dict[str, object]],
+    props: httpx.Response,
+    expected: tuple[str, ...] | None,
+) -> None:
+    client, _ = _client(_standard_server(models, props))
+    service, _, _ = _service(tmp_path, client=client)
+    discovery = await service.discover(ResolvedProviderAuth())
+    assert discovery.models[0].input_modalities == expected
+    await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_props_vision_is_not_applied_to_several_models(tmp_path: Path) -> None:
+    props = httpx.Response(200, json={"modalities": {"vision": True}})
+    client, _ = _client(_standard_server([{"id": "first"}, {"id": "second"}], props))
+    service, _, _ = _service(tmp_path, client=client)
+    discovery = await service.discover(ResolvedProviderAuth())
+    assert [model.input_modalities for model in discovery.models] == [None, None]
     await client.aclose()
 
 
