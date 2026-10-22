@@ -3447,6 +3447,16 @@ async def test_tui_prompt_grows_to_six_lines_then_scrolls() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_compact_session_info_sits_directly_below_prompt() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 30)):
+        prompt_row = app.query_one("#prompt-row")
+        compact_info = app.query_one("#compact-session-info")
+        assert compact_info.region.y == prompt_row.region.bottom
+
+
+@pytest.mark.anyio
 async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
     app = TauTuiApp(FakeSession())
 
