@@ -1038,7 +1038,9 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     lines = output.splitlines()
     assert len(lines) == 2
     assert lines[0].strip() == "/workspace/project (--)"
-    assert lines[1].strip() == "openai:fake-model (medium) · 12k/200k"
+    assert lines[1].strip().startswith("openai:fake-model (medium)")
+    assert lines[1].rstrip().endswith("12k/200k")
+    assert len(lines[1].rstrip()) == 120
     assert "context 12k/200k" not in output
 
 

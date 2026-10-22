@@ -319,8 +319,8 @@ cache.
 Tau hides both figures for providers that do not report cache usage.
 
 The compact status block below the prompt shows the working directory and Git
-branch on its first line, then `provider:model (thinking) · used/limit` on the
-second, where `used/limit` is provider-anchored active context. When
+branch on its first line, then `provider:model (thinking)` on the second with
+`used/limit` right-aligned, where `used/limit` is provider-anchored active context. When
 no valid provider usage exists yet, such as immediately after compaction, it shows
 `?/limit` until a fresh response reports usage. Unlike cumulative usage, this
 active count describes the system prompt, tools,

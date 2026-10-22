@@ -2146,8 +2146,8 @@ def render_compact_session_info(
 ) -> RenderableType:
     """Render the session facts below the prompt.
 
-    The first line shows the working directory; the second line combines the
-    model identity with active context usage so the block stays two rows tall.
+    The first line shows the working directory; the second line shows the model
+    identity on the left and active context usage on the right.
     """
     model_line = Text(style=theme.muted_text, overflow="fold", no_wrap=False)
     model_line.append(session.provider_name, style=theme.completion_description)
@@ -2156,9 +2156,17 @@ def render_compact_session_info(
     if thinking_level is not None:
         model_line.append(" ")
         model_line.append(f"({thinking_level})", style=theme.completion_description)
-    model_line.append(" · ", style=theme.completion_description)
-    model_line.append(_context_usage(session), style=theme.completion_description)
-    return Group(_styled_cwd(session.cwd, theme=theme), model_line)
+    context = Text(
+        _context_usage(session),
+        style=theme.completion_description,
+        no_wrap=True,
+        justify="right",
+    )
+    second_line = Table.grid(expand=True)
+    second_line.add_column(ratio=1)
+    second_line.add_column(justify="right", no_wrap=True)
+    second_line.add_row(model_line, context)
+    return Group(_styled_cwd(session.cwd, theme=theme), second_line)
 
 
 def render_chat_item(
