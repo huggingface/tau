@@ -11,7 +11,9 @@ see [Keyboard shortcuts](/reference/keybindings/).
 
 Type into the prompt box at the bottom and press **Enter** to submit. The editor
 has no highlighted background; thin rules above and below frame it and change
-color to reflect shell mode without boxing it in.
+color to reflect shell mode without boxing it in. While the agent is working,
+the `τ` beside the prompt becomes a gently pulsing braille-dot spinner (`⣾⣽⣻⢿`) and
+returns to `τ` when the run ends.
 **Shift+Enter** inserts a newline for multi-line prompts. If your terminal cannot
 distinguish it from Enter, remap `insert_newline` in `~/.tau/tui.json`; see
 [Keyboard shortcuts](/reference/keybindings/#prompting). Tau streams the

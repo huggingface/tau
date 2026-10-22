@@ -3299,6 +3299,33 @@ def test_activity_indicator_keeps_running_animation_in_shell_mode() -> None:
     assert rendered.plain != "$"
 
 
+def test_activity_indicator_cycles_spinner_in_place_of_tau() -> None:
+    theme = TAU_DARK_THEME
+
+    frames = [
+        _render_activity_indicator(theme, frame=frame, running=True).plain
+        for frame in range(len(tui_app.ACTIVITY_SPINNER_FRAMES) + 1)
+    ]
+
+    assert frames == ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷", "⣾"]
+    assert all(len(frame) == 1 for frame in frames)
+
+
+def test_activity_indicator_spinner_breathes_between_accent_and_background() -> None:
+    theme = TAU_DARK_THEME
+    half_cycle = tui_app.ACTIVITY_COLOR_FADE_STEPS // 2
+
+    peak = _render_activity_indicator(theme, frame=0, running=True)
+    dimmest = _render_activity_indicator(theme, frame=half_cycle, running=True)
+    looped = _render_activity_indicator(
+        theme, frame=tui_app.ACTIVITY_COLOR_FADE_STEPS, running=True
+    )
+
+    assert peak.style == f"bold {theme.accent}"
+    assert dimmest.style != peak.style
+    assert looped.style == peak.style
+
+
 def test_activity_prompt_border_uses_tool_running_color_in_shell_mode() -> None:
     theme = TAU_LIGHT_THEME
 
@@ -4556,12 +4583,12 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
         assert pytest.approx(tui_app.ACTIVITY_TICK_SECONDS) == 0.15
         assert tui_app.ACTIVITY_COLOR_FADE_STEPS == 24
         assert prompt.styles.border_top[1].hex.lower() == "#2d3748"
-        assert indicator.render().plain.startswith("■")
+        assert indicator.render().plain == "⣾"
 
         app._tick_activity()
 
         assert prompt.styles.border_top[1].hex.lower() == "#2d3748"
-        assert indicator.render().plain.splitlines()[1] == "■"
+        assert indicator.render().plain == "⣽"
 
         app.adapter.apply(AgentEndEvent())
         app._refresh()
