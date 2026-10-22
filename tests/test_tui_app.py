@@ -1036,13 +1036,10 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
 
     output = console.export_text()
     lines = output.splitlines()
-    provider_line = next(index for index, line in enumerate(lines) if "openai:fake-model" in line)
-    context_line = next(index for index, line in enumerate(lines) if "12k/200k" in line)
-    assert "/workspace/project (--)" in output
+    assert len(lines) == 2
+    assert lines[0].strip() == "/workspace/project (--)"
+    assert lines[1].strip() == "openai:fake-model (medium) · 12k/200k"
     assert "context 12k/200k" not in output
-    assert "openai:fake-model" in lines[provider_line]
-    assert "(medium)" in lines[provider_line]
-    assert context_line == provider_line + 1
 
 
 def test_compact_session_info_omits_unavailable_thinking_controls() -> None:
@@ -3434,12 +3431,12 @@ async def test_tui_prompt_grows_to_six_lines_then_scrolls() -> None:
     async with app.run_test(size=(120, 30)) as pilot:
         prompt = app.query_one("#prompt", TextArea)
         assert prompt.size.height == 1
-        assert prompt.outer_size.height == 3
+        assert prompt.outer_size.height == 1
 
         prompt.text = "x" * 700
         await pilot.pause()
         assert prompt.size.height == 6
-        assert prompt.outer_size.height == 8
+        assert prompt.outer_size.height == 6
 
         prompt.text = "x" * 1000
         await pilot.pause()

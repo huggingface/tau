@@ -3982,7 +3982,7 @@ class TauTuiApp(App[None]):
 
     #prompt-prefix {
         width: 2;
-        height: 3;
+        height: 1;
         padding: 0 0 0 0;
         margin: 0;
         content-align: center middle;
@@ -3998,8 +3998,8 @@ class TauTuiApp(App[None]):
         border: none;
         border-left: tall transparent;
         margin: 0;
-        padding: 1 1;
-        max-height: 8;
+        padding: 0 1;
+        max-height: 6;
     }
 
     #prompt:focus {
@@ -4013,7 +4013,7 @@ class TauTuiApp(App[None]):
     #compact-session-info {
         height: auto;
         max-height: 3;
-        margin: 0 1 1 1;
+        margin: 0 1 0 1;
         padding: 0 1;
         color: $tau-muted-text;
     }
