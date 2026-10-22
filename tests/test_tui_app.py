@@ -3431,12 +3431,12 @@ async def test_tui_prompt_grows_to_six_lines_then_scrolls() -> None:
     async with app.run_test(size=(120, 30)) as pilot:
         prompt = app.query_one("#prompt", TextArea)
         assert prompt.size.height == 1
-        assert prompt.outer_size.height == 1
+        assert prompt.outer_size.height == 3
 
         prompt.text = "x" * 700
         await pilot.pause()
         assert prompt.size.height == 6
-        assert prompt.outer_size.height == 6
+        assert prompt.outer_size.height == 8
 
         prompt.text = "x" * 1000
         await pilot.pause()
@@ -4532,10 +4532,10 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
 
         assert not app.query("#status")
         assert not app.query("#activity-status")
-        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
-        assert prompt.styles.border_top[0] == ""
+        assert prompt.styles.border_top == ("solid", Color.parse("#2d3748"))
+        assert prompt.styles.border_bottom == ("solid", Color.parse("#2d3748"))
+        assert prompt.styles.border_left[0] == ""
         assert prompt.styles.border_right[0] == ""
-        assert prompt.styles.border_bottom[0] == ""
         assert indicator.render().plain == "τ"
 
         app.adapter.apply(AgentStartEvent())
@@ -4543,19 +4543,19 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
 
         assert pytest.approx(tui_app.ACTIVITY_TICK_SECONDS) == 0.15
         assert tui_app.ACTIVITY_COLOR_FADE_STEPS == 24
-        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
+        assert prompt.styles.border_top[1].hex.lower() == "#2d3748"
         assert indicator.render().plain.startswith("■")
 
         app._tick_activity()
 
-        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
+        assert prompt.styles.border_top[1].hex.lower() == "#2d3748"
         assert indicator.render().plain.splitlines()[1] == "■"
 
         app.adapter.apply(AgentEndEvent())
         app._refresh()
 
         assert not app.query("#status")
-        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
+        assert prompt.styles.border_top[1].hex.lower() == "#2d3748"
         assert indicator.render().plain == "τ"
 
 
@@ -4682,10 +4682,10 @@ async def test_tui_app_clears_activity_status_on_error() -> None:
 
         assert not app.query("#status")
         assert not app.query("#activity-status")
-        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
-        assert prompt.styles.border_top[0] == ""
+        assert prompt.styles.border_top == ("solid", Color.parse("#2d3748"))
+        assert prompt.styles.border_bottom == ("solid", Color.parse("#2d3748"))
+        assert prompt.styles.border_left[0] == ""
         assert prompt.styles.border_right[0] == ""
-        assert prompt.styles.border_bottom[0] == ""
         assert indicator.render().plain == "τ"
 
 

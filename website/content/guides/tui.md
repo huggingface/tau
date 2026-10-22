@@ -10,8 +10,8 @@ see [Keyboard shortcuts](/reference/keybindings/).
 ## Sending a prompt
 
 Type into the prompt box at the bottom and press **Enter** to submit. The editor
-keeps its padded block size and background, while a single left border changes
-color to reflect focus, shell mode, and active runs without boxing it in.
+has no highlighted background; thin rules above and below frame it and change
+color to reflect shell mode without boxing it in.
 **Shift+Enter** inserts a newline for multi-line prompts. If your terminal cannot
 distinguish it from Enter, remap `insert_newline` in `~/.tau/tui.json`; see
 [Keyboard shortcuts](/reference/keybindings/#prompting). Tau streams the
@@ -116,7 +116,7 @@ You can run a shell command yourself without asking the model:
 Shell commands are non-interactive: their stdin is disconnected from the TUI.
 Programs that require an interactive terminal should be run in a separate terminal.
 
-As soon as the input starts with `!`, the whole input and its left border turn
+As soon as the input starts with `!`, the whole input and its top and bottom rules turn
 the same amber/orange color as a tool while it is running, and the `τ` prompt
 prefix becomes a matching `$`, so you can tell at a glance that submitting will
 execute a shell command instead of messaging the model.
