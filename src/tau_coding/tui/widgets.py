@@ -1476,6 +1476,13 @@ class TranscriptView(VerticalScroll):
         if item is not None:
             widget.item = item
             self._item_widgets[id(item)] = widget
+            # The streamed widget now renders this item, so the mounted window
+            # covers it; otherwise the next append sees a stale window and
+            # remounts the whole transcript.
+            state = self._render_state
+            item_index = _identity_index(state.items, item) if state is not None else None
+            if item_index is not None:
+                self._window_end = max(self._window_end, item_index + 1)
         self._active_assistant_widget = None
         self._active_message_widgets = [
             candidate for candidate in self._active_message_widgets if candidate is not widget

@@ -2404,6 +2404,58 @@ async def test_tool_completion_updates_row_without_redrawing_history() -> None:
 
 
 @pytest.mark.anyio
+async def test_rows_after_streamed_assistant_reply_do_not_redraw_history() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="earlier")]))
+
+    async def stream(event: AgentEvent) -> None:
+        app.adapter.apply(event)
+        await app._apply_streaming_transcript_event(event)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        history_widget = next(
+            widget for widget in app.query(TranscriptMessageWidget) if widget.item.text == "earlier"
+        )
+        redraws = 0
+        original_redraw = transcript._redraw
+
+        def counting_redraw(*, scroll_end: bool, preserve_window: bool = False) -> None:
+            nonlocal redraws
+            redraws += 1
+            original_redraw(scroll_end=scroll_end, preserve_window=preserve_window)
+
+        transcript._redraw = counting_redraw  # type: ignore[method-assign]
+        partial = AssistantMessage()
+        await stream(MessageStartEvent(message=partial))
+        await stream(
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=0, delta="Let me check.", partial=partial
+                ),
+            )
+        )
+        await stream(MessageEndEvent(message=AssistantMessage(content="Let me check.")))
+        await stream(
+            ToolExecutionStartEvent(
+                tool_call_id="call-1",
+                tool_name="read",
+                args={"path": "README.md"},
+            )
+        )
+        await app._append_optimistic_user_message("next prompt")
+        await pilot.pause()
+
+        assert redraws == 0
+        assert history_widget.parent is transcript
+        assert transcript._window_end == len(app.state.items)
+        assert any(
+            "next prompt" in widget.selection_text for widget in app.query(TranscriptMessageWidget)
+        )
+
+
+@pytest.mark.anyio
 async def test_assistant_message_renders_without_role_block() -> None:
     app = TauTuiApp(
         FakeSession([AssistantMessage(content="line one\nline two")]),
