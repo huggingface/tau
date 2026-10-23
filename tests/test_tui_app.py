@@ -1111,6 +1111,71 @@ def test_compact_session_info_styles_parent_path_as_metadata() -> None:
     assert str(cwd.spans[2].style) == TAU_DARK_THEME.completion_description
 
 
+def test_git_branch_reruns_git_only_after_head_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from subprocess import CompletedProcess
+
+    from tau_coding.tui import widgets as tui_widgets
+
+    head = tmp_path / ".git" / "HEAD"
+    head.parent.mkdir()
+    head.write_text("ref: refs/heads/main\n", encoding="utf-8")
+    nested = tmp_path / "src"
+    nested.mkdir()
+    branches = iter(["main", "feature"])
+    git_calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> CompletedProcess[str]:
+        git_calls.append(args)
+        return CompletedProcess(args, 0, stdout=f"{next(branches)}\n", stderr="")
+
+    monkeypatch.setattr(tui_widgets, "run", fake_run)
+    monkeypatch.setattr(tui_widgets, "_GIT_BRANCH_CACHE", {})
+
+    assert [tui_widgets._git_branch(nested) for _ in range(3)] == ["main"] * 3
+    assert len(git_calls) == 1
+
+    replacement = head.with_name("HEAD.lock")
+    replacement.write_text("ref: refs/heads/feature\n", encoding="utf-8")
+    replacement.replace(head)
+
+    assert tui_widgets._git_branch(nested) == "feature"
+    assert len(git_calls) == 2
+
+
+@pytest.mark.anyio
+async def test_sidebar_usage_updates_keep_resource_lists_mounted(tmp_path: Path) -> None:
+    skill_path = tmp_path / ".agents" / "skills" / "review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text("# Review\n", encoding="utf-8")
+    session = FakeSession()
+    session.cwd = tmp_path
+    session.skills = (Skill("review", skill_path, "# Review", "Review changes"),)
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        sidebar = app.query_one("#sidebar", SessionSidebar)
+        skill_item = app.query_one("#sidebar-skills-content .sidebar-file-item")
+
+        session.context_token_estimate += 5_000
+        session._session_title = "Renamed mid-turn"
+        sidebar.update_from_session(session, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+
+        assert app.query_one("#sidebar-skills-content .sidebar-file-item") is skill_item
+        console = Console(record=True, width=80, file=StringIO())
+        console.print(app.query_one("#sidebar-content", Static).content)
+        assert "Renamed mid-turn" in console.export_text()
+
+        session.skills = ()
+        sidebar.update_from_session(session, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+
+        assert not app.query("#sidebar-skills-content .sidebar-file-item")
+
+
 def test_compact_token_count_uses_thousands_suffix() -> None:
     assert _compact_token_count(0) == "0k"
     assert _compact_token_count(499) == "<1k"
