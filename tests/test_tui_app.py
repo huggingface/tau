@@ -1,6 +1,8 @@
 import asyncio
+import gc
 import re
 import threading
+import weakref
 from collections.abc import AsyncIterator
 from datetime import datetime
 from io import StringIO
@@ -30,7 +32,6 @@ from textual.widgets import (
     TextArea,
 )
 from textual.widgets import Markdown as TextualMarkdown
-from textual.widgets.markdown import MarkdownStream
 
 from conftest import isolate_home
 from tau_agent import (
@@ -133,6 +134,7 @@ from tau_coding.tui.app import (
     ToolsReferenceScreen,
     TreePickerScreen,
     _activity_prompt_border_color,
+    _collect_garbage_while_idle,
     _completion_selected_render_line,
     _render_activity_indicator,
     _resource_conflict_alert,
@@ -171,6 +173,7 @@ from tau_coding.tui.widgets import (
     SystemPromptSourcesWidget,
     TauMarkdownBlock,
     ThemedMarkdownWidget,
+    TranscriptMarkdownStream,
     TranscriptMessageWidget,
     TranscriptView,
     TranscriptWindowBoundary,
@@ -1036,13 +1039,12 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
 
     output = console.export_text()
     lines = output.splitlines()
-    provider_line = next(index for index, line in enumerate(lines) if "openai:fake-model" in line)
-    context_line = next(index for index, line in enumerate(lines) if "12k/200k" in line)
-    assert "/workspace/project (--)" in output
+    assert len(lines) == 2
+    assert lines[0].strip() == "/workspace/project (--)"
+    assert lines[1].strip().startswith("openai:fake-model (medium)")
+    assert lines[1].rstrip().endswith("12k/200k")
+    assert len(lines[1].rstrip()) == 120
     assert "context 12k/200k" not in output
-    assert "openai:fake-model" in lines[provider_line]
-    assert "(medium)" in lines[provider_line]
-    assert context_line == provider_line + 1
 
 
 def test_compact_session_info_omits_unavailable_thinking_controls() -> None:
@@ -2803,6 +2805,55 @@ async def test_tui_message_start_does_not_mount_empty_assistant_message() -> Non
 
 
 @pytest.mark.anyio
+async def test_transcript_markdown_stream_coalesces_fragments_between_flushes() -> None:
+    class RecordingMarkdown:
+        def __init__(self) -> None:
+            self.appends: list[str] = []
+
+        async def append(self, markdown: str) -> None:
+            self.appends.append(markdown)
+
+    markdown = RecordingMarkdown()
+    stream = TranscriptMarkdownStream(markdown, interval=60)  # type: ignore[arg-type]
+
+    await stream.write("first ")
+    await asyncio.sleep(0)
+    for word in ("a ", "burst ", "of ", "tokens"):
+        await stream.write(word)
+    await asyncio.sleep(0)
+    # The first fragment shows at once; the rest wait out the interval.
+    assert markdown.appends == ["first "]
+
+    await stream.stop()
+    assert markdown.appends == ["first ", "a burst of tokens"]
+
+
+@pytest.mark.anyio
+async def test_transcript_markdown_stream_stop_lets_an_append_in_flight_finish() -> None:
+    release = asyncio.Event()
+    events: list[tuple[str, str]] = []
+
+    class SlowMarkdown:
+        async def append(self, markdown: str) -> None:
+            events.append(("start", markdown))
+            await release.wait()
+            events.append(("end", markdown))
+
+    stream = TranscriptMarkdownStream(SlowMarkdown(), interval=60)  # type: ignore[arg-type]
+    await stream.write("one ")
+    for _ in range(3):
+        await asyncio.sleep(0)
+    await stream.write("two")
+    stopping = asyncio.create_task(stream.stop())
+    for _ in range(3):
+        await asyncio.sleep(0)
+    release.set()
+    await stopping
+
+    assert events == [("start", "one "), ("end", "one "), ("start", "two"), ("end", "two")]
+
+
+@pytest.mark.anyio
 async def test_tui_streaming_deltas_update_active_message_without_full_refresh() -> None:
     partial = AssistantMessage()
     session = FakeSession(
@@ -2831,7 +2882,7 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
     full_stream_updates: list[str] = []
     original_replace_text = StreamingTranscriptMessageWidget.replace_text
     original_stream_update = StreamingTranscriptMessageWidget.update
-    original_stream_write = MarkdownStream.write
+    original_stream_write = TranscriptMarkdownStream.write
 
     def tracking_stream_update(
         self: StreamingTranscriptMessageWidget,
@@ -2841,7 +2892,7 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
             full_stream_updates.append(markdown)
         return original_stream_update(self, markdown)
 
-    async def tracking_stream_write(self: MarkdownStream, fragment: str) -> None:
+    async def tracking_stream_write(self: TranscriptMarkdownStream, fragment: str) -> None:
         stream_writes.append(fragment)
         await original_stream_write(self, fragment)
 
@@ -2854,7 +2905,7 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
 
     StreamingTranscriptMessageWidget.replace_text = tracking_replace_text  # type: ignore[method-assign]
     StreamingTranscriptMessageWidget.update = tracking_stream_update  # type: ignore[method-assign]
-    MarkdownStream.write = tracking_stream_write  # type: ignore[method-assign]
+    TranscriptMarkdownStream.write = tracking_stream_write  # type: ignore[method-assign]
     full_refreshes = 0
 
     original_refresh = app._refresh
@@ -2877,7 +2928,7 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
     finally:
         StreamingTranscriptMessageWidget.replace_text = original_replace_text  # type: ignore[method-assign]
         StreamingTranscriptMessageWidget.update = original_stream_update  # type: ignore[method-assign]
-        MarkdownStream.write = original_stream_write  # type: ignore[method-assign]
+        TranscriptMarkdownStream.write = original_stream_write  # type: ignore[method-assign]
 
     assert full_refreshes == 1
     assert stream_writes == ["alpha ", "beta"]
@@ -3300,6 +3351,33 @@ def test_activity_indicator_keeps_running_animation_in_shell_mode() -> None:
     assert rendered.plain != "$"
 
 
+def test_activity_indicator_cycles_spinner_in_place_of_tau() -> None:
+    theme = TAU_DARK_THEME
+
+    frames = [
+        _render_activity_indicator(theme, frame=frame, running=True).plain
+        for frame in range(len(tui_app.ACTIVITY_SPINNER_FRAMES) + 1)
+    ]
+
+    assert frames == ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷", "⣾"]
+    assert all(len(frame) == 1 for frame in frames)
+
+
+def test_activity_indicator_spinner_breathes_between_accent_and_background() -> None:
+    theme = TAU_DARK_THEME
+    half_cycle = tui_app.ACTIVITY_COLOR_FADE_STEPS // 2
+
+    peak = _render_activity_indicator(theme, frame=0, running=True)
+    dimmest = _render_activity_indicator(theme, frame=half_cycle, running=True)
+    looped = _render_activity_indicator(
+        theme, frame=tui_app.ACTIVITY_COLOR_FADE_STEPS, running=True
+    )
+
+    assert peak.style == f"bold {theme.accent}"
+    assert dimmest.style != peak.style
+    assert looped.style == peak.style
+
+
 def test_activity_prompt_border_uses_tool_running_color_in_shell_mode() -> None:
     theme = TAU_LIGHT_THEME
 
@@ -3445,6 +3523,16 @@ async def test_tui_prompt_grows_to_six_lines_then_scrolls() -> None:
         await pilot.pause()
         assert prompt.size.height == 6
         assert prompt.max_scroll_y > 0
+
+
+@pytest.mark.anyio
+async def test_tui_compact_session_info_sits_directly_below_prompt() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 30)):
+        prompt_row = app.query_one("#prompt-row")
+        compact_info = app.query_one("#compact-session-info")
+        assert compact_info.region.y == prompt_row.region.bottom
 
 
 @pytest.mark.anyio
@@ -4535,10 +4623,10 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
 
         assert not app.query("#status")
         assert not app.query("#activity-status")
-        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
-        assert prompt.styles.border_top[0] == ""
+        assert prompt.styles.border_top == ("solid", Color.parse("#2d3748"))
+        assert prompt.styles.border_bottom == ("solid", Color.parse("#2d3748"))
+        assert prompt.styles.border_left[0] == ""
         assert prompt.styles.border_right[0] == ""
-        assert prompt.styles.border_bottom[0] == ""
         assert indicator.render().plain == "τ"
 
         app.adapter.apply(AgentStartEvent())
@@ -4546,19 +4634,19 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
 
         assert pytest.approx(tui_app.ACTIVITY_TICK_SECONDS) == 0.15
         assert tui_app.ACTIVITY_COLOR_FADE_STEPS == 24
-        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
-        assert indicator.render().plain.startswith("■")
+        assert prompt.styles.border_top[1].hex.lower() == "#2d3748"
+        assert indicator.render().plain == "⣾"
 
         app._tick_activity()
 
-        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
-        assert indicator.render().plain.splitlines()[1] == "■"
+        assert prompt.styles.border_top[1].hex.lower() == "#2d3748"
+        assert indicator.render().plain == "⣽"
 
         app.adapter.apply(AgentEndEvent())
         app._refresh()
 
         assert not app.query("#status")
-        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
+        assert prompt.styles.border_top[1].hex.lower() == "#2d3748"
         assert indicator.render().plain == "τ"
 
 
@@ -4631,6 +4719,56 @@ async def test_tui_app_notifies_when_agent_settles_while_unfocused() -> None:
         assert writes == ["\x1b]9;Tau turn finished\x07"]
 
 
+def test_collect_garbage_while_idle_frees_cycles_frozen_by_an_earlier_call() -> None:
+    class Node:
+        partner: object = None
+
+    node = Node()
+    node.partner = node
+    ref = weakref.ref(node)
+    try:
+        _collect_garbage_while_idle()
+        assert gc.get_freeze_count() > 0
+        del node
+        _collect_garbage_while_idle()
+        assert ref() is None
+    finally:
+        gc.unfreeze()
+
+
+@pytest.mark.anyio
+async def test_tui_app_collects_garbage_at_startup_and_when_agent_settles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SettledSession(FakeSession):
+        async def prompt(
+            self,
+            text: str,
+            *,
+            streaming_behavior: str | None = None,
+            source: str = "interactive",
+            custom_type: str | None = None,
+            details: dict[str, object] | None = None,
+        ) -> AsyncIterator[CodingSessionEvent]:
+            del streaming_behavior, source, custom_type, details
+            self.prompt_texts.append(text)
+            yield AgentStartEvent()
+            yield AgentEndEvent()
+            yield AgentSettledEvent()
+
+    collections: list[None] = []
+    monkeypatch.setattr(tui_app, "_collect_garbage_while_idle", lambda: collections.append(None))
+    app = TauTuiApp(SettledSession())
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert len(collections) == 1
+
+        await app._run_prompt("hello")
+        await pilot.pause()
+        assert len(collections) == 2
+
+
 @pytest.mark.anyio
 async def test_tui_app_updates_terminal_title_after_auto_session_naming() -> None:
     class AutoNamingSession(FakeSession):
@@ -4685,10 +4823,10 @@ async def test_tui_app_clears_activity_status_on_error() -> None:
 
         assert not app.query("#status")
         assert not app.query("#activity-status")
-        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
-        assert prompt.styles.border_top[0] == ""
+        assert prompt.styles.border_top == ("solid", Color.parse("#2d3748"))
+        assert prompt.styles.border_bottom == ("solid", Color.parse("#2d3748"))
+        assert prompt.styles.border_left[0] == ""
         assert prompt.styles.border_right[0] == ""
-        assert prompt.styles.border_bottom[0] == ""
         assert indicator.render().plain == "τ"
 
 
