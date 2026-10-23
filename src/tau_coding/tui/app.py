@@ -202,7 +202,8 @@ SIDEBAR_MIN_WIDTH = 96
 SIDEBAR_MIN_HEIGHT = 38
 ACTIVITY_TICK_SECONDS = 0.15
 ACTIVITY_COLOR_FADE_STEPS = 24
-ACTIVITY_INDICATOR_HEIGHT = 3
+ACTIVITY_SPINNER_FRAMES = ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷")
+ACTIVITY_SPINNER_MAX_FADE = 0.55
 COMPLETION_MAX_VISIBLE_LINES = 16
 COMPLETION_INITIAL_TERMINAL_FRACTION = 3
 COMPLETION_MIN_TRANSCRIPT_LINES = 4
@@ -3977,7 +3978,7 @@ class TauTuiApp(App[None]):
 
     #prompt-row {
         height: auto;
-        margin: 0 1 1 1;
+        margin: 0 1 0 1;
     }
 
     #prompt-prefix {
@@ -3993,27 +3994,25 @@ class TauTuiApp(App[None]):
     #prompt {
         width: 1fr;
         height: auto;
-        background: $tau-prompt-background;
+        background: $tau-screen-background;
         color: $tau-prompt-text;
         border: none;
-        border-left: tall transparent;
+        border-top: solid $tau-prompt-border;
+        border-bottom: solid $tau-prompt-border;
         margin: 0;
-        padding: 1 1;
+        padding: 0 1;
         max-height: 8;
     }
 
-    #prompt:focus {
-        border-left: tall $tau-prompt-border;
-    }
-
     #prompt.-shell-mode {
-        border-left: tall $tau-tool-running;
+        border-top: solid $tau-tool-running;
+        border-bottom: solid $tau-tool-running;
     }
 
     #compact-session-info {
         height: auto;
         max-height: 3;
-        margin: 0 1 1 1;
+        margin: 0 1 0 1;
         padding: 0 1;
         color: $tau-muted-text;
     }
@@ -7682,15 +7681,14 @@ class TauTuiApp(App[None]):
         if render_key == self._last_activity_indicator_key:
             return
         self._last_activity_indicator_key = render_key
-        prompt.styles.border_left = (
-            "tall",
-            _activity_prompt_border_color(
-                theme,
-                frame=self._activity_frame,
-                running=self._is_working(),
-                shell_mode=shell_mode,
-            ),
+        border_color = _activity_prompt_border_color(
+            theme,
+            frame=self._activity_frame,
+            running=self._is_working(),
+            shell_mode=shell_mode,
         )
+        prompt.styles.border_top = ("solid", border_color)
+        prompt.styles.border_bottom = ("solid", border_color)
         prompt_prefix.update(
             _render_activity_indicator(
                 theme,
@@ -7848,44 +7846,24 @@ def _render_activity_indicator(
     running: bool,
     shell_mode: bool = False,
 ) -> Text:
-    """Render the prompt prefix: a moving square while running, ``$`` in shell mode."""
+    """Render the prompt prefix: a spinner while running, ``$`` in shell mode.
+
+    While running, the ``τ`` glyph is replaced by a braille-dot spinner whose
+    gap orbits the cell and whose accent color gently breathes toward the
+    background every ``ACTIVITY_COLOR_FADE_STEPS`` frames.
+    """
     if shell_mode and not running:
         return Text("$", style=f"bold {theme.role_styles['tool'].border}")
     if not running:
         return Text("τ", style=f"bold {theme.accent}")
 
-    cycle_length = (ACTIVITY_INDICATOR_HEIGHT - 1) * 2
-    cycle_position = frame % cycle_length
-    active_row = (
-        cycle_position
-        if cycle_position < ACTIVITY_INDICATOR_HEIGHT
-        else cycle_length - cycle_position
-    )
-    direction = 1 if cycle_position < ACTIVITY_INDICATOR_HEIGHT else -1
-    trail_rows = {
-        active_row: theme.accent,
-        active_row - direction: _blend_hex_colors(
-            theme.accent,
-            theme.screen_background,
-            fraction=0.35,
-        ),
-        active_row - (direction * 2): _blend_hex_colors(
-            theme.accent,
-            theme.screen_background,
-            fraction=0.65,
-        ),
-    }
-
-    rendered = Text()
-    for row in range(ACTIVITY_INDICATOR_HEIGHT):
-        color = trail_rows.get(row)
-        if color is None:
-            rendered.append(" ")
-        else:
-            rendered.append("■", style=color)
-        if row < ACTIVITY_INDICATOR_HEIGHT - 1:
-            rendered.append("\n")
-    return rendered
+    glyph = ACTIVITY_SPINNER_FRAMES[frame % len(ACTIVITY_SPINNER_FRAMES)]
+    half_cycle = ACTIVITY_COLOR_FADE_STEPS / 2
+    phase = frame % ACTIVITY_COLOR_FADE_STEPS
+    distance_from_peak = phase if phase <= half_cycle else ACTIVITY_COLOR_FADE_STEPS - phase
+    fade = ACTIVITY_SPINNER_MAX_FADE * (distance_from_peak / half_cycle)
+    color = _blend_hex_colors(theme.accent, theme.screen_background, fraction=fade)
+    return Text(glyph, style=f"bold {color}")
 
 
 def _is_terminal_command_prompt(text: str) -> bool:

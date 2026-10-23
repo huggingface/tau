@@ -2144,23 +2144,29 @@ def render_compact_session_info(
     *,
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
-    """Render the session facts below the prompt."""
-    left = _styled_cwd(session.cwd, theme=theme)
-    right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
-    right.append(session.provider_name, style=theme.completion_description)
-    right.append(f":{session.model}", style=theme.prompt_text)
+    """Render the session facts below the prompt.
+
+    The first line shows the working directory; the second line shows the model
+    identity on the left and active context usage on the right.
+    """
+    model_line = Text(style=theme.muted_text, overflow="fold", no_wrap=False)
+    model_line.append(session.provider_name, style=theme.completion_description)
+    model_line.append(f":{session.model}", style=theme.prompt_text)
     thinking_level = _thinking_level(session)
     if thinking_level is not None:
-        right.append(" ")
-        right.append(f"({thinking_level})", style=theme.completion_description)
-    right.append("\n")
-    right.append(_context_usage(session), style=theme.completion_description)
-
-    table = Table.grid(expand=True)
-    table.add_column(ratio=1)
-    table.add_column(ratio=1, justify="right")
-    table.add_row(left, right)
-    return table
+        model_line.append(" ")
+        model_line.append(f"({thinking_level})", style=theme.completion_description)
+    context = Text(
+        _context_usage(session),
+        style=theme.completion_description,
+        no_wrap=True,
+        justify="right",
+    )
+    second_line = Table.grid(expand=True)
+    second_line.add_column(ratio=1)
+    second_line.add_column(justify="right", no_wrap=True)
+    second_line.add_row(model_line, context)
+    return Group(_styled_cwd(session.cwd, theme=theme), second_line)
 
 
 def render_chat_item(
