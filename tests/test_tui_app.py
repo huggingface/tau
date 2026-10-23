@@ -1,6 +1,7 @@
 import asyncio
 import re
 import threading
+import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from datetime import datetime
@@ -2907,6 +2908,39 @@ async def test_tool_transcript_uses_native_markdown_without_custom_selection_pai
             "\n",
         )
         assert list(widget.query("MarkdownFence")) == []
+
+
+@pytest.mark.anyio
+async def test_streaming_message_coalesces_rapid_fragments() -> None:
+    from tau_coding.tui import widgets as tui_widgets
+
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        transcript = app.query_one("#transcript", TranscriptView)
+        widget = await transcript.start_assistant_message()
+        appended: list[str] = []
+        original_append = widget.append
+
+        async def tracking_append(markdown: str) -> None:
+            appended.append(markdown)
+            await original_append(markdown)
+
+        widget.append = tracking_append  # type: ignore[assignment,method-assign]
+        fragments = [f"word{index} " for index in range(10)]
+        started = time.monotonic()
+        for fragment in fragments:
+            await widget.append_fragment(fragment)
+            # Providers deliver deltas a few milliseconds apart.
+            await asyncio.sleep(0.01)
+        elapsed = time.monotonic() - started
+        await widget.finalize()
+        await pilot.pause()
+
+        # At most one append per interval, plus the flush when streaming stops.
+        assert len(appended) <= elapsed / tui_widgets.STREAM_APPEND_INTERVAL_SECONDS + 2
+        assert "".join(appended) == "".join(fragments)
+        assert widget.source == "".join(fragments)
 
 
 @pytest.mark.anyio

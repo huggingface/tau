@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from collections.abc import Sequence
@@ -479,9 +480,12 @@ class ThemedMarkdownWidget(TextualMarkdown):
 # matching how they appear while streaming.
 _BORDERLESS_TRANSCRIPT_ROLES = frozenset({"assistant", "thinking"})
 _HIDDEN_THINKING_PLACEHOLDER = "Thinking… Press Ctrl+T to show thinking tokens."
-TRANSCRIPT_WINDOW_ITEMS = 200
-TRANSCRIPT_WINDOW_PAGE_ITEMS = 80
-TRANSCRIPT_WINDOW_OVERSCAN_ITEMS = 40
+# Every layout pass visits all mounted transcript widgets, including the
+# passes triggered by each streamed chunk, so the window stays small.
+TRANSCRIPT_WINDOW_ITEMS = 100
+TRANSCRIPT_WINDOW_PAGE_ITEMS = 40
+TRANSCRIPT_WINDOW_OVERSCAN_ITEMS = 20
+STREAM_APPEND_INTERVAL_SECONDS = 0.05
 
 
 class TranscriptWindowBoundary(Static):
@@ -809,6 +813,31 @@ class TranscriptMessageWidget(Horizontal):
         return True
 
 
+class CoalescingMarkdownStream(MarkdownStream):
+    """Markdown stream that appends buffered fragments at most once per interval.
+
+    Textual's stream appends as soon as each fragment arrives, and every append
+    re-lays-out the transcript. Providers send many small deltas per second,
+    so waiting briefly after each append batches the fragments that arrive in
+    the meantime. Stopping the stream still flushes pending text immediately.
+    """
+
+    async def _run(self) -> None:
+        try:
+            while await self._new_markup.wait():
+                new_markdown = "".join(self._pending)
+                self._pending.clear()
+                self._new_markup.clear()
+                await asyncio.shield(self.markdown_widget.append(new_markdown))
+                await asyncio.sleep(STREAM_APPEND_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            pass
+
+        new_markdown = "".join(self._pending)
+        if new_markdown:
+            await self.markdown_widget.append(new_markdown)
+
+
 class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
     """One assistant or thinking Markdown block that accepts streamed fragments."""
 
@@ -854,7 +883,8 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
     @property
     def stream(self) -> MarkdownStream:
         if self._stream is None:
-            self._stream = self.get_stream(self)
+            self._stream = CoalescingMarkdownStream(self)
+            self._stream.start()
         return self._stream
 
     async def append_fragment(self, fragment: str) -> None:
