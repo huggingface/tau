@@ -47,6 +47,7 @@ from tau_ai.env import (
 from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
+from tau_ai.openai_compatible import _apply_session_affinity_headers
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import (
     RETRYABLE_TRANSPORT_ERRORS,
@@ -105,9 +106,13 @@ class AnthropicProvider:
         session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
         """Stream one response as Pi-compatible assistant message events."""
-        del session_id
         raw = self._stream_provider_events(
-            model=model, system=system, messages=messages, tools=tools, signal=signal
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            signal=signal,
+            session_id=session_id,
         )
         return canonicalize_provider_stream(
             raw, api="anthropic-messages", provider="anthropic", model=model
@@ -121,6 +126,7 @@ class AnthropicProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one Anthropic response as provider-neutral events."""
 
@@ -167,6 +173,7 @@ class AnthropicProvider:
                 headers.setdefault("Authorization", f"Bearer {api_key}")
             else:
                 headers["x-api-key"] = api_key
+            _apply_session_affinity_headers(headers, session_id, self._session_affinity_format())
             url = f"{base_url.rstrip('/')}/messages"
 
             attempt = 0
@@ -383,6 +390,13 @@ class AnthropicProvider:
         if attempt >= self._config.max_retries:
             return False
         return status_code is None or status_code in {408, 409, 425, 429} or status_code >= 500
+
+    def _session_affinity_format(self) -> str | None:
+        compat = self._config.compat or {}
+        if compat.get("sendSessionAffinityHeaders") is not True:
+            return None
+        value = compat.get("sessionAffinityFormat")
+        return value if isinstance(value, str) and value else None
 
 
 _TRANSIENT_ANTHROPIC_STREAM_ERROR_TYPES = frozenset(

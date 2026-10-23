@@ -165,6 +165,39 @@ separate `opencode-go` and `opencode` names, allowing different keys when
 needed. Available models and plan limits change over time; consult the
 [OpenCode Go](https://opencode.ai/docs/go) and
 [OpenCode Zen](https://opencode.ai/docs/zen) pages for the current list.
+Tau does not change OpenCode Zen behavior.
+
+Go routes each model to the endpoint in its documentation table. Tau follows
+the same per-model routing from its bundled catalog:
+
+| Go transport | Example models |
+| --- | --- |
+| `openai-completions` (`/chat/completions`) | GLM, Kimi, LongCat, DeepSeek, MiMo, Hy, Space Bunny |
+| `openai-responses` (`/responses`) | Grok 4.6/4.7, GPT 6 Luna, GPT 5.6 Luna, Muse Spark 1.2/1.3 Contributor |
+| `anthropic-messages` (`/messages`) | MiniMax M2.7/M3, Qwen 3.7 Plus, Qwen 3.8 Flash/Max |
+
+Anthropic-protocol Go models use the same Go API key; no OAuth login is
+required. For example, `opencode-go/minimax-m3` and
+`opencode-go/qwen3.7-plus` authenticate with `x-api-key`, while
+`opencode-go/muse-spark-1.3-contributor` uses the Responses API.
+
+Tau sends a stable `x-opencode-session` header on every Go transport
+(completions, responses, and Anthropic messages) and identifies Go requests
+with a Tau-specific `User-Agent` (`tau/<version>`) as the Go docs request.
+Zen requests are unchanged.
+
+Muse Spark Contributor models are discounted in exchange for allowing prompts
+and completions to be used for training future Meta models, and availability
+is limited to regions permitted by Meta's Geographic Use Policy. See the
+[Go privacy table](https://opencode.ai/docs/go/) before selecting
+`muse-spark-1.2-contributor` or `muse-spark-1.3-contributor`.
+
+Tau does not display Go dollar usage, monthly/weekly/5-hour allowances,
+estimated request counts, or peak/off-peak DeepSeek pricing. Those limits and
+token prices change independently of Tau: check the
+[Go usage tables](https://opencode.ai/docs/go/) and the OpenCode console for
+the current allowance, and expect DeepSeek V4 variants to bill different peak
+and off-peak rates that Tau cannot surface per request.
 
 ### Z.AI
 
