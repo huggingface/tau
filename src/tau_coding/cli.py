@@ -52,6 +52,7 @@ from tau_coding.provider_runtime import ClosableModelProvider, create_model_prov
 from tau_coding.rendering import PrintOutputMode, create_event_renderer
 from tau_coding.resources import TauResourcePaths
 from tau_coding.rpc import RpcServer
+from tau_coding.run_policies import RunPolicyLimits
 from tau_coding.session import (
     CodingSession,
     CodingSessionConfig,
@@ -1018,6 +1019,7 @@ async def run_openai_rpc_mode(
             provider_settings=settings,
             runtime_provider_config=selection.provider,
             shell_command_prefix=shell_settings.shell_command_prefix,
+            run_policies=shell_settings.run_policies,
             extension_paths=extension_paths,
             extensions_enabled=extensions_enabled,
             project_extensions_enabled=project_extensions_enabled,
@@ -1163,6 +1165,7 @@ async def run_openai_print_mode(
             requested_model=model if explicit_selection else None,
             session_provider_name=record.provider_name,
             shell_command_prefix=shell_settings.shell_command_prefix,
+            run_policies=shell_settings.run_policies,
             extension_paths=extension_paths,
             extensions_enabled=extensions_enabled,
             project_extensions_enabled=project_extensions_enabled,
@@ -1266,6 +1269,7 @@ async def run_print_mode(
     requested_model: str | None = None,
     session_provider_name: str | None = None,
     shell_command_prefix: str | None = None,
+    run_policies: RunPolicyLimits | None = None,
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
@@ -1300,6 +1304,7 @@ async def run_print_mode(
             requested_model=requested_model,
             session_provider_name=session_provider_name,
             shell_command_prefix=shell_command_prefix,
+            run_policies=run_policies,
             extension_paths=extension_paths,
             extensions_enabled=extensions_enabled,
             project_extensions_enabled=project_extensions_enabled,

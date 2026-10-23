@@ -7,6 +7,12 @@ Tools are the actions the agent can take in your working directory. The model
 decides when to call them; Tau executes them and streams the results back. Tau
 ships four built-in coding tools: `read`, `write`, `edit`, and `bash`.
 
+Malformed streamed tool arguments are returned to the model as an error result,
+including the raw argument text and instructions to retry with a valid JSON
+object. The tool does not execute. Extension gates still run before this check,
+and normal tool-result events and session persistence are preserved. Empty
+arguments remain an empty object; tool-specific validation handles missing keys.
+
 All paths are resolved against the session's working directory (`--cwd`, or the
 directory you launched Tau from).
 

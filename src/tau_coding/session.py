@@ -11,7 +11,13 @@ from os import environ
 from pathlib import Path
 from typing import Literal
 
-from tau_agent.events import AgentEndEvent, AgentEvent, MessageEndEvent, ToolExecutionEndEvent
+from tau_agent.events import (
+    AgentEndEvent,
+    AgentEvent,
+    MessageEndEvent,
+    ToolExecutionEndEvent,
+    TurnEndEvent,
+)
 from tau_agent.harness import AgentHarness, AgentHarnessConfig, QueuedMessages
 from tau_agent.messages import (
     AgentMessage,
@@ -139,6 +145,7 @@ from tau_coding.resources import (
     resource_paths_with_cwd,
     resource_paths_with_project_trust,
 )
+from tau_coding.run_policies import RunPolicyLimits, RunPolicyMonitor
 from tau_coding.session_export import (
     default_session_export_artifact_path,
     export_session_artifact,
@@ -375,6 +382,7 @@ class CodingSessionConfig:
     """
     index_on_first_persist: bool = False
     shell_command_prefix: str | None = None
+    run_policies: RunPolicyLimits | None = None
     skills_enabled: bool = True
     """Whether skill discovery is enabled for this session.
 
@@ -504,6 +512,9 @@ class CodingSession:
         self._ended_message_ids: set[int] = set()
         self._pending_message_writes: dict[int, _PendingMessageWrite] = {}
         self._attach_persistence_listener()
+        self._policy_unsubscribe: Callable[[], None] | None = None
+        self._policy_queue_update: QueueUpdateEvent | None = None
+        self._attach_policy_monitor()
 
     @classmethod
     async def load(cls, config: CodingSessionConfig) -> CodingSession:
@@ -2222,8 +2233,9 @@ class CodingSession:
 
     def will_auto_retry(self, message: AssistantMessage) -> bool:
         """Return whether session orchestration will retry this assistant error."""
-        return is_context_overflow_error(message) or self._should_auto_failover_huggingface_route(
-            message
+        return not self._run_policy_monitor.cancelled and (
+            is_context_overflow_error(message)
+            or self._should_auto_failover_huggingface_route(message)
         )
 
     def _should_auto_failover_huggingface_route(
@@ -2277,7 +2289,7 @@ class CodingSession:
         await self._extension_runtime.emit_event(retry_start)
         yield retry_start
 
-        retry_events = self._harness.continue_()
+        retry_events = self._policy_events(self._harness.continue_())
         self._invalidate_context_usage_cache()
         final_error: str | None = None
         try:
@@ -2844,6 +2856,7 @@ class CodingSession:
                 auto_compact_enabled=self._auto_compact_enabled,
                 thinking_level=self._thinking_level,
                 shell_command_prefix=self._config.shell_command_prefix,
+                run_policies=self._config.run_policies,
                 skills_enabled=self._config.skills_enabled,
                 allowed_tool_names=self._config.allowed_tool_names,
                 extension_paths=self._config.extension_paths,
@@ -3106,6 +3119,8 @@ class CodingSession:
         self._project_trust_resolution = replacement._project_trust_resolution
         self._project_trust_commit_pending = False
         self._session_start_pending = False
+        replacement._detach_policy_monitor()
+        self._attach_policy_monitor()
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
         # Adoption is already committed. Finish outgoing cleanup under a
@@ -3174,6 +3189,7 @@ class CodingSession:
 
     async def _close_owned_resources(self) -> None:
         """Run the sole close pass, continuing after individual failures."""
+        self._detach_policy_monitor()
         error: BaseException | None = None
         try:
             if self._extension_runtime.active:
@@ -3345,10 +3361,12 @@ class CodingSession:
         await self._commit_preview()
         await self._refresh_runtime_model_limits()
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
+        self._run_policy_monitor.reset()
+        self._policy_queue_update = None
         # id() values can be reused once earlier message objects are freed.
         self._ended_message_ids.clear()
         self._persisted_message_ids.clear()
-        events: AsyncIterator[AgentEvent] | None = None
+        events: AsyncIterator[AgentEvent | QueueUpdateEvent] | None = None
         settled_event: AgentSettledEvent | None = None
         auto_name_attempted = False
         overflow_message: AssistantMessage | None = None
@@ -3364,7 +3382,7 @@ class CodingSession:
                 )
             else:
                 prompt_message = UserMessage(content=expanded_content)
-            events = self._harness.prompt_message(prompt_message)
+            events = self._policy_events(self._harness.prompt_message(prompt_message))
             self._invalidate_context_usage_cache()
             async for event in events:
                 auto_name_message: str | None = None
@@ -3395,7 +3413,8 @@ class CodingSession:
                     yield SessionAgentEndEvent(
                         messages=event.messages,
                         will_retry=(
-                            overflow_message is not None or route_failure_message is not None
+                            not self._run_policy_monitor.cancelled
+                            and (overflow_message is not None or route_failure_message is not None)
                         ),
                     )
                 else:
@@ -3404,7 +3423,7 @@ class CodingSession:
                 # session naming performs its separate provider request.
                 if auto_name_message is not None:
                     await self._try_auto_name_session(auto_name_message, context=context)
-            if overflow_message is not None:
+            if overflow_message is not None and not self._run_policy_monitor.cancelled:
                 session_event_1 = CompactionStartEvent(reason="overflow")
                 await self._extension_runtime.emit_event(session_event_1)
                 yield session_event_1
@@ -3427,7 +3446,7 @@ class CodingSession:
                     )
                     await self._extension_runtime.emit_event(retry_start)
                     yield retry_start
-                    events = self._harness.continue_()
+                    events = self._policy_events(self._harness.continue_())
                     self._invalidate_context_usage_cache()
                     overflow_retry_error: str | None = None
                     async for retry_event in events:
@@ -3463,10 +3482,10 @@ class CodingSession:
                     )
                     await self._extension_runtime.emit_event(session_event_4)
                     yield session_event_4
-            elif route_failure_message is not None:
+            elif route_failure_message is not None and not self._run_policy_monitor.cancelled:
                 async for failover_event in self._run_huggingface_route_failover(context=context):
                     yield failover_event
-            else:
+            elif not self._run_policy_monitor.cancelled:
                 await self._try_auto_compact(context=context, phase="auto_compact_after_prompt")
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
@@ -3486,17 +3505,21 @@ class CodingSession:
 
     async def continue_(self) -> AsyncIterator[CodingSessionEvent]:
         """Continue the agent from restored state and persist new messages."""
+        if self._harness.is_running:
+            raise RuntimeError("CodingSession is already running")
         context = self._diagnostic_context()
         await self._flush_pending_message_writes(context=context)
         await self._refresh_runtime_model_limits()
+        self._run_policy_monitor.reset()
+        self._policy_queue_update = None
         # id() values can be reused once earlier message objects are freed.
         self._ended_message_ids.clear()
         self._persisted_message_ids.clear()
-        events: AsyncIterator[AgentEvent] | None = None
+        events: AsyncIterator[AgentEvent | QueueUpdateEvent] | None = None
         settled_event: AgentSettledEvent | None = None
         route_failure_message: AssistantMessage | None = None
         try:
-            events = self._harness.continue_()
+            events = self._policy_events(self._harness.continue_())
             self._invalidate_context_usage_cache()
             async for event in events:
                 if isinstance(event, ToolExecutionEndEvent):
@@ -3516,14 +3539,18 @@ class CodingSession:
                 if isinstance(event, AgentEndEvent):
                     yield SessionAgentEndEvent(
                         messages=event.messages,
-                        will_retry=route_failure_message is not None,
+                        will_retry=(
+                            route_failure_message is not None
+                            and not self._run_policy_monitor.cancelled
+                        ),
                     )
                 else:
                     yield event
-            if route_failure_message is not None:
+            if route_failure_message is not None and not self._run_policy_monitor.cancelled:
                 async for failover_event in self._run_huggingface_route_failover(context=context):
                     yield failover_event
-            await self._try_auto_compact(context=context, phase="auto_compact_after_continue")
+            if not self._run_policy_monitor.cancelled:
+                await self._try_auto_compact(context=context, phase="auto_compact_after_continue")
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -3625,6 +3652,67 @@ class CodingSession:
         self._invalidate_context_usage_cache()
         return repair
 
+    async def _policy_events(
+        self,
+        events: AsyncIterator[AgentEvent],
+    ) -> AsyncIterator[AgentEvent | QueueUpdateEvent]:
+        """Close a policy-cancelled run before asking the provider for another turn.
+
+        Provider cancellation is cooperative and may only be checked after an
+        HTTP request starts. Stop consumption at the completed-turn boundary
+        in the application, preserving the portable loop's round structure.
+        """
+        messages: list[AgentMessage] = []
+        try:
+            async for event in events:
+                if isinstance(event, MessageEndEvent):
+                    messages.append(event.message)
+                if self._policy_queue_update is not None:
+                    queue_event = self._policy_queue_update
+                    self._policy_queue_update = None
+                    yield queue_event
+                yield event
+                if isinstance(event, TurnEndEvent) and self._run_policy_monitor.cancelled:
+                    aclose = getattr(events, "aclose", None)
+                    if aclose is not None:
+                        await aclose()
+                    end = AgentEndEvent(messages=messages)
+                    await self._extension_runtime.emit_event(end)
+                    yield end
+                    return
+        finally:
+            aclose = getattr(events, "aclose", None)
+            if aclose is not None:
+                await aclose()
+
+    def _detach_policy_monitor(self) -> None:
+        if self._policy_unsubscribe is not None:
+            self._policy_unsubscribe()
+            self._policy_unsubscribe = None
+
+    def _attach_policy_monitor(self) -> None:
+        self._detach_policy_monitor()
+        self._policy_queue_update = None
+        self._run_policy_monitor = RunPolicyMonitor(
+            self._config.run_policies or RunPolicyLimits(),
+            queue_steering=self._queue_policy_steering,
+            cancel=self.cancel,
+            price_response=self._pricing_for_response,
+        )
+        subscribe = getattr(self._harness, "subscribe", None)
+        if subscribe is not None:
+            self._policy_unsubscribe = subscribe(self._on_run_policy_event)
+
+    def _queue_policy_steering(self, content: str) -> None:
+        self.queue_steering_message(content)
+        self._policy_queue_update = self.queue_update_event()
+
+    async def _on_run_policy_event(self, event: AgentEvent) -> None:
+        previous = self._policy_queue_update
+        await self._run_policy_monitor.on_event(event)
+        if self._policy_queue_update is not None and self._policy_queue_update is not previous:
+            await self._extension_runtime.emit_event(self._policy_queue_update)
+
     def _attach_persistence_listener(self) -> None:
         """(Re-)attach push persistence to the current harness.
 
@@ -3673,7 +3761,7 @@ class CodingSession:
 
     async def _reconcile_run_persistence(
         self,
-        events: AsyncIterator[AgentEvent] | None,
+        events: AsyncIterator[AgentEvent | QueueUpdateEvent] | None,
         *,
         context: AgentCallDiagnosticContext,
     ) -> None:

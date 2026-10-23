@@ -280,6 +280,13 @@ def _response_timing(
     )
 
 
+MALFORMED_ARGUMENTS_MESSAGE = (
+    "Tool call arguments could not be parsed as a JSON object. "
+    "The raw text received was:\n<raw_arguments>\n{raw}\n</raw_arguments>\n"
+    "Please correct the JSON syntax, supply an object, and call the tool again."
+)
+
+
 async def _execute_tool_call(
     call: ToolCall,
     tools: Mapping[str, AgentTool],
@@ -303,6 +310,11 @@ async def _execute_tool_call(
         is_error = True
     elif signal is not None and signal.is_cancelled():
         result = _error_result("Operation aborted")
+        is_error = True
+    elif call.malformed_arguments_text is not None:
+        result = _error_result(
+            MALFORMED_ARGUMENTS_MESSAGE.format(raw=call.malformed_arguments_text)
+        )
         is_error = True
     else:
         tool = tools.get(call.name)

@@ -51,7 +51,7 @@ launching `tau`.
 ├── codex-models-store.json # account-scoped Codex model snapshot
 ├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
 ├── state/extensions/    # built-in integration state, including llama.cpp
-├── settings.json       # general settings (trust default, shell prefix)
+├── settings.json       # general settings (trust default, shell prefix, run limits)
 ├── trust.json          # versioned project-input trust decisions
 ├── tui.json            # TUI theme, keybindings, and layout
 ├── sessions/           # saved sessions, per project
@@ -86,6 +86,56 @@ catalog network access. User `catalog.toml` overrides still apply after the cach
 Codex account ID. Tau loads it at startup, then refreshes it when `/model` or
 `/scoped-models` opens; a snapshot from a different account is ignored. It never
 contains OAuth tokens.
+
+## Run policies
+
+Optional `runPolicies` in `~/.tau/settings.json` applies to new terminal,
+print-mode, and RPC sessions. All limits are disabled by default:
+
+```json
+{
+  "runPolicies": {
+    "maxCostUsd": 1.0,
+    "maxTokens": 50000,
+    "maxConsecutiveErrorTurns": 3,
+    "action": "steer"
+  }
+}
+```
+
+Omit a limit or set it to `null` to disable it. Cost must be a finite positive
+number; token and error limits must be positive integers. Unknown keys are
+ignored; invalid known values are configuration errors. Restart Tau after
+editing these settings. Embedded applications pass `RunPolicyLimits` through
+`CodingSessionConfig.run_policies` directly.
+
+Counters reset for each public `prompt()` or `continue_()` run. Internal overflow
+and provider-route retries share that run's counters; queued steering/follow-up
+messages do not reset them. A turn fails if its assistant response fails or any
+tool result is an error (including malformed tool arguments). A successful turn
+clears the error streak. User cancellation does not count as failure.
+
+Limits are checked **after a completed turn**, including that turn's tools:
+
+- `steer` queues a visible instruction asking the model to stop, summarize
+  progress, and list remaining work. Each limit triggers once per run;
+  simultaneous limits produce one instruction. This is advisory: the model may
+  ignore it, and its summary consumes additional tokens/cost. If the provider
+  fails and no existing retry runs, the instruction stays queued for continuation;
+  Tau does not invent another retry just to obtain a summary.
+- `cancel` ends consumption at the completed-turn boundary, cancels the harness,
+  and prevents further provider requests, overflow retries, route failover, and
+  post-run automatic compaction in that run. It does not request a summary.
+
+Token totals use reported total tokens, falling back to input + output + cache
+read + cache write. Reasoning tokens and one-hour cache writes are subsets and
+are not added twice. Cost uses the session's configured model pricing (including
+cache/tier rates), or a positive provider-reported cost if pricing is unavailable.
+Unpriced responses contribute no cost, but still count toward tokens/errors.
+Only assistant responses observed through the harness are counted, including
+failed responses with reported usage. Separate naming, compaction, and branch
+summary requests are excluded. These are run guardrails, not billing ceilings:
+one turn can overshoot a limit, and completed work cannot be rolled back.
 
 ## System prompt files
 
