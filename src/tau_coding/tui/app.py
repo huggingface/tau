@@ -5289,8 +5289,32 @@ class TauTuiApp(App[None]):
             self._optimistic_user_messages.append((run_id, text))
             await self._append_optimistic_user_message(text)
         self._prompt_worker = self.run_worker(
-            self._run_prompt(text, run_id, source=source, custom_type=custom_type, details=details),
+            self._run_prompt_after_refresh(
+                text, run_id, source=source, custom_type=custom_type, details=details
+            ),
             exclusive=True,
+        )
+
+    async def _run_prompt_after_refresh(
+        self,
+        text: str,
+        run_id: int,
+        *,
+        source: Literal["interactive", "extension"],
+        custom_type: str | None,
+        details: dict[str, JSONValue] | None,
+    ) -> None:
+        """Start a prompt run once the optimistic prompt has been painted."""
+        # Textual starts workers eagerly, so without this wait the session's
+        # synchronous setup (input hooks, persistence) runs inside the submit
+        # handler and delays the frame that shows the submitted prompt.
+        # (`App.wait_for_refresh` cannot be used: it requires `App._task`,
+        # which only `run_test` sets.)
+        refreshed = asyncio.Event()
+        if self.call_after_refresh(refreshed.set):
+            await refreshed.wait()
+        await self._run_prompt(
+            text, run_id, source=source, custom_type=custom_type, details=details
         )
 
     async def _append_optimistic_user_message(

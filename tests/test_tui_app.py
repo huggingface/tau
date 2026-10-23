@@ -2,6 +2,7 @@ import asyncio
 import re
 import threading
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
@@ -18,6 +19,7 @@ from textual.containers import Container, VerticalScroll
 from textual.content import Content
 from textual.content import Style as TextualStyle
 from textual.geometry import Offset
+from textual.screen import Screen
 from textual.selection import SELECT_ALL, Selection
 from textual.widgets import (
     Collapsible,
@@ -4680,6 +4682,62 @@ async def test_tui_app_updates_terminal_title_for_running_and_named_session() ->
 
 
 @pytest.mark.anyio
+async def test_submitted_prompt_is_painted_before_session_prompt_runs() -> None:
+    frames = 0
+    frames_at_prompt_start: list[int] = []
+
+    class PaintCheckingSession(FakeSession):
+        async def prompt(
+            self,
+            text: str,
+            *,
+            streaming_behavior: str | None = None,
+            source: str = "interactive",
+            custom_type: str | None = None,
+            details: dict[str, object] | None = None,
+        ) -> AsyncIterator[AgentEvent]:
+            frames_at_prompt_start.append(frames)
+            async for event in super().prompt(
+                text,
+                streaming_behavior=streaming_behavior,
+                source=source,
+                custom_type=custom_type,
+                details=details,
+            ):
+                yield event
+
+    session = PaintCheckingSession(events=[AgentStartEvent(), AgentEndEvent()])
+    app = TauTuiApp(session)
+    # `App.run` installs Textual's eager task factory but `run_test` does not.
+    loop = asyncio.get_running_loop()
+    previous_task_factory = loop.get_task_factory()
+    loop.set_task_factory(asyncio.eager_task_factory)
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            original_display = app._display
+
+            def counting_display(screen: Screen[object], renderable: object) -> None:
+                nonlocal frames
+                frames += 1
+                original_display(screen, renderable)  # type: ignore[arg-type]
+
+            app._display = counting_display  # type: ignore[method-assign]
+            await app._submit_prompt("paint me first")
+            worker = app._prompt_worker
+            assert worker is not None
+
+            # Textual starts workers eagerly; the run must still wait for a paint.
+            assert frames_at_prompt_start == []
+            await worker.wait()
+
+            assert session.prompt_texts == ["paint me first"]
+            assert frames_at_prompt_start[0] >= 1
+    finally:
+        loop.set_task_factory(previous_task_factory)
+
+
+@pytest.mark.anyio
 async def test_tui_app_activity_ticks_do_not_reread_session_title() -> None:
     class CountingTitleSession(FakeSession):
         title_reads = 0
@@ -4705,6 +4763,35 @@ async def test_tui_app_activity_ticks_do_not_reread_session_title() -> None:
 
         assert CountingTitleSession.title_reads == reads_before_ticks
         assert writes[-1] == "\x1b]0;⠴ τ | build notes\x07"
+
+
+@pytest.mark.anyio
+async def test_submitted_prompt_runs_under_real_app_run_loop() -> None:
+    session = FakeSession(events=[AgentStartEvent(), AgentEndEvent()])
+    app = TauTuiApp(session)
+    worker_states: list[str] = []
+
+    async def drive(pilot: object) -> None:
+        del pilot
+        await app._submit_prompt("real run loop")
+        worker = app._prompt_worker
+        assert worker is not None
+        with suppress(Exception):
+            await worker.wait()
+        worker_states.append(worker.state.name)
+        app.exit()
+
+    # `run_test` sets up app internals that `tau` never has; `run_async` is
+    # the path the CLI uses.
+    loop = asyncio.get_running_loop()
+    previous_task_factory = loop.get_task_factory()
+    try:
+        await app.run_async(headless=True, auto_pilot=drive)
+    finally:
+        loop.set_task_factory(previous_task_factory)
+
+    assert worker_states == ["SUCCESS"]
+    assert session.prompt_texts == ["real run loop"]
 
 
 @pytest.mark.anyio
