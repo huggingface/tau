@@ -18,6 +18,7 @@ from tau_coding.paths import TauPaths
 PYPI_PACKAGE_NAME = "tau-ai"
 PYPI_JSON_URL = f"https://pypi.org/pypi/{PYPI_PACKAGE_NAME}/json"
 UPDATE_CHECK_INTERVAL = timedelta(days=1)
+UPDATE_CHECK_FAILURE_RETRY_INTERVAL = timedelta(hours=1)
 UPDATE_CHECK_TIMEOUT_SECONDS = 1.5
 UPDATE_CHECK_ENV_DISABLE = "TAU_NO_UPDATE_CHECK"
 RELEASE_NOTES_STATE_FILENAME = "release-notes-state.json"
@@ -50,6 +51,7 @@ class UpdateCheckResult:
 
     checked_at: datetime
     latest_version: str | None
+    failed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,11 +130,40 @@ def startup_update_notice(
         try:
             latest_version = fetch_latest_pypi_version(fetcher=fetcher)
         except Exception:  # noqa: BLE001 - update checks must never block startup
+            # Remember the failure so offline launches do not each wait for
+            # the request timeout; a failed check is retried after an hour.
+            _write_update_check_cache(cache_path, current_time, None, failed=True)
             return None
         _write_update_check_cache(cache_path, current_time, latest_version)
     else:
         latest_version = cached_result.latest_version
 
+    return _update_notice_for(current_version, latest_version)
+
+
+def cached_update_notice(
+    current_version: str,
+    *,
+    cache_path: Path | None = None,
+    now: Clock | None = None,
+    env: Mapping[str, str] | None = None,
+) -> tuple[UpdateNotice | None, bool]:
+    """Return the cached update notice and whether a PyPI check is due.
+
+    This never contacts PyPI, so an interactive frontend can show a cached
+    notice immediately and run a due check in the background instead of
+    delaying startup by up to the request timeout.
+    """
+    environment = environ if env is None else env
+    if _update_check_disabled(environment):
+        return None, False
+    cached_result = _cached_update_check_result(cache_path, (now or _utc_now)())
+    if cached_result is None:
+        return None, True
+    return _update_notice_for(current_version, cached_result.latest_version), False
+
+
+def _update_notice_for(current_version: str, latest_version: str | None) -> UpdateNotice | None:
     if latest_version is None:
         return None
 
@@ -304,7 +335,8 @@ def _cached_update_check_result(cache_path: Path | None, now: datetime) -> Updat
         result = _parse_cached_result(data)
     except Exception:  # noqa: BLE001 - corrupt caches should be ignored
         return None
-    if now - result.checked_at > UPDATE_CHECK_INTERVAL:
+    interval = UPDATE_CHECK_FAILURE_RETRY_INTERVAL if result.failed else UPDATE_CHECK_INTERVAL
+    if now - result.checked_at > interval:
         return None
     return result
 
@@ -318,29 +350,37 @@ def _parse_cached_result(data: Any) -> UpdateCheckResult:
         raise ValueError("cache missing checked_at")
     if latest_version is not None and not isinstance(latest_version, str):
         raise ValueError("cache latest_version must be a string")
+    failed = data.get("failed", False)
+    if not isinstance(failed, bool):
+        raise ValueError("cache failed must be a boolean")
     parsed_checked_at = datetime.fromisoformat(checked_at)
     if parsed_checked_at.tzinfo is None:
         parsed_checked_at = parsed_checked_at.replace(tzinfo=UTC)
-    return UpdateCheckResult(checked_at=parsed_checked_at, latest_version=latest_version)
+    return UpdateCheckResult(
+        checked_at=parsed_checked_at,
+        latest_version=latest_version,
+        failed=failed,
+    )
 
 
 def _write_update_check_cache(
     cache_path: Path | None,
     checked_at: datetime,
     latest_version: str | None,
+    *,
+    failed: bool = False,
 ) -> None:
     path = cache_path or default_update_check_cache_path()
+    payload: dict[str, object] = {
+        "checked_at": checked_at.astimezone(UTC).isoformat(),
+        "latest_version": latest_version,
+    }
+    if failed:
+        payload["failed"] = True
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            json.dumps(
-                {
-                    "checked_at": checked_at.astimezone(UTC).isoformat(),
-                    "latest_version": latest_version,
-                },
-                indent=2,
-            )
-            + "\n",
+            json.dumps(payload, indent=2) + "\n",
             encoding="utf-8",
         )
     except OSError:

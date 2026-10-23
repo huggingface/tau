@@ -5,6 +5,7 @@ from tau_coding.update_check import (
     UPDATE_CHECK_TIMEOUT_SECONDS,
     ReleaseNoteSection,
     ReleaseNotesEntry,
+    cached_update_notice,
     fetch_latest_pypi_version,
     load_release_notes,
     release_notes_between,
@@ -116,6 +117,60 @@ def test_startup_update_notice_ignores_failures(tmp_path) -> None:
         )
         is None
     )
+
+
+def test_startup_update_notice_caches_failures_for_an_hour(tmp_path) -> None:
+    cache_path = tmp_path / "update-check.json"
+    calls: list[str] = []
+    started = datetime(2026, 1, 1, tzinfo=UTC)
+
+    def broken_fetcher(url: str, _timeout: float) -> dict[str, object]:
+        calls.append(url)
+        raise TimeoutError("offline")
+
+    def check(at: datetime) -> object:
+        return startup_update_notice(
+            "0.1.0", fetcher=broken_fetcher, cache_path=cache_path, now=lambda: at, env={}
+        )
+
+    assert check(started) is None
+    assert check(started + timedelta(minutes=30)) is None
+    assert len(calls) == 1
+    assert cached_update_notice(
+        "0.1.0", cache_path=cache_path, now=lambda: started + timedelta(minutes=30), env={}
+    ) == (None, False)
+
+    assert check(started + timedelta(hours=2)) is None
+    assert len(calls) == 2
+
+
+def test_cached_update_notice_never_fetches(tmp_path) -> None:
+    cache_path = tmp_path / "update-check.json"
+    now = datetime(2026, 1, 1, 12, tzinfo=UTC)
+
+    assert cached_update_notice("0.1.0", cache_path=cache_path, now=lambda: now, env={}) == (
+        None,
+        True,
+    )
+    assert cached_update_notice(
+        "0.1.0", cache_path=cache_path, now=lambda: now, env={"TAU_NO_UPDATE_CHECK": "1"}
+    ) == (None, False)
+
+    cache_path.write_text(
+        '{"checked_at":"2026-01-01T00:00:00+00:00","latest_version":"0.2.0"}\n',
+        encoding="utf-8",
+    )
+    notice, check_due = cached_update_notice(
+        "0.1.0", cache_path=cache_path, now=lambda: now, env={}
+    )
+
+    assert notice is not None
+    assert notice.latest_version == "0.2.0"
+    assert check_due is False
+    _, stale_check_due = cached_update_notice(
+        "0.1.0", cache_path=cache_path, now=lambda: now + timedelta(days=2), env={}
+    )
+    assert stale_check_due is True
 
 
 def test_startup_update_notice_can_be_disabled(tmp_path) -> None:

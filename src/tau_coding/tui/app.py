@@ -7,6 +7,7 @@ import errno
 import os
 import stat
 import tempfile
+import threading
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
@@ -4595,12 +4596,14 @@ class TauTuiApp(App[None]):
         startup_message: str | None = None,
         startup_notice: str | None = None,
         startup_update_notice: str | None = None,
+        deferred_update_notice: Callable[[], str | None] | None = None,
         startup_alerts: Sequence[str] = (),
         startup_notices: Sequence[str] = (),
         initial_prompt: str | None = None,
     ) -> None:
         self.tui_settings = tui_settings or TuiSettings()
         self.startup_message = startup_message
+        self._deferred_update_notice = deferred_update_notice
         legacy_notices = (startup_notice,) if startup_notice else ()
         self.startup_notices = tuple((*startup_notices, *legacy_notices))
         self.initial_prompt = initial_prompt
@@ -4843,11 +4846,37 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
         if self.startup_message:
             self._notify(self.startup_message, severity="warning")
+        if self._deferred_update_notice is not None:
+            self.run_worker(self._show_deferred_update_notice(), group="update-check")
         # UI is live and the bridge is installed (__init__) — release the
         # deferred session_start so handlers can notify / open dialogs.
         await self.session.emit_pending_session_start()
         if self.initial_prompt and self.initial_prompt.strip():
             await self._submit_prompt(self.initial_prompt.strip())
+
+    async def _show_deferred_update_notice(self) -> None:
+        """Run a due PyPI update check off the event loop and show any notice."""
+        check = self._deferred_update_notice
+        self._deferred_update_notice = None
+        if check is None:
+            return
+        message = await _run_in_daemon_thread(check)
+        if message is None or not self.screen_stack:
+            return
+        if self._is_working():
+            # Appending a transcript row would cut into the streaming reply.
+            self._notify(message)
+            return
+        self.state.add_item("status", message, highlight="update")
+        try:
+            transcript = self.query_one("#transcript", TranscriptView)
+        except NoMatches:
+            return
+        await transcript.append_item(
+            self.state.items[-1],
+            theme=self.tui_settings.resolved_theme,
+            show_tool_results=self.state.show_tool_results,
+        )
 
     async def on_event(self, event: events.Event) -> None:
         """Consult extension key interceptors before Textual's dispatch.
@@ -8122,6 +8151,37 @@ def _session_option(record: SessionCompletionRecord) -> CompletionOption:
     return CompletionOption(value=record.id, description=" - ".join(description_parts))
 
 
+async def _run_in_daemon_thread[T](function: Callable[[], T]) -> T:
+    """Run blocking work in a daemon thread so quitting never waits for it.
+
+    `asyncio.to_thread` would make interpreter shutdown join the worker,
+    holding an early quit until a slow network request times out.
+    """
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[T] = loop.create_future()
+
+    def resolve(result: T | None, error: BaseException | None) -> None:
+        if future.done():
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(cast(T, result))
+
+    def run() -> None:
+        result: T | None = None
+        error: BaseException | None = None
+        try:
+            result = function()
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the awaiting task
+            error = exc
+        with suppress(RuntimeError):  # the event loop closed while this ran
+            loop.call_soon_threadsafe(resolve, result, error)
+
+    threading.Thread(target=run, name="tau-background-check", daemon=True).start()
+    return await future
+
+
 def _short_path(path: Path) -> str:
     home = Path.home()
     try:
@@ -8778,6 +8838,7 @@ async def run_tui_app(
     session_manager: SessionManager | None = None,
     startup_notice: str | None = None,
     startup_update_notice: str | None = None,
+    deferred_startup_update_notice: Callable[[], str | None] | None = None,
     startup_notices: Sequence[str] = (),
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
@@ -8973,6 +9034,7 @@ async def run_tui_app(
             tui_settings=load_tui_settings(),
             startup_message=startup_message,
             startup_update_notice=startup_update_notice,
+            deferred_update_notice=deferred_startup_update_notice,
             startup_alerts=startup_alerts,
             startup_notices=all_startup_notices,
             initial_prompt=initial_prompt,

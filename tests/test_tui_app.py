@@ -4837,6 +4837,38 @@ async def test_submitted_prompt_is_painted_before_session_prompt_runs() -> None:
 
 
 @pytest.mark.anyio
+async def test_deferred_update_check_runs_after_mount_and_shows_notice() -> None:
+    release_check = threading.Event()
+    check_threads: list[str] = []
+
+    def slow_update_check() -> str | None:
+        check_threads.append(threading.current_thread().name)
+        release_check.wait(timeout=5)
+        return "Tau 9.9.9 is available (installed: 0.1.0). Run `tau update` to upgrade."
+
+    app = TauTuiApp(FakeSession(), deferred_update_notice=slow_update_check)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # The UI is interactive while the check is still waiting on the network.
+        assert app.query_one(PromptInput).has_focus
+        assert not any(item.highlight == "update" for item in app.state.items)
+
+        release_check.set()
+        for _ in range(50):
+            if any(item.highlight == "update" for item in app.state.items):
+                break
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+
+        assert check_threads and check_threads[0] != threading.main_thread().name
+        assert any(
+            "Tau 9.9.9 is available" in widget.selection_text
+            for widget in app.query(TranscriptMessageWidget)
+        )
+
+
+@pytest.mark.anyio
 async def test_tui_app_activity_ticks_do_not_reread_session_title() -> None:
     class CountingTitleSession(FakeSession):
         title_reads = 0
