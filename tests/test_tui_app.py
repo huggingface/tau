@@ -4628,6 +4628,34 @@ async def test_tui_app_updates_terminal_title_for_running_and_named_session() ->
 
 
 @pytest.mark.anyio
+async def test_tui_app_activity_ticks_do_not_reread_session_title() -> None:
+    class CountingTitleSession(FakeSession):
+        title_reads = 0
+
+        @property
+        def session_title(self) -> str | None:
+            type(self).title_reads += 1
+            return self._session_title
+
+    session = CountingTitleSession()
+    session._session_title = "build notes"
+    app = TauTuiApp(session)
+    writes: list[str] = []
+    app._terminal_title = TerminalTitleController(enabled=True, writer=writes.append)
+
+    async with app.run_test():
+        app.adapter.apply(AgentStartEvent())
+        app._refresh()
+        reads_before_ticks = CountingTitleSession.title_reads
+
+        for _ in range(5):
+            app._tick_activity()
+
+        assert CountingTitleSession.title_reads == reads_before_ticks
+        assert writes[-1] == "\x1b]0;⠴ τ | build notes\x07"
+
+
+@pytest.mark.anyio
 async def test_tui_app_notifies_when_agent_settles_while_unfocused() -> None:
     class SettledSession(FakeSession):
         async def prompt(

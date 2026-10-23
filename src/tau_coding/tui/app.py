@@ -4679,6 +4679,7 @@ class TauTuiApp(App[None]):
         self._app_has_focus = True
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
+        self._terminal_session_title: str | None = None
         self._sync_session_title()
 
     async def prompt_project_trust(self, request: ProjectTrustRequest) -> TrustChoice | None:
@@ -4687,6 +4688,7 @@ class TauTuiApp(App[None]):
 
     def _sync_session_title(self) -> None:
         """Reflect the active session name in the terminal tab title."""
+        self._terminal_session_title = getattr(self.session, "session_title", None)
         self._sync_terminal_title()
 
     def _is_working(self) -> bool:
@@ -4695,8 +4697,10 @@ class TauTuiApp(App[None]):
 
     def _sync_terminal_title(self) -> None:
         """Reflect the active session name and running state in the terminal tab title."""
+        # Spinner ticks call this several times per second; the session title
+        # is re-read only by `_sync_session_title`, which hits the index.
         self._terminal_title.update(
-            getattr(self.session, "session_title", None),
+            self._terminal_session_title,
             running=self._is_working(),
             frame=self._activity_frame,
         )
