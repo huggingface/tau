@@ -3,15 +3,15 @@ title: Keyboard shortcuts
 description: Default keys for the Tau TUI, and how to remap them.
 ---
 
-These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md" >}}). Run
+These are the default keys in the interactive [TUI](/guides/tui/). Run
 `/hotkeys` in-session to see them, and remap them in `~/.tau/tui.json` (see
-[Configuration]({{< relref "./configuration.md#tui-settings" >}})).
+[Configuration](/reference/configuration/#tui-settings)).
 
 ## Prompting
 
 | Key | Action |
 | --- | --- |
-| `Enter` | Submit the prompt |
+| `Enter` | Accept a highlighted non-file completion; otherwise submit the prompt exactly as typed (including `@` file-reference text) |
 | `Shift+Enter` | Insert a newline |
 | `Esc` | Cancel the active run |
 | `Enter` (while running) | Queue text as steering for the current run |
@@ -24,7 +24,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 | --- | --- |
 | `Ctrl+K` | Open the command palette |
 | `Ctrl+R` | Open the session picker |
-| `Tab` | Accept the highlighted completion |
+| `Tab` | Accept any highlighted completion, including `@` file references |
 | `Down` / `Up` | Move through completions |
 | `Ctrl+E` (in `/prompts`) | Edit the selected prompt template |
 | `Ctrl+S` (while editing a prompt template) | Save and reload resources |
@@ -46,17 +46,16 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 | `Ctrl+C` | Clear the prompt input |
 | `Ctrl+D` | Quit |
 
-{{% note title="Remapping" %}}
-Keys use Textual's syntax (`ctrl+k`, `shift+tab`, `down`, `f2`, …). Tau rejects
-unknown names, empty keys, and duplicate assignments so mistakes fail early. Any
-key you don't set keeps its default. If your terminal cannot distinguish
-`Shift+Enter` from `Enter`, choose a key it can report separately:
-
-```json
-{
-  "keybindings": {
-    "insert_newline": "f2"
-  }
-}
-```
-{{% /note %}}
+> [!NOTE] Remapping
+> Keys use Textual's syntax (`ctrl+k`, `shift+tab`, `down`, `f2`, …). Tau rejects
+> unknown names, empty keys, and duplicate assignments so mistakes fail early. Any
+> key you don't set keeps its default. If your terminal cannot distinguish
+> `Shift+Enter` from `Enter`, choose a key it can report separately:
+>
+> ```json
+> {
+>   "keybindings": {
+>     "insert_newline": "f2"
+>   }
+> }
+> ```

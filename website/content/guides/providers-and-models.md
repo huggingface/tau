@@ -93,7 +93,7 @@ Providers that speak the Anthropic protocol through a gateway rather than being
 Anthropic itself — `minimax`, `minimax-cn`, `fireworks`, and `vercel-ai-gateway` —
 send no cache breakpoints, since not every gateway accepts them. Watch the
 sidebar's cache hit rate to see caching working; see
-[The interactive session]({{< relref "./tui.md" >}}) for how to read it.
+[The interactive session](/guides/tui/) for how to read it.
 
 Anthropic reports `input_tokens` as the fresh, uncached portion after the last
 cache breakpoint. Tau preserves that value as fresh input, retains the separate
@@ -258,7 +258,7 @@ prefix-cache misses caused by cross-provider routing, but cannot prevent evictio
 TTL expiry, or load balancing among workers within the chosen provider. A reroute
 may require a cold prefix prefill, and account-wide rate limits may still fail on
 the automatic retry. See
-[Configuration]({{< relref "../reference/configuration.md#provider-preferences" >}}).
+[Configuration](/reference/configuration/#provider-preferences).
 
 ### Moonshot AI API vs. Kimi Code
 
@@ -312,18 +312,53 @@ Use these slash commands inside Tau:
 Saved credentials take precedence over environment variables. `/logout` only
 edits saved credentials — it never touches your environment or `providers.json`.
 
-{{% note title="OAuth troubleshooting" %}}
-Browser login can fall back to a pasted redirect URL/code when the callback
-port is unavailable or the browser runs on another machine. In that flow the
-login screen copies the authorization URL to your clipboard and renders it as
-a link, so paste or click it rather than selecting the wrapped text — a URL
-reassembled by hand loses characters at the line breaks and the provider
-rejects it. Copilot uses a device code instead: open the short verification
-URL and enter the code shown beneath it. A denied or expired code requires a
-new `/login`. If a Copilot model reports that it is unsupported, enable it in
-Copilot Chat's model selector or ask your organization administrator;
-provider/model access varies by plan and policy.
-{{% /note %}}
+### Multiple account profiles
+
+Tau stores one saved credential per provider in its user-data home. To use
+multiple accounts for the same provider, give each account a separate
+`TAU_HOME`. This isolates credentials, sessions, provider preferences, settings,
+extensions, and caches:
+
+```bash
+# POSIX shells
+install -d -m 700 "$HOME/.tau-work" "$HOME/.tau-personal"
+alias tau-work='TAU_HOME="$HOME/.tau-work" command tau'
+alias tau-personal='TAU_HOME="$HOME/.tau-personal" command tau'
+```
+
+In PowerShell, a function can scope the environment change to one invocation:
+
+```powershell
+function tau-personal {
+  $previous = $env:TAU_HOME
+  try { $env:TAU_HOME = "$HOME\.tau-personal"; tau @args }
+  finally { $env:TAU_HOME = $previous }
+}
+```
+
+Run each alias or function and authenticate that profile once:
+
+```text
+/login anthropic-subscription
+```
+
+`TAU_HOME` must be an absolute path after optional `~` expansion. User-level
+`~/.agents` resources and project `.tau`/`.agents` resources remain shared, as
+do credentials supplied directly through environment variables. See
+[Configuration](/reference/configuration/#tau-home) for the
+complete boundary.
+
+> [!NOTE] OAuth troubleshooting
+> Browser login can fall back to a pasted redirect URL/code when the callback
+> port is unavailable or the browser runs on another machine. In that flow the
+> login screen copies the authorization URL to your clipboard and renders it as
+> a link, so paste or click it rather than selecting the wrapped text — a URL
+> reassembled by hand loses characters at the line breaks and the provider
+> rejects it. Copilot uses a device code instead: open the short verification
+> URL and enter the code shown beneath it. A denied or expired code requires a
+> new `/login`. If a Copilot model reports that it is unsupported, enable it in
+> Copilot Chat's model selector or ask your organization administrator;
+> provider/model access varies by plan and policy.
 
 ## Choosing and switching models
 
@@ -336,6 +371,11 @@ provider/model access varies by plan and policy.
   Build the list with `/scoped-models`, or press `Space` on a model in the
   `/model` picker. In the `/scoped-models` modal, press `Tab` to switch to a
   scoped-only view where `Enter` removes models from the list.
+
+Both pickers open from the current snapshot without waiting for provider settings
+to reload. A background refresh that omits the active model leaves its existing
+runtime working, but does not offer that model as a new selection. Even an empty
+catalog does not prevent the picker from opening when the active model is stale.
 
 Tau validates the selected model against the active provider's configured model
 list before creating or refreshing a runtime provider. This prevents accidental
@@ -387,8 +427,8 @@ trusted built-in llama.cpp provider is the narrow scoped-model exception: Tau
 may persist only its stable provider ID plus exact model ID. An unloaded/stale
 reference remains visible as unavailable and cannot trigger load or download.
 User and project dynamic providers cannot opt into durable references. See
-the [local backends guide]({{< relref "./local-inference.md" >}}) and
-[Extensions]({{< relref "./extensions.md#dynamic-providers" >}}).
+the [local backends guide](/guides/local-inference/) and
+[Extensions](/guides/extensions/#dynamic-providers).
 
 ## Adding a custom / local provider
 
@@ -443,7 +483,7 @@ The configured endpoint and safe model snapshot are stored under
 `~/.tau/state/extensions/llama.cpp.json`; secrets stay in the credential store.
 A cached snapshot allows explicit startup during temporary server downtime.
 `/local` never scans ports or processes, stops the external server, or deletes
-model files. See the [complete llama.cpp guide]({{< relref "./local-inference.md" >}})
+model files. See the [complete llama.cpp guide](/guides/local-inference/)
 for endpoint precedence, Doctor, reset, and troubleshooting.
 
 An older manually configured provider named `llama-cpp` remains separate and is
@@ -511,30 +551,29 @@ request options such as custom HTTP headers, timeouts, or retry settings. Put
 those in `~/.tau/providers.json` instead. Saved `providers.json` entries support
 `headers`, `timeout_seconds`, `max_retries`, and `max_retry_delay_seconds`. For
 the full JSON shape, the catalog TOML shape, and `thinking_levels` for custom
-models, see [Configuration]({{< relref "../reference/configuration.md#providers" >}}).
+models, see [Configuration](/reference/configuration/#providers).
 
-{{% tip title="Hugging Face org billing" %}}
-To send a Hugging Face billing header, keep the provider definition in the
-catalog, then add the header to the matching provider preference in
-`~/.tau/providers.json`:
-
-```json
-{
-  "default_provider": "huggingface",
-  "provider_preferences": {
-    "huggingface": {
-      "default_model": "openai/gpt-oss-120b",
-      "headers": { "X-HF-Bill-To": "my-org" },
-      "thinking_defaults": { "openai/gpt-oss-120b": "low" },
-      "timeout_seconds": 60,
-      "max_retries": 2,
-      "max_retry_delay_seconds": 1
-    }
-  },
-  "scoped_models": []
-}
-```
-{{% /tip %}}
+> [!TIP] Hugging Face org billing
+> To send a Hugging Face billing header, keep the provider definition in the
+> catalog, then add the header to the matching provider preference in
+> `~/.tau/providers.json`:
+>
+> ```json
+> {
+>   "default_provider": "huggingface",
+>   "provider_preferences": {
+>     "huggingface": {
+>       "default_model": "openai/gpt-oss-120b",
+>       "headers": { "X-HF-Bill-To": "my-org" },
+>       "thinking_defaults": { "openai/gpt-oss-120b": "low" },
+>       "timeout_seconds": 60,
+>       "max_retries": 2,
+>       "max_retry_delay_seconds": 1
+>     }
+>   },
+>   "scoped_models": []
+> }
+> ```
 
 ## How credentials are resolved
 

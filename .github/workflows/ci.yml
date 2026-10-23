@@ -7,28 +7,30 @@ on:
       - main
   workflow_dispatch:
 
-permissions:
-  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   python:
+    permissions:
+      contents: read
     name: Python checks
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
 
@@ -48,6 +50,8 @@ jobs:
         run: uv run mypy
 
   docs:
+    permissions:
+      contents: read
     name: Documentation build
     runs-on: ubuntu-latest
     defaults:
@@ -55,16 +59,26 @@ jobs:
         working-directory: website
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Hugo
-        uses: peaceiris/actions-hugo@v3
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          hugo-version: "0.152.2"
-          extended: true
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
 
-      - name: Build documentation
-        run: hugo --minify
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Build search index
-        run: npx --yes pagefind@latest --site public
+      - name: Check types
+        run: npm run check
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Build documentation and search index
+        run: npm run build
+
+      - name: Test website
+        run: npm test

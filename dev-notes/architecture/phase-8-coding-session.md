@@ -87,7 +87,7 @@ async for event in session.prompt("Read README.md"):
     ...
 ```
 
-After the run completes, all new harness messages are appended as `MessageEntry` records. Tau also appends a `LeafEntry` pointing at the newest message entry.
+After the run completes, all new harness messages are appended as `MessageEntry` records. Each entry becomes the active tip by being the last non-legacy-leaf line in the file; Tau no longer writes a separate pointer.
 
 `CodingSession.continue_()` resumes from restored state without appending a new user message first.
 

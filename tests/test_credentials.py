@@ -48,6 +48,23 @@ def test_file_credential_store_round_trips_oauth_credentials(tmp_path) -> None:
     assert '"type": "oauth"' in path.read_text(encoding="utf-8")
 
 
+def test_tau_home_isolates_default_oauth_credential_stores(monkeypatch, tmp_path) -> None:
+    personal_home = tmp_path / ".tau-personal"
+    work_home = tmp_path / ".tau-work"
+    personal = OAuthCredential(access="personal", refresh="personal-refresh", expires=123456)
+    work = OAuthCredential(access="work", refresh="work-refresh", expires=123456)
+
+    monkeypatch.setenv("TAU_HOME", str(personal_home))
+    FileCredentialStore().set_oauth("anthropic", personal)
+    monkeypatch.setenv("TAU_HOME", str(work_home))
+    FileCredentialStore().set_oauth("anthropic", work)
+
+    assert FileCredentialStore().get_oauth("anthropic") == work
+    monkeypatch.setenv("TAU_HOME", str(personal_home))
+    assert FileCredentialStore().get_oauth("anthropic") == personal
+    assert not (tmp_path / ".tau" / "credentials.json").exists()
+
+
 def test_file_credential_store_round_trips_extensible_oauth_metadata(tmp_path) -> None:
     path = tmp_path / "credentials.json"
     store = FileCredentialStore(path)

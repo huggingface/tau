@@ -39,7 +39,7 @@ def test_collect_session_usage_aggregates_requests_tools_and_compactions() -> No
             usage=Usage(input=100, output=20, cache_read=900, cache_write=50),
             tools=[ToolCall(id="c1", name="read", arguments={})],
         ),
-        CompactionEntry(id="compact", summary="summary", replaces_entry_ids=["user"]),
+        CompactionEntry(id="compact", summary="summary", first_kept_entry_id="a1"),
         _assistant(
             "a2",
             usage=Usage(input=50, output=10, cache_read=1950, cache_write=0, reasoning=5),
@@ -59,6 +59,54 @@ def test_collect_session_usage_aggregates_requests_tools_and_compactions() -> No
     assert usage.hit_rate == 2850 / 3050
 
 
+def test_collect_session_usage_includes_labeled_summary_requests() -> None:
+    entries = [
+        ModelChangeEntry(
+            id="model",
+            provider="anthropic",
+            model="claude-sonnet-4-5",
+        ),
+        CompactionEntry(
+            id="compact",
+            summary="summary",
+            usage=Usage(
+                input=1_000,
+                output=20,
+                cache_read=500,
+                cache_write=100,
+                cost=UsageCost(total=0.5),
+            ),
+            provider="summary-provider",
+            model="summary-model",
+            response_provider="routed-summary-provider",
+        ),
+        BranchSummaryEntry(
+            id="branch",
+            summary="branch",
+            usage=Usage(input=200, output=10, cache_read=50),
+        ),
+    ]
+
+    usage = collect_session_usage(entries)
+
+    assert [request.kind for request in usage.requests] == [
+        "compaction summary",
+        "branch summary",
+    ]
+    assert [(request.provider, request.model) for request in usage.requests] == [
+        ("summary-provider", "summary-model"),
+        ("anthropic", "claude-sonnet-4-5"),
+    ]
+    assert [request.response_provider for request in usage.requests] == [
+        "routed-summary-provider",
+        None,
+    ]
+    assert usage.total_prompt == 1_850
+    assert usage.total_output == 30
+    assert usage.hit_rate == 550 / 1_850
+    assert usage.total_cost is not None
+
+
 def test_collect_session_usage_positions_notable_events_at_next_request() -> None:
     entries = [
         ModelChangeEntry(id="model", timestamp=1, model="claude-sonnet-4-5"),
@@ -67,7 +115,8 @@ def test_collect_session_usage_positions_notable_events_at_next_request() -> Non
             id="compact",
             timestamp=2,
             summary="summary",
-            replaces_entry_ids=["a1"],
+            first_kept_entry_id="a1",
+            usage=Usage(input=15),
         ),
         ThinkingLevelChangeEntry(id="thinking", timestamp=3, thinking_level="high"),
         _assistant("a2", usage=Usage(input=20)),
@@ -78,10 +127,11 @@ def test_collect_session_usage_positions_notable_events_at_next_request() -> Non
 
     assert [(event.request_number, event.kind, event.label) for event in usage.events] == [
         (1, "model", "Model changed to claude-sonnet-4-5"),
-        (2, "compaction", "Compaction"),
-        (2, "thinking", "Thinking changed to high"),
-        (2, "branch", "Branch summary"),
+        (3, "compaction", "Compaction"),
+        (3, "thinking", "Thinking changed to high"),
+        (3, "branch", "Branch summary"),
     ]
+    assert [event.position for event in usage.events] == ["before", "before", "before", "after"]
 
 
 def test_collect_session_usage_estimates_cost_from_catalog() -> None:
@@ -125,6 +175,7 @@ def test_render_usage_dashboard_renders_charts_and_table() -> None:
     assert "Prompt input by request" in markup
     assert "Cache hit rate" in markup
     assert "claude-sonnet-4-5" in markup
+    assert "assistant" in markup
 
 
 def test_render_usage_dashboard_marks_events_on_prompt_input_chart() -> None:
@@ -136,7 +187,7 @@ def test_render_usage_dashboard_marks_events_on_prompt_input_chart() -> None:
                 id="compact",
                 timestamp=2,
                 summary="summary",
-                replaces_entry_ids=["a1"],
+                first_kept_entry_id="a1",
             ),
             _assistant("a2", usage=Usage(input=20, cache_read=80)),
         ]

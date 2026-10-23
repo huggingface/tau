@@ -10,6 +10,7 @@ RELEASE_NOTES_WHEEL_PATH = "tau_coding/data/release-notes/releases.json"
 BUILTIN_RESOURCE_WHEEL_PATHS = {
     "tau_coding/data/docs/README.md",
     "tau_coding/data/docs/extensions.md",
+    "tau_coding/data/examples/extensions/ask_user_question.py",
     "tau_coding/data/examples/extensions/hello_tool.py",
     "tau_coding/data/examples/extensions/prompt_section.py",
     "tau_coding/data/examples/extensions/sidebar_status.py",

@@ -59,7 +59,7 @@ def install_extension(
             name = git_source.name
         destination = destination_root / name
 
-        # Reproduce the exact ~/.tau/extensions/<name> shape during validation.
+        # Reproduce the exact <Tau home>/extensions/<name> shape during validation.
         # This catches layouts that explicit -e discovery accepts but normal
         # user-directory discovery would skip, such as nested/extension.py.
         staging_root = Path(mkdtemp(prefix=".extension-install-", dir=destination_root))

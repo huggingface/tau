@@ -80,9 +80,10 @@ Compact on demand any time:
 /compact focus on the database migration work
 ```
 
-Optional text after `/compact` is added as extra focus for the summary. Manual
-compaction summarizes the whole active context into one summary and fails visibly
-if the request fails.
+Optional text after `/compact` is added as extra focus for the summary. Like automatic
+compaction, manual compaction summarizes an older prefix and keeps a recent suffix. If
+there is not enough older context to summarize while retaining a real entry, Tau reports
+that the context is too short to compact. Summary generation failures remain visible.
 
 In the TUI, a manual compaction looks like a normal working turn: the prompt
 activity indicator and terminal tab title animate while it runs, and a
@@ -107,7 +108,7 @@ Thinking is model-aware: Tau enables it only when the active provider declares
 supported levels for the active model. When it's unavailable, `/session` shows
 the reason (e.g. the provider doesn't declare `thinking_levels`, or the model
 isn't listed). Custom providers can opt in via `thinking_levels` in their config
-— see [Configuration]({{< relref "../reference/configuration.md#providers" >}}).
+— see [Configuration](/reference/configuration/#providers).
 
 At startup Tau picks a valid level for the selected model automatically: a
 remembered per-model choice wins, then `medium`, then the provider's own

@@ -107,8 +107,7 @@ Use the optional key in one of these ways:
 
 A stored key wins over `LLAMA_API_KEY`. Without a key Tau sends no
 `Authorization` header. Keys never enter the llama.cpp state file, sessions,
-exports, or diagnostics. See [Project trust and security]({{< relref
-"./project-trust.md#security-boundary" >}}).
+exports, or diagnostics. See [Project trust and security](/guides/project-trust/#security-boundary).
 
 ## Choose a model
 
@@ -126,6 +125,15 @@ while the server is temporarily down. If several models are available,
 headless startup requires the exact `--model`; Tau never silently chooses a
 different explicit model. Local inference is not an automatic global-provider
 fallback.
+
+Image input follows what the server reports. A model whose `/v1/models` entry
+lists `image` in `architecture.input_modalities` (llama.cpp reports this when it
+was started with a vision projector, `--mmproj`) receives images, for example
+from the read tool. Reported `audio` and `video` inputs are ignored because Tau
+does not send them. For older single-model servers that report no usable inputs
+in `/v1/models`, Tau checks `/props.modalities.vision`. If neither endpoint
+reports usable capabilities, the model is treated as text-only; declare its
+image input with a [`catalog.toml`](/guides/providers-and-models/) entry instead.
 
 The safe integration snapshot is stored at
 `~/.tau/state/extensions/llama.cpp.json`. It contains only the normalized
@@ -262,8 +270,7 @@ are not shipped Tau backends.
 Tau never copies old fake keys, fake model IDs, catalog definitions, project
 settings, or environment endpoints into built-in state. Reset removes only
 built-in settings and safe snapshots; it never stops a server or deletes model
-files. For other OpenAI-compatible endpoints, keep using [`/login custom`]({{<
-relref "../guides/providers-and-models.md#adding-a-custom--local-provider" >}})
+files. For other OpenAI-compatible endpoints, keep using [`/login custom`](/guides/providers-and-models/#adding-a-custom--local-provider)
 or `tau setup`.
 
 Router management never changes the safety boundary: all mutations are explicit,

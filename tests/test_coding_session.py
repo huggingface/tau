@@ -15,6 +15,7 @@ from tau_agent import (
     AgentTool,
     AgentToolResult,
     AssistantMessage,
+    CustomMessage,
     ImageContent,
     MessageEndEvent,
     TextContent,
@@ -29,7 +30,9 @@ from tau_agent.provider_events import AssistantErrorEvent
 from tau_agent.session import (
     CompactionEntry,
     CustomEntry,
+    CustomMessageEntry,
     JsonlSessionStorage,
+    LabelEntry,
     LeafEntry,
     MessageEntry,
     ModelChangeEntry,
@@ -78,6 +81,7 @@ from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import ProviderModelMetadata, provider_thinking_levels
 from tau_coding.session import (
     _ordered_tree_entries,
+    _tree_branch_indents,
     is_retryable_huggingface_route_error,
     parse_terminal_command,
 )
@@ -551,8 +555,8 @@ class _FaultInjectingStorage:
         target = (
             self.phase.startswith("message")
             and isinstance(entry, MessageEntry)
-            or self.phase.startswith("leaf")
-            and isinstance(entry, LeafEntry)
+            or self.phase.startswith("custom_message")
+            and isinstance(entry, CustomMessageEntry)
         )
         if target and (self.failures_remaining > 0 or self.phase == "message_always"):
             self.failed = True
@@ -566,7 +570,7 @@ class _FaultInjectingStorage:
         if (
             self.phase == "refresh"
             and not self.failed
-            and any(isinstance(entry, LeafEntry) for entry in self.entries)
+            and any(isinstance(entry, MessageEntry) for entry in self.entries)
         ):
             self.failed = True
             raise OSError("simulated refresh failure")
@@ -576,7 +580,7 @@ class _FaultInjectingStorage:
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     "phase",
-    ["message_before", "message_after", "leaf_before", "leaf_after", "refresh"],
+    ["message_before", "message_after", "refresh"],
 )
 async def test_message_persistence_retry_is_idempotent(tmp_path: Path, phase: str) -> None:
     storage = _FaultInjectingStorage(phase)
@@ -596,12 +600,7 @@ async def test_message_persistence_retry_is_idempotent(tmp_path: Path, phase: st
     messages = [entry for entry in storage.entries if isinstance(entry, MessageEntry)]
     assert len(messages) == 1
     assert messages[0].message.text == "go"
-    leaves = [
-        entry
-        for entry in storage.entries
-        if isinstance(entry, LeafEntry) and entry.entry_id == messages[0].id
-    ]
-    assert len(leaves) == 1
+    assert not any(isinstance(entry, LeafEntry) for entry in storage.entries)
     restored = await CodingSession.load(
         CodingSessionConfig(
             provider=FakeProvider([]),
@@ -612,6 +611,77 @@ async def test_message_persistence_retry_is_idempotent(tmp_path: Path, phase: st
         )
     )
     _assert_messages(restored.messages, [UserMessage(content="go")])
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("queue_method", ["queue_steering_message", "queue_follow_up_message"])
+async def test_queued_custom_messages_persist_as_first_class_entries(
+    tmp_path: Path, queue_method: str
+) -> None:
+    provider = FakeProvider(
+        [
+            [assistant_start(), assistant_done(AssistantMessage(content="first"))],
+            [assistant_start(), assistant_done(AssistantMessage(content="second"))],
+        ]
+    )
+    storage = _CountingStorage()
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    queue = getattr(session, queue_method)
+    queue("extension context", custom_type="extension:queued", details={"job": 1})
+
+    await _collect_session_events(session.prompt("start"))
+
+    custom_entries = [entry for entry in storage.entries if isinstance(entry, CustomMessageEntry)]
+    assert len(custom_entries) == 1
+    assert custom_entries[0].custom_type == "extension:queued"
+    assert custom_entries[0].details == {"job": 1}
+    assert not any(
+        isinstance(entry, MessageEntry) and entry.message.role == "custom"
+        for entry in storage.entries
+    )
+
+
+@pytest.mark.anyio
+async def test_custom_message_persistence_retry_is_idempotent(tmp_path: Path) -> None:
+    storage = _FaultInjectingStorage("custom_message_after")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated custom_message_after failure"):
+        await _collect_session_events(
+            session.prompt(
+                "hidden context",
+                custom_type="extension:context",
+                details={"source": "test"},
+            )
+        )
+
+    entries = [entry for entry in storage.entries if isinstance(entry, CustomMessageEntry)]
+    assert len(entries) == 1
+    assert entries[0].custom_type == "extension:context"
+    await session._flush_pending_message_writes(context=session._diagnostic_context())
+    assert len([entry for entry in storage.entries if isinstance(entry, CustomMessageEntry)]) == 1
+    assert session.messages[0] == CustomMessage(
+        content="hidden context",
+        custom_type="extension:context",
+        details={"source": "test"},
+        timestamp=session.messages[0].timestamp,
+    )
 
 
 @pytest.mark.anyio
@@ -996,8 +1066,15 @@ async def test_load_persists_branch_without_orphaned_tool_result(tmp_path: Path)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     user_entry = MessageEntry(message=UserMessage(content="what remains?"))
     await storage.append(user_entry)
-    orphan_entry = MessageEntry(
+    label_entry = LabelEntry(
         parent_id=user_entry.id,
+        target_id=user_entry.id,
+        label="before repair",
+        timestamp=123,
+    )
+    await storage.append(label_entry)
+    orphan_entry = MessageEntry(
+        parent_id=label_entry.id,
         message=ToolResultMessage(
             tool_call_id="call-missing",
             tool_name="bash",
@@ -1039,6 +1116,8 @@ async def test_load_persists_branch_without_orphaned_tool_result(tmp_path: Path)
         [UserMessage(content="what remains?"), UserMessage(content="continue")],
     )
     assert session.state.model == "recovered-model"
+    assert session.state.labels_by_id == {user_entry.id: "before repair"}
+    assert session.state.label_timestamps_by_id == {user_entry.id: 123}
     assert any(
         entry.namespace == "example.state" and entry.data == {"kept": True}
         for entry in session.state.custom_entries
@@ -1067,6 +1146,8 @@ async def test_load_persists_branch_without_orphaned_tool_result(tmp_path: Path)
         )
     )
     _assert_messages(restored.messages, session.messages)
+    assert restored.state.labels_by_id == {user_entry.id: "before repair"}
+    assert restored.state.label_timestamps_by_id == {user_entry.id: 123}
     diagnostics = [
         entry
         for entry in (await storage.read_all())
@@ -1146,7 +1227,7 @@ async def test_load_persists_repair_for_historical_interrupted_tool_call(
 
 
 @pytest.mark.anyio
-async def test_prompt_persists_user_assistant_and_leaf_entries(tmp_path: Path) -> None:
+async def test_prompt_persists_user_and_assistant_entries_without_leaves(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -1186,9 +1267,8 @@ async def test_prompt_persists_user_assistant_and_leaf_entries(tmp_path: Path) -
             AssistantMessage(content="Hi"),
         ],
     )
-    assert [entry.entry_id for entry in leaf_entries] == [entry.id for entry in message_entries]
-    assert entries[-1].type == "leaf"
-    assert entries[-1].entry_id == message_entries[-1].id
+    assert leaf_entries == []
+    assert entries[-1] == message_entries[-1]
     _assert_messages(
         session.messages, (UserMessage(content="Hello"), AssistantMessage(content="Hi"))
     )
@@ -1319,10 +1399,7 @@ async def test_prompt_queues_steering_while_session_is_running(tmp_path: Path) -
         entry.message for entry in entries_before_release if entry.type == "message"
     ]
     _assert_messages(before_release_messages, [UserMessage(content="Hello")])
-    assert entries_before_release[-1].type == "leaf"
-    assert entries_before_release[-1].entry_id == next(
-        entry.id for entry in entries_before_release if entry.type == "message"
-    )
+    assert entries_before_release[-1].type == "message"
     _assert_messages(
         session.messages,
         (
@@ -1337,7 +1414,7 @@ async def test_prompt_queues_steering_while_session_is_running(tmp_path: Path) -
     message_entries = [entry for entry in entries if entry.type == "message"]
     leaf_entries = [entry for entry in entries if entry.type == "leaf"]
     assert [entry.message for entry in message_entries] == list(session.messages)
-    assert [entry.entry_id for entry in leaf_entries] == [entry.id for entry in message_entries]
+    assert leaf_entries == []
     assert not any(isinstance(event, QueueUpdateEvent) for event in run_events)
 
 
@@ -1375,8 +1452,7 @@ async def test_tree_can_branch_from_first_user_message_before_assistant_response
     assert message_entries[0].message.text == "Start here"
     assert isinstance(message_entries[1].message, AssistantMessage)
     assert message_entries[1].message.stop_reason == "error"
-    assert isinstance(entries[-1], LeafEntry)
-    assert entries[-1].entry_id == message_entries[0].parent_id
+    assert entries[-1] == message_entries[-1]
 
 
 @pytest.mark.anyio
@@ -1403,6 +1479,33 @@ async def test_tree_choices_label_structured_tool_calls_without_exposing_thinkin
     assert len(choices) == 1
     assert choices[0].label == "tool call: read, bash"
     assert choices[0].is_tool_call is True
+
+
+@pytest.mark.anyio
+async def test_set_label_validates_target_and_tree_choices_resolve_changes(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    target = MessageEntry(id="target", message=UserMessage(content="Remember this"))
+    await storage.append(target)
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+
+    with pytest.raises(ValueError, match="Unknown session entry: missing"):
+        await session.set_label("missing", "nope")
+
+    first = await session.set_label("target", " first ")
+    cleared = await session.set_label("target", "")
+    latest = await session.set_label("target", "latest")
+    choices = await session.tree_choices()
+
+    assert isinstance(first, LabelEntry)
+    assert first.target_id == "target"
+    assert first.label == "first"
+    assert cleared.label is None
+    assert choices[0].bookmark_label == "latest"
+    assert choices[0].label_timestamp == latest.timestamp
+    assert choices[0].active is True
+    assert session.state.labels_by_id == {"target": "latest"}
 
 
 @pytest.mark.anyio
@@ -1433,21 +1536,21 @@ async def test_tree_choices_handles_deep_session_without_recursion_error(
     assert choices[-1].entry_id == f"m{depth - 1}"
 
 
-def test_ordered_tree_entries_preserves_branch_order() -> None:
-    # Locks the traversal contract the iterative walk must preserve: emit a
-    # node's direct children before descending, then depth-first into each child.
+def test_ordered_tree_entries_uses_longest_history_as_main_branch() -> None:
     entries = [
         MessageEntry(id="A", parent_id=None, message=UserMessage(content="A")),
-        MessageEntry(id="B", parent_id=None, message=UserMessage(content="B")),
-        MessageEntry(id="C", parent_id="A", message=UserMessage(content="C")),
-        MessageEntry(id="D", parent_id="A", message=UserMessage(content="D")),
+        MessageEntry(id="B", parent_id="A", message=UserMessage(content="B")),
+        MessageEntry(id="C", parent_id="B", message=UserMessage(content="C")),
+        MessageEntry(id="D", parent_id="B", message=UserMessage(content="D")),
         MessageEntry(id="E", parent_id="B", message=UserMessage(content="E")),
-        MessageEntry(id="F", parent_id="C", message=UserMessage(content="F")),
+        MessageEntry(id="F", parent_id="E", message=UserMessage(content="F")),
     ]
 
     ordered = _ordered_tree_entries(entries)
+    indents = _tree_branch_indents(entries)
 
-    assert [entry.id for entry in ordered] == ["A", "B", "C", "D", "F", "E"]
+    assert [entry.id for entry in ordered] == ["A", "B", "C", "D", "E", "F"]
+    assert indents == {"A": 0, "B": 0, "C": 1, "D": 1, "E": 0, "F": 0}
 
 
 def test_ordered_tree_entries_terminates_on_parent_cycle() -> None:
@@ -1478,7 +1581,18 @@ async def test_branch_to_entry_repairs_orphaned_tool_result(tmp_path: Path) -> N
         parent_id=orphan.id,
         message=AssistantMessage(content="answer"),
     )
-    for entry in (root, orphan, answer, LeafEntry(parent_id=root.id, entry_id=root.id)):
+    active_tip = ThinkingLevelChangeEntry(
+        id="tip",
+        parent_id=root.id,
+        thinking_level="medium",
+    )
+    for entry in (
+        root,
+        orphan,
+        answer,
+        active_tip,
+        LeafEntry(parent_id=root.id, entry_id=root.id),
+    ):
         await storage.append(entry)
     session = await CodingSession.load(
         CodingSessionConfig(
@@ -1566,7 +1680,11 @@ async def test_context_usage_is_cached_until_session_context_changes(
 
 
 @pytest.mark.anyio
-async def test_context_usage_recalculates_after_prompt_and_compaction(tmp_path: Path) -> None:
+async def test_context_usage_recalculates_after_prompt_and_compaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(coding_session_module, "DEFAULT_COMPACTION_KEEP_RECENT_TOKENS", 1)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -1595,8 +1713,9 @@ async def test_context_usage_recalculates_after_prompt_and_compaction(tmp_path: 
     _message = await session.compact("Context accounting was discussed.")
     after_compaction_usage = session.context_usage
 
-    assert after_compaction_usage.message_count == 1
-    assert after_compaction_usage.total_tokens < after_prompt_usage.total_tokens
+    assert after_compaction_usage is not after_prompt_usage
+    assert after_compaction_usage.message_count == 2
+    assert after_compaction_usage.total_tokens != after_prompt_usage.total_tokens
     assert session.context_token_estimate == after_compaction_usage.total_tokens
 
 
@@ -1616,7 +1735,8 @@ async def test_session_persists_and_replays_thinking_level_changes(tmp_path: Pat
     assert session.thinking_level == "high"
     assert len(thinking_entries) == 2
     assert thinking_entries[-1].thinking_level == "high"
-    assert leaves[-1].entry_id == thinking_entries[-1].id
+    assert leaves == []
+    assert entries[-1] == thinking_entries[-1]
     assert restored.thinking_level == "high"
     assert restored.state.thinking_level == "high"
 
@@ -2040,8 +2160,9 @@ async def test_load_restores_explicit_empty_leaf_branch(tmp_path: Path) -> None:
         input_prefill="Root",
     )
     assert session.messages == ()
-    assert reloaded.messages == ()
-    assert reloaded.state.active_leaf_id is None
+    # Navigation without a write is intentionally not restored.
+    assert reloaded.messages == (root.message,)
+    assert reloaded.state.active_leaf_id == "root"
 
 
 @pytest.mark.anyio
@@ -2061,7 +2182,8 @@ async def test_load_restores_active_leaf_branch(tmp_path: Path) -> None:
     await storage.append(root)
     await storage.append(left)
     await storage.append(right)
-    await storage.append(LeafEntry(entry_id="right"))
+    # A stale historical pointer is ignored; file order selects `right`.
+    await storage.append(LeafEntry(entry_id="left"))
 
     session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
 
@@ -2113,11 +2235,11 @@ async def test_session_tree_choices_indent_only_diverged_branches(tmp_path: Path
 
     assert [choice.label for choice in choices] == [
         "user: Root",
-        "assistant: Main",
         "  assistant: First branch",
-        "  assistant: Second branch",
-        "user: Main follow-up",
         "  user: Follow-up",
+        "  assistant: Second branch",
+        "assistant: Main",
+        "user: Main follow-up",
     ]
 
 
@@ -2143,12 +2265,17 @@ async def test_session_branches_to_previous_entry_without_destroying_history(
         session.messages, (UserMessage(content="Root"), AssistantMessage(content="Left"))
     )
     assert [entry.id for entry in entries if entry.type == "message"] == ["root", "left", "right"]
+    # Plain /tree navigation is in-memory only; the historical pointer is unchanged.
     assert isinstance(entries[-1], LeafEntry)
-    assert entries[-1].entry_id == "left"
+    assert entries[-1].entry_id == "right"
 
 
 @pytest.mark.anyio
-async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path) -> None:
+async def test_persist_after_branch_keeps_state_on_active_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(coding_session_module, "DEFAULT_COMPACTION_KEEP_RECENT_TOKENS", 1)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -2195,12 +2322,17 @@ async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path)
     )
     assert "abandoned" not in session.state.context_entry_ids
     assert "abandoned-answer" not in session.state.context_entry_ids
+    reloaded = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+    assert reloaded.messages == session.messages
+    assert reloaded.state.active_leaf_id == session.state.active_leaf_id
+    assert len([entry for entry in await storage.read_all() if entry.type == "leaf"]) == 1
 
     await session.compact()
     compactions = [entry for entry in await storage.read_all() if entry.type == "compaction"]
     assert len(compactions) == 1
-    assert "abandoned" not in compactions[0].replaces_entry_ids
-    assert "abandoned-answer" not in compactions[0].replaces_entry_ids
+    assert compactions[0].replaces_entry_ids == []
+    assert compactions[0].first_kept_entry_id in session.state.context_entry_ids
+    assert compactions[0].first_kept_entry_id not in {"abandoned", "abandoned-answer"}
     assert "Abandoned" not in provider.calls[1][2][0].content
 
 
@@ -2242,7 +2374,7 @@ async def test_session_branches_to_before_selected_user_message_with_prefill(
         "followup",
     ]
     assert isinstance(entries[-1], LeafEntry)
-    assert entries[-1].entry_id == "assistant"
+    assert entries[-1].entry_id == "followup"
 
 
 @pytest.mark.anyio
@@ -2327,7 +2459,15 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
         [
             [
                 assistant_start(model="fake"),
-                assistant_done(message=AssistantMessage(content="The abandoned branch went left.")),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="The abandoned branch went left.",
+                        provider="openai",
+                        model="fake",
+                        response_provider="branch-route",
+                        usage=Usage(input=120, output=15, cache_read=30, cache_write=4),
+                    )
+                ),
             ]
         ]
     )
@@ -2346,7 +2486,7 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
 
     result = await session.branch_to_entry("root", summarize=True)
     entries = await storage.read_all()
-    summary = entries[-2]
+    summary = entries[-1]
 
     assert "with branch summary" in result.message
     assert summary.type == "branch_summary"
@@ -2356,6 +2496,10 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
         "The user explored a different conversation branch before returning here."
     )
     assert "The abandoned branch went left." in summary.summary
+    assert summary.usage == Usage(input=120, output=15, cache_read=30, cache_write=4)
+    assert summary.provider == "openai"
+    assert summary.model == "fake"
+    assert summary.response_provider == "branch-route"
     assert provider.calls[0][3] == []
     assert "<conversation>" in provider.calls[0][2][0].content
     assert "Use this EXACT format:" in provider.calls[0][2][0].content
@@ -2431,7 +2575,7 @@ async def test_session_branch_with_summary_tracks_file_operations(tmp_path: Path
 
     await session.branch_to_entry("root", summarize=True)
     entries = await storage.read_all()
-    summary = entries[-2]
+    summary = entries[-1]
 
     assert summary.type == "branch_summary"
     assert "<read-files>\nsrc/read_only.py\n</read-files>" in summary.summary
@@ -2458,10 +2602,11 @@ async def test_session_branch_with_summary_falls_back_when_model_summary_is_unav
 
     result = await session.branch_to_entry("root", summarize=True)
     entries = await storage.read_all()
-    summary = entries[-2]
+    summary = entries[-1]
 
     assert "with branch summary" in result.message
     assert summary.type == "branch_summary"
+    assert summary.usage is None
     assert "Automatically compacted 2 prior message(s)." in summary.summary
     assert "Abandoned follow-up" in summary.summary
     assert len(session.messages) == 2
@@ -3040,7 +3185,11 @@ async def test_system_command_shows_prompt_without_persisting_or_adding_context(
     result = session.handle_command("/system")
 
     assert result.handled is True
-    assert result.message == "You are Tau."
+    assert result.message == (
+        "#### 01 · System prompt override\n\n"
+        "**Source:** `CodingSessionConfig.system`\n\n"
+        "You are Tau."
+    )
     assert session.messages == before_messages
     assert await storage.read_all() == before_entries
     assert provider.calls == []
@@ -3258,6 +3407,14 @@ async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> N
         tau_home / "APPEND_SYSTEM.md",
         project_tau / "APPEND_SYSTEM.md",
     )
+    inspection = session.system_prompt_inspection
+    assert "".join(source.content for source in inspection.sources) == session.system_prompt
+    assert [source.source for source in inspection.sources[:4]] == [
+        str(project_tau / "SYSTEM.md"),
+        str(tau_home / "APPEND_SYSTEM.md"),
+        str(project_tau / "APPEND_SYSTEM.md"),
+        str(tmp_path / "AGENTS.md"),
+    ]
     prompt_diagnostics = [
         item for item in session.resource_diagnostics if item.kind == "system-prompt"
     ]
@@ -3600,7 +3757,11 @@ async def test_session_provider_settings_reload_uses_session_paths(
 
 
 @pytest.mark.anyio
-async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: Path) -> None:
+async def test_session_compact_persists_summary_and_rebuilds_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(coding_session_module, "DEFAULT_COMPACTION_KEEP_RECENT_TOKENS", 1)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -3610,7 +3771,15 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
             ],
             [
                 assistant_start(model="fake"),
-                assistant_done(message=AssistantMessage(content="Generated session summary")),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="Generated session summary",
+                        provider="openai",
+                        model="fake",
+                        response_provider="compaction-route",
+                        usage=Usage(input=1_000, output=80, cache_read=200, cache_write=50),
+                    )
+                ),
             ],
             [
                 assistant_start(model="fake"),
@@ -3633,18 +3802,37 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
 
     _next_events = await _collect_session_events(session.prompt("Continue."))
 
-    assert result == f"Compacted {message_count_before} context entries."
+    assert result == f"Compacted {message_count_before - 1} context entries."
     assert len(compactions) == 1
     assert isinstance(compactions[0], CompactionEntry)
     assert compactions[0].summary == "Generated session summary"
-    assert compactions[0].replaces_entry_ids == message_entries_before
-    assert leaves[-1].entry_id == compactions[0].id
+    assert compactions[0].replaces_entry_ids == []
+    assert compactions[0].first_kept_entry_id == message_entries_before[-1]
+    assert compactions[0].usage == Usage(
+        input=1_000,
+        output=80,
+        cache_read=200,
+        cache_write=50,
+    )
+    assert compactions[0].provider == "openai"
+    assert compactions[0].model == "fake"
+    assert compactions[0].response_provider == "compaction-route"
+    persisted_payload = next(
+        payload
+        for line in storage.path.read_text().splitlines()
+        if (payload := json.loads(line))["type"] == "compaction"
+    )
+    assert "replaces_entry_ids" not in persisted_payload
+    assert persisted_payload["first_kept_entry_id"] == message_entries_before[-1]
+    assert leaves == []
+    assert entries_after_compact[-1] == compactions[0]
     assert provider.calls[1][1].startswith("You are a context summarization assistant.")
     assert "Additional focus: Focus on session persistence." in provider.calls[1][2][0].content
     _assert_messages(
         provider.calls[2][2],
         [
             UserMessage(content=("Previous conversation summary:\nGenerated session summary")),
+            AssistantMessage(content="Session answer"),
             UserMessage(content="Continue."),
         ],
     )
@@ -3696,6 +3884,10 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
 
     assert len(compactions) == 1
     assert compactions[0].summary == "Generated automatic summary"
+    assert compactions[0].replaces_entry_ids == []
+    assert compactions[0].first_kept_entry_id in session.state.context_entry_ids
+    assert compactions[0].tokens_before is not None
+    assert compactions[0].tokens_before > 0
     assert "Explain sessions." in provider.calls[2][2][0].content
     _assert_messages(
         provider.calls[3][2],
@@ -4128,6 +4320,126 @@ async def test_codex_missing_active_model_survives_settings_refresh(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("refreshed_models", [(), ("new-model",)])
+@pytest.mark.parametrize("preview_other_provider", [False, True])
+async def test_provider_reload_keeps_committed_runtime_when_catalog_drops_active_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    refreshed_models: tuple[str, ...],
+    preview_other_provider: bool,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    active = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("gpt-6-sol",),
+        default_model="gpt-6-sol",
+    )
+    other = OpenAICompatibleProviderConfig(
+        name="local",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("qwen",),
+        default_model="qwen",
+    )
+    settings = ProviderSettings(providers=(active, other))
+    refreshed = ProviderSettings(
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="huggingface",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=refreshed_models,
+                default_model="gpt-6-sol",
+            ),
+            other,
+        )
+    )
+    runtime = FakeProvider([])
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=runtime,
+            model="gpt-6-sol",
+            provider_name="huggingface",
+            provider_settings=settings,
+            runtime_provider_config=active,
+            system="Test",
+            cwd=tmp_path,
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            extensions_enabled=False,
+        )
+    )
+    runtime = session.provider
+    monkeypatch.setattr(coding_session_module, "load_provider_settings", lambda *a: refreshed)
+    if preview_other_provider:
+        session.preview_model_choice(ModelChoice("local", "qwen"))
+    before = await session._config.storage.read_all()
+
+    session.reload_provider_settings()
+
+    assert session.provider is runtime
+    assert session._harness.config.model == "gpt-6-sol"
+    assert session.model == ("qwen" if preview_other_provider else "gpt-6-sol")
+    assert session.provider_config("huggingface").models == refreshed_models
+    assert ModelChoice("huggingface", "gpt-6-sol") not in session.available_model_choices
+    assert session.handle_command("/model").model_picker_requested is True
+    assert await session._config.storage.read_all() == before
+
+
+@pytest.mark.anyio
+async def test_provider_reload_uses_committed_model_with_cross_provider_preview(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    active = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("gpt-6-sol",),
+        default_model="gpt-6-sol",
+    )
+    other = OpenAICompatibleProviderConfig(
+        name="local",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("qwen",),
+        default_model="qwen",
+    )
+    settings = ProviderSettings(providers=(active, other))
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-6-sol",
+            provider_name="huggingface",
+            provider_settings=settings,
+            runtime_provider_config=active,
+            system="Test",
+            cwd=tmp_path,
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            extensions_enabled=False,
+        )
+    )
+    session.preview_model_choice(ModelChoice("local", "qwen"))
+    created: list[str] = []
+
+    def create_provider(*args: object, **kwargs: object) -> FakeProvider:
+        del args
+        created.append(str(kwargs["model"]))
+        return FakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "load_provider_settings", lambda *a: settings)
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session.reload_provider_settings()
+
+    assert created == ["gpt-6-sol"]
+    assert session._harness.config.model == "gpt-6-sol"
+    assert session.model == "qwen"
+    assert session.provider_name == "local"
+    assert session.has_pending_selection
+
+
+@pytest.mark.anyio
 async def test_session_skips_codex_catalog_discovery_offline(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -4293,6 +4605,8 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
 
     assert len(compactions) == 1
     assert compactions[0].summary == "Overflow recovery summary"
+    assert compactions[0].tokens_before is not None
+    assert compactions[0].tokens_before > 0
     assert any(
         getattr(event, "type", None) == "message_end"
         and getattr(getattr(event, "message", None), "text", None) == "Recovered answer"
@@ -5361,6 +5675,165 @@ async def test_available_model_choices_include_stored_credentials(
 
 
 @pytest.mark.anyio
+async def test_cross_provider_preview_uses_previewed_models_and_thinking_capabilities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    settings = ProviderSettings(
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="provider-a",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("alpha",),
+                default_model="alpha",
+                thinking_levels=("off", "high"),
+            ),
+            OpenAICompatibleProviderConfig(
+                name="provider-b",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("beta", "no-think"),
+                default_model="beta",
+                thinking_levels=("off", "low"),
+                thinking_models=("beta",),
+            ),
+        ),
+    )
+    storage = JsonlSessionStorage(tmp_path / "preview.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="alpha",
+            system="Test",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="provider-a",
+            provider_settings=settings,
+            runtime_provider_config=settings.get_provider("provider-a"),
+            extensions_enabled=False,
+        )
+    )
+    before = await storage.read_all()
+    assert session._provider_registry.effective("provider-b") is not None
+
+    session.preview_model_choice(ModelChoice("provider-b", "no-think"))
+    assert session.available_models == ("beta", "no-think")
+    assert session.available_thinking_levels == ()
+    assert "provider-b:no-think" in (session.thinking_unavailable_reason or "")
+    assert "thinking_models" in (session.thinking_unavailable_reason or "")
+
+    session.preview_model_choice(ModelChoice("provider-b", "beta"))
+    assert session.available_thinking_levels == ("off", "low")
+    assert session.preview_thinking_level("low") == "Thinking mode: low"
+    result = session.handle_command("/model beta")
+    assert result.model_selection_provider == "provider-b"
+    assert result.model_selection_model == "beta"
+    unknown = session.handle_command("/model alpha")
+    assert "Unknown model for provider provider-b: alpha" in (unknown.message or "")
+    assert "Available models: beta, no-think" in (unknown.message or "")
+    assert session._harness.config.model == "alpha"
+    assert await storage.read_all() == before
+
+
+@pytest.mark.anyio
+async def test_preview_selection_commits_only_at_next_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("qwen", "llama"),
+                default_model="qwen",
+                thinking_levels=("off", "high"),
+                thinking_models=("llama",),
+            ),
+        ),
+        scoped_models=(
+            ScopedModelConfig(provider="local", model="qwen"),
+            ScopedModelConfig(provider="local", model="llama"),
+        ),
+    )
+    storage = JsonlSessionStorage(tmp_path / "preview.jsonl")
+    config = CodingSessionConfig(
+        provider=FakeProvider([]),
+        model="qwen",
+        system="You are Tau.",
+        storage=storage,
+        cwd=tmp_path,
+        provider_name="local",
+        provider_settings=settings,
+        runtime_provider_config=settings.get_provider("local"),
+    )
+    session = await CodingSession.load(config)
+    before = await storage.read_all()
+    constructed: list[str] = []
+
+    def create_provider(*args: object, **kwargs: object) -> FakeProvider:
+        del args
+        constructed.append(str(kwargs["model"]))
+        return FakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    assert session.preview_cycle_scoped_model() == ModelChoice("local", "llama")
+    assert session.preview_cycle_thinking_level() == "Thinking mode: high"
+    assert session.model == "llama"
+    assert session.thinking_level == "high"
+    assert session.state.model == "qwen"
+    assert await storage.read_all() == before
+    assert constructed == []
+
+    await _collect_session_events(session.prompt("hello"))
+    entries = await storage.read_all()
+    assert constructed == ["llama", "llama"]
+    assert [
+        (entry.type, getattr(entry, "model", getattr(entry, "thinking_level", "")))
+        for entry in entries
+        if entry.type in {"model_change", "thinking_level_change"}
+    ][-2:] == [
+        ("model_change", "llama"),
+        ("thinking_level_change", "high"),
+    ]
+    assert session.state.model == "llama"
+
+    # An invalid candidate must not send with the previous model or lose the
+    # pending choice; the user can retry once the provider is available.
+    session.preview_model_choice(ModelChoice("local", "qwen"))
+    assert session.thinking_level == "off"
+    before_failure = await storage.read_all()
+
+    def fail_provider(*args: object, **kwargs: object) -> FakeProvider:
+        del args, kwargs
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", fail_provider)
+    with pytest.raises(Exception, match="provider unavailable"):
+        await _collect_session_events(session.prompt("retry later"))
+    assert await storage.read_all() == before_failure
+    assert session.has_pending_selection
+    assert session.model == "qwen"
+    assert session.state.model == "llama"
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    await _collect_session_events(session.prompt("retry now"))
+    entries = await storage.read_all()
+    assert session.state.thinking_level == "off"
+    assert [
+        (entry.type, getattr(entry, "thinking_level", None))
+        for entry in entries
+        if entry.type in {"model_change", "thinking_level_change"}
+    ][-2:] == [
+        ("model_change", None),
+        ("thinking_level_change", "off"),
+    ]
+
+
+@pytest.mark.anyio
 async def test_session_toggles_and_cycles_scoped_models(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5472,10 +5945,15 @@ async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
             session_manager=manager,
         )
     )
-    await second_storage.append(SessionInfoEntry(cwd=str(second_record.cwd)))
-    await second_storage.append(ModelChangeEntry(model="fake"))
-    await second_storage.append(MessageEntry(message=UserMessage(content="Earlier")))
-    await second_storage.append(MessageEntry(message=AssistantMessage(content="Restored")))
+    info_entry = SessionInfoEntry(cwd=str(second_record.cwd))
+    model_entry = ModelChangeEntry(parent_id=info_entry.id, model="fake")
+    user_entry = MessageEntry(parent_id=model_entry.id, message=UserMessage(content="Earlier"))
+    await second_storage.append(info_entry)
+    await second_storage.append(model_entry)
+    await second_storage.append(user_entry)
+    await second_storage.append(
+        MessageEntry(parent_id=user_entry.id, message=AssistantMessage(content="Restored"))
+    )
 
     message = await session.resume(second_record.id)
     _events = await _collect_session_events(session.prompt("Continue."))
@@ -5843,8 +6321,9 @@ async def test_session_set_model_preserves_newer_provider_file_changes(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("owns_initial_provider", [False, True])
 async def test_session_new_session_uses_default_provider_model(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owns_initial_provider: bool
 ) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     current_record = manager.create_session(
@@ -5877,15 +6356,18 @@ async def test_session_new_session_uses_default_provider_model(
         credential_store: FileCredentialStore | None = None,
         model: str | None = None,
         thinking_level: str | None = None,
+        inference_provider: str | None = None,
     ) -> SwitchableFakeProvider:
-        del credential_store, thinking_level
+        del credential_store, thinking_level, inference_provider
         created.append((provider_config.name, model))  # type: ignore[attr-defined]
         return SwitchableFakeProvider(provider_config)
 
     monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    old_provider = SwitchableFakeProvider(settings.get_provider("openrouter"))
     session = await CodingSession.load(
         CodingSessionConfig(
-            provider=FakeProvider([]),
+            provider=old_provider,
+            owns_initial_provider=owns_initial_provider,
             model="openai/gpt-5.5",
             system="You are Tau.",
             storage=JsonlSessionStorage(current_record.path),
@@ -5906,6 +6388,8 @@ async def test_session_new_session_uses_default_provider_model(
     assert session.model == "gpt-5"
     assert manager.get_session(session.session_id) is None
     assert created == [("openai", "gpt-5")]
+    assert session.provider is not old_provider
+    assert session.provider.config.name == "openai"
 
 
 @pytest.mark.anyio
@@ -6295,10 +6779,21 @@ async def test_session_context_usage_recalculates_after_resume(tmp_path: Path) -
         )
     )
     before_resume_usage = session.context_usage
-    await second_storage.append(SessionInfoEntry(cwd=str(second_record.cwd)))
-    await second_storage.append(ModelChangeEntry(model="fake"))
-    await second_storage.append(MessageEntry(message=UserMessage(content="Earlier " * 20)))
-    await second_storage.append(MessageEntry(message=AssistantMessage(content="Restored " * 20)))
+    info_entry = SessionInfoEntry(cwd=str(second_record.cwd))
+    model_entry = ModelChangeEntry(parent_id=info_entry.id, model="fake")
+    user_entry = MessageEntry(
+        parent_id=model_entry.id,
+        message=UserMessage(content="Earlier " * 20),
+    )
+    await second_storage.append(info_entry)
+    await second_storage.append(model_entry)
+    await second_storage.append(user_entry)
+    await second_storage.append(
+        MessageEntry(
+            parent_id=user_entry.id,
+            message=AssistantMessage(content="Restored " * 20),
+        )
+    )
 
     _message = await session.resume(second_record.id)
     after_resume_usage = session.context_usage

@@ -72,7 +72,7 @@ class TuiEventAdapter:
             message = event.message
             if isinstance(message, UserMessage):
                 self.state.add_user_message(message.text)
-            elif isinstance(message, CustomMessage):
+            elif isinstance(message, CustomMessage) and message.display:
                 self.state.add_user_message(
                     message.text,
                     custom_type=message.custom_type,

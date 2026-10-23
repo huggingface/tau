@@ -76,7 +76,11 @@ from tau_coding.extensions.provider_registry import (
 from tau_coding.extensions.providers import CredentialReader, DynamicProvider
 from tau_coding.local_backends import LocalBackend, LocalBackendRegistry
 from tau_coding.paths import TauPaths
-from tau_coding.project_trust import ExtensionTrustResult, ProjectTrustEvent
+from tau_coding.project_trust import (
+    ExtensionTrustResult,
+    ProjectTrustEvent,
+    ProjectTrustResolution,
+)
 from tau_coding.provider_config import ProviderConfig
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 from tau_coding.system_prompt import PromptSection
@@ -86,6 +90,16 @@ from tau_coding.system_prompt import PromptSection
 # queued message so custom messages render correctly whether they trigger a new
 # turn or are injected into a running one.
 TurnRequestedCallback = Callable[[str, "str | None", "dict[str, JSONValue] | None"], None]
+
+
+class BoundModelChoice(Protocol):
+    """Provider/model identifiers exposed by a bound session."""
+
+    @property
+    def provider_name(self) -> str: ...
+
+    @property
+    def model(self) -> str: ...
 
 
 class BoundSession(Protocol):
@@ -99,6 +113,12 @@ class BoundSession(Protocol):
 
     @property
     def provider_name(self) -> str: ...
+
+    @property
+    def available_providers(self) -> tuple[str, ...]: ...
+
+    @property
+    def available_model_choices(self) -> tuple[BoundModelChoice, ...]: ...
 
     @property
     def inference_provider(self) -> str | None: ...
@@ -117,6 +137,9 @@ class BoundSession(Protocol):
 
     @property
     def system_prompt(self) -> str: ...
+
+    @property
+    def project_trust_resolution(self) -> ProjectTrustResolution | None: ...
 
     @property
     def is_running(self) -> bool: ...
@@ -141,6 +164,8 @@ class BoundSession(Protocol):
     ) -> None: ...
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None: ...
+
+    async def set_label(self, target_id: str, label: str | None) -> object: ...
 
     def set_inference_provider(self, route: str | None) -> str: ...
 
@@ -920,6 +945,18 @@ class ExtensionRuntime:
         """Return free-form prompt sections in registration order."""
         return tuple(section for _, _, section in self._prompt_sections)
 
+    @property
+    def sourced_prompt_sections(self) -> tuple[PromptSection, ...]:
+        """Return prompt sections annotated with their owning extension."""
+        return tuple(
+            PromptSection(
+                title=section.title,
+                body=section.body,
+                source=f"extension: {extension}",
+            )
+            for _owner, extension, section in self._prompt_sections
+        )
+
     # -- actions (called through ExtensionAPI) --------------------------------
 
     def send_user_message(self, content: str, *, deliver_as: str = "follow_up") -> None:
@@ -970,6 +1007,10 @@ class ExtensionRuntime:
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist a `CustomEntry` through the bound session."""
         await self.session_view.append_custom_entry(namespace, data)
+
+    async def set_label(self, target_id: str, label: str | None) -> None:
+        """Set or clear a per-entry session bookmark through the bound session."""
+        await self.session_view.set_label(target_id, label)
 
     # -- tools ----------------------------------------------------------------
 

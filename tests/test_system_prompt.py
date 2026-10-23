@@ -8,6 +8,7 @@ from tau_coding.system_prompt import (
     ProjectContextFile,
     PromptSection,
     build_system_prompt,
+    build_system_prompt_inspection,
     collect_prompt_guidelines,
     format_available_tools,
     format_skills_for_prompt,
@@ -116,6 +117,43 @@ def test_extra_sections_follow_user_append_in_registration_order(tmp_path: Path)
     assert prompt.startswith(expected)
     assert prompt.index("User append.") < prompt.index("## Extension procedure")
     assert prompt.index("Untitled extension context.") < prompt.index("<project_instructions")
+
+
+def test_inspection_attributes_prompt_inputs_without_changing_text(tmp_path: Path) -> None:
+    skill_path = tmp_path / "skills" / "review" / "SKILL.md"
+    options = BuildSystemPromptOptions(
+        cwd=tmp_path,
+        tools=create_coding_tools(cwd=tmp_path),
+        custom_prompt="Custom base.",
+        custom_prompt_source="/repo/.tau/SYSTEM.md",
+        append_sections=(
+            PromptSection(title=None, body="Personal rules.", source="~/.tau/APPEND_SYSTEM.md"),
+        ),
+        extra_sections=(
+            PromptSection(title="Extension rules", body="Run checks.", source="extension: checks"),
+        ),
+        context_files=(
+            ProjectContextFile(path="/home/.agents/AGENTS.md", content="Global rules."),
+            ProjectContextFile(path="/repo/AGENTS.md", content="Project rules."),
+        ),
+        skills=(Skill(name="review", path=skill_path, content="", description="Review code"),),
+        current_date=date(2026, 6, 17),
+    )
+
+    inspection = build_system_prompt_inspection(options)
+
+    assert inspection.text == build_system_prompt(options)
+    assert "".join(source.content for source in inspection.sources) == inspection.text
+    assert [source.source for source in inspection.sources] == [
+        "/repo/.tau/SYSTEM.md",
+        "~/.tau/APPEND_SYSTEM.md",
+        "extension: checks",
+        "/home/.agents/AGENTS.md",
+        "/repo/AGENTS.md",
+        str(skill_path),
+        "Tau runtime",
+        str(tmp_path),
+    ]
 
 
 def test_empty_custom_prompt_is_still_custom(tmp_path: Path) -> None:

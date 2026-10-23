@@ -1,0 +1,103 @@
+---
+import { groups, site } from "../data";
+const phases = groups.flatMap((group) => group.phases);
+---
+
+<div class="wrap">
+  <header class="release-header">
+    <div class="release-hero">
+      <p class="eyebrow-hand">Building in the open</p><h1>The roadmap.</h1><p
+        class="lede"
+      >
+        Tau ships in small, documented phases &mdash; each one a readable slice
+        of the agent, not a hidden branch. This page tracks what's shipped and
+        what's next; the reasoning behind each phase lives in <code
+          >dev-notes/</code
+        >.
+      </p>
+    </div>
+    <div class="release-meta-row">
+      {
+        [
+          ["shipped", "phases shipped"],
+          ["in_progress", "in progress"],
+          ["planned", "planned"],
+        ].map(([status, label]) => (
+          <div class="meta-cell">
+            <>
+              <span class="meta-num">
+                {phases.filter((phase) => phase.status === status).length}
+              </span>
+              <span class="meta-cap">{label}</span>
+            </>
+          </div>
+        ))
+      }
+    </div>
+  </header>
+  {
+    groups.map((group, index) => (
+      <section class="roadmap-group">
+        <div class="sec-head">
+          <>
+            <span class="mark">{String(index + 1).padStart(2, "0")}</span>
+            <div>
+              <>
+                <p class="eyebrow-hand">{group.note}</p>
+                <h2>{group.label}</h2>
+              </>
+            </div>
+          </>
+        </div>
+        <div class="roadmap-list">
+          {group.phases.map((phase) => (
+            <div class={`roadmap-item roadmap-${phase.status}`}>
+              <div class="roadmap-item-mark">
+                <span
+                  class:list={[
+                    phase.status === "shipped"
+                      ? "roadmap-check"
+                      : "roadmap-dot",
+                    { "roadmap-dot-planned": phase.status === "planned" },
+                  ]}
+                  aria-hidden="true"
+                >
+                  {phase.status === "shipped"
+                    ? "✓"
+                    : phase.status === "in_progress"
+                      ? "●"
+                      : "○"}
+                </span>
+              </div>
+              <div class="roadmap-item-body">
+                <div class="roadmap-item-head">
+                  <span class="roadmap-phase">Phase {phase.id}</span>
+                  <h3>{phase.title}</h3>
+                  {phase.status === "in_progress" && (
+                    <span class="badge badge-next">Up next</span>
+                  )}
+                  {phase.status === "planned" && (
+                    <span class="badge badge-planned">Planned</span>
+                  )}
+                </div>
+                <p>{phase.summary}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    ))
+  }
+  <section class="closing">
+    <span class="turn">&#964;</span><p>
+      Roadmap phases turn into build journals under <code>dev-notes/</code>,
+      then into these docs. Follow along or open an issue with ideas.
+    </p><div class="cta-row">
+      <a class="ghost" href="/internals/architecture/"
+        >See the architecture <span class="arr">&rarr;</span></a
+      ><a class="ghost" href={`${site.githubUrl}/issues`}
+        >Suggest a phase <span class="arr">&rarr;</span></a
+      >
+    </div>
+  </section>
+</div>

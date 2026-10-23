@@ -1,0 +1,83 @@
+---
+import { sidebar, site } from "../data";
+interface Props {
+  title: string;
+  description?: string;
+  file: string;
+}
+const { title, description, file } = Astro.props;
+const current = Astro.url.pathname;
+const flat = sidebar.flatMap((group) => group.items ?? []);
+const index = flat.findIndex((item) => item.path === current);
+const prev = flat[index - 1];
+const next = flat[index + 1];
+---
+
+<div class="wrap docs-layout">
+  <aside data-pagefind-ignore>
+    <nav class="docs-sidebar" aria-label="Documentation">
+      {
+        sidebar.map((group) =>
+          group.items ? (
+            <div class="sidebar-group">
+              <p class="sidebar-group-label">{group.label}</p>
+              <ul>
+                {group.items.map((item) => (
+                  <li>
+                    <a
+                      href={item.path}
+                      class:list={{ active: current === item.path }}
+                      aria-current={current === item.path ? "page" : undefined}
+                    >
+                      {item.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <a
+              class:list={[
+                "sidebar-toplink",
+                { active: current === (group.link ?? group.path) },
+              ]}
+              href={group.link ?? group.path}
+            >
+              {group.label}
+            </a>
+          ),
+        )
+      }
+    </nav>
+  </aside>
+  <article class="docs-content">
+    <h1>{title}</h1>
+    {description && <p class="docs-description">{description}</p>}
+    <slot />
+    <div class="docs-footer" data-pagefind-ignore>
+      <a class="edit-link" href={`${site.editRepoUrl}/${file}`}
+        >Edit this page on GitHub &#8599;</a
+      >
+    </div>
+    {
+      index >= 0 && (
+        <div class="docs-prevnext" data-pagefind-ignore>
+          {prev ? (
+            <a class="prev" href={prev.path}>
+              <span class="dir">&larr; Previous</span>
+              {prev.label}
+            </a>
+          ) : (
+            <span />
+          )}
+          {next && (
+            <a class="next" href={next.path}>
+              <span class="dir">Next &rarr;</span>
+              {next.label}
+            </a>
+          )}
+        </div>
+      )
+    }
+  </article>
+</div>

@@ -7,6 +7,7 @@ mocking the extension API, these load the real files through the real
 for how extension authors can test their own extensions.
 """
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ import pytest
 from tau_agent.messages import TextContent
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_coding import TauResourcePaths
-from tau_coding.extensions import ExtensionRuntime
+from tau_coding.extensions import ExtensionRuntime, NullUiBridge
 
 pytestmark = pytest.mark.anyio
 
@@ -59,12 +60,35 @@ def _fake_tool(name: str) -> tuple[AgentTool, list[dict[str, object]]]:
     return tool, executed
 
 
-# -- hello_tool.py -------------------------------------------------------------
+class SelectingUiBridge(NullUiBridge):
+    def __init__(self, selected: str | None) -> None:
+        self.selected = selected
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    @property
+    def has_ui(self) -> bool:
+        return True
+
+    async def select(
+        self,
+        title: str,
+        options: Sequence[str],
+        *,
+        timeout: float | None = None,
+    ) -> str | None:
+        del timeout
+        choices = tuple(options)
+        self.calls.append((title, choices))
+        return self.selected
+
+
+# -- shipped examples ----------------------------------------------------------
 
 
 def test_shipped_examples_load(tmp_path: Path) -> None:
     runtime = _runtime_with_examples(
         tmp_path,
+        "ask_user_question.py",
         "hello_tool.py",
         "permission_gate.py",
         "prompt_section.py",
@@ -72,14 +96,59 @@ def test_shipped_examples_load(tmp_path: Path) -> None:
     )
 
     assert runtime.extension_names == (
+        "ask_user_question",
         "hello_tool",
         "permission_gate",
         "prompt_section",
         "sidebar_status",
     )
-    assert [tool.name for tool in runtime.extension_tools] == ["hello"]
+    assert [tool.name for tool in runtime.extension_tools] == [
+        "ask_user_question",
+        "hello",
+    ]
     assert runtime.prompt_sections[0].title == "Review procedure"
     assert "```bash" in runtime.prompt_sections[0].body
+
+
+async def test_ask_user_question_returns_selected_option(tmp_path: Path) -> None:
+    runtime = _runtime_with_examples(tmp_path, "ask_user_question.py")
+    ui = SelectingUiBridge("Run focused tests")
+    runtime.set_ui_bridge(ui)
+    tool = runtime.compose_tools([])[0]
+
+    result = await tool.execute(
+        "test-call",
+        {
+            "question": "Which checks should I run?",
+            "options": ["Run focused tests", "Run all tests"],
+        },
+    )
+
+    assert result.text == "The user selected: Run focused tests"
+    assert result.details == {"selected": "Run focused tests"}
+    assert ui.calls == [
+        (
+            "Which checks should I run?",
+            ("Run focused tests", "Run all tests"),
+        )
+    ]
+
+
+async def test_ask_user_question_handles_cancel(tmp_path: Path) -> None:
+    runtime = _runtime_with_examples(tmp_path, "ask_user_question.py")
+    runtime.set_ui_bridge(SelectingUiBridge(None))
+    tool = runtime.compose_tools([])[0]
+
+    result = await tool.execute(
+        "test-call",
+        {"question": "Continue?", "options": ["Yes", "No"]},
+    )
+
+    assert result.text == "The user did not select an option."
+    assert result.details == {"selected": None}
+
+
+# -- hello_tool.py -------------------------------------------------------------
 
 
 async def test_hello_tool_greets(tmp_path: Path) -> None:
