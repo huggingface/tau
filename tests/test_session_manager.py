@@ -357,6 +357,27 @@ def test_session_manager_writes_are_visible_to_other_managers(tmp_path: Path) ->
         assert current.title == title
 
 
+def test_session_manager_cwd_hint_skips_other_project_indexes(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    project = tmp_path / "project"
+    other = tmp_path / "other"
+    project.mkdir()
+    other.mkdir()
+    record = manager.create_session(cwd=project, model="fake", title="Hinted")
+    manager.create_session(cwd=other, model="fake")
+    manager.project_index_path(other).write_text("not json\n", encoding="utf-8")
+
+    hinted = manager.get_session(record.id, cwd=project)
+
+    assert hinted is not None
+    assert hinted.title == "Hinted"
+    with pytest.raises(ValueError):
+        manager.get_session(record.id)
+    with pytest.raises(ValueError):
+        # A wrong hint falls back to scanning every index.
+        manager.get_session(record.id, cwd=tmp_path)
+
+
 def test_session_manager_archives_session_without_deleting_transcript(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"

@@ -165,8 +165,18 @@ class SessionManager:
         records = self._read_project_records(cwd) if cwd is not None else self._read_all_records()
         return sorted(records, key=lambda record: record.updated_at, reverse=True)
 
-    def get_session(self, session_id: str) -> CodingSessionRecord | None:
-        """Return a session record by id, if present."""
+    def get_session(
+        self, session_id: str, *, cwd: Path | None = None
+    ) -> CodingSessionRecord | None:
+        """Return a session record by id, if present.
+
+        ``cwd`` is a lookup hint: that project's index is searched first, and
+        every index is scanned only when the session is not found there.
+        """
+        if cwd is not None:
+            for record in self._read_project_records(cwd):
+                if record.id == session_id:
+                    return record
         for record in self._read_all_records():
             if record.id == session_id:
                 return record
@@ -396,9 +406,10 @@ class SessionManager:
         inference_provider_mode: InferenceProviderMode | None = None,
         preserve_inference_provider: bool = True,
         title: str | None = None,
+        cwd: Path | None = None,
     ) -> CodingSessionRecord | None:
-        """Update a session's last-used metadata."""
-        existing = self.get_session(session_id)
+        """Update a session's last-used metadata; ``cwd`` is a lookup hint."""
+        existing = self.get_session(session_id, cwd=cwd)
         if existing is None:
             return None
         updated = CodingSessionRecord(

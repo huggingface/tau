@@ -1480,7 +1480,7 @@ class CodingSession:
         """Return this session's indexed human-friendly title, if named."""
         if self._config.session_id is None or self._config.session_manager is None:
             return None
-        record = self._config.session_manager.get_session(self._config.session_id)
+        record = self._config.session_manager.get_session(self._config.session_id, cwd=self.cwd)
         if record is None:
             return None
         return record.title
@@ -3753,6 +3753,7 @@ class CodingSession:
                 inference_provider=self._inference_provider,
                 inference_provider_mode=self._inference_provider_mode,
                 preserve_inference_provider=False,
+                cwd=self.cwd,
             )
 
     async def _read_session_entries(self) -> list[SessionEntry]:
@@ -3942,7 +3943,7 @@ class CodingSession:
     def _should_auto_name_session(self) -> bool:
         if self._config.session_id is None or self._config.session_manager is None:
             return False
-        record = self._config.session_manager.get_session(self._config.session_id)
+        record = self._config.session_manager.get_session(self._config.session_id, cwd=self.cwd)
         if record is not None and record.title:
             return False
         return sum(isinstance(message, UserMessage) for message in self._harness.messages) == 1
