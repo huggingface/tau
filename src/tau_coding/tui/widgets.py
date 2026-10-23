@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import TimeoutExpired, run
@@ -34,7 +36,7 @@ from textual.widget import Widget
 from textual.widgets import Collapsible, Static
 from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets._markdown import MarkdownParagraph  # not publicly re-exported
-from textual.widgets.markdown import MarkdownFence, MarkdownStream
+from textual.widgets.markdown import MarkdownFence
 
 from tau_agent.tools import AgentTool, ToolCall
 from tau_coding.context_window import estimate_text_tokens
@@ -453,9 +455,11 @@ class ThemedMarkdownWidget(TextualMarkdown):
 # matching how they appear while streaming.
 _BORDERLESS_TRANSCRIPT_ROLES = frozenset({"assistant", "thinking"})
 _HIDDEN_THINKING_PLACEHOLDER = "Thinking… Press Ctrl+T to show thinking tokens."
-TRANSCRIPT_WINDOW_ITEMS = 200
-TRANSCRIPT_WINDOW_PAGE_ITEMS = 80
-TRANSCRIPT_WINDOW_OVERSCAN_ITEMS = 40
+# Mounted transcript items; each streamed append re-lays out all of them.
+# PAGE must stay below WINDOW: paging anchors on an already-mounted item.
+TRANSCRIPT_WINDOW_ITEMS = 80
+TRANSCRIPT_WINDOW_PAGE_ITEMS = 32
+TRANSCRIPT_WINDOW_OVERSCAN_ITEMS = 16
 
 
 class TranscriptWindowBoundary(Static):
@@ -783,6 +787,57 @@ class TranscriptMessageWidget(Horizontal):
         return True
 
 
+# Each Markdown append re-lays out every mounted transcript row, and providers
+# send 50-150 fragments/s, so coalesce appends to ~10/s.
+STREAM_FLUSH_INTERVAL_SECONDS = 0.1
+
+
+class TranscriptMarkdownStream:
+    """Like Textual's ``MarkdownStream``, but appends at most once per ``interval``.
+
+    The first fragment is appended immediately.
+    """
+
+    def __init__(self, markdown: TextualMarkdown, *, interval: float) -> None:
+        self._markdown = markdown
+        self._interval = interval
+        self._pending: list[str] = []
+        self._wake = asyncio.Event()
+        self._appending: asyncio.Future[None] | None = None
+        self._task = asyncio.create_task(self._run())
+
+    async def write(self, fragment: str) -> None:
+        """Queue a fragment for the next flush."""
+        if fragment:
+            self._pending.append(fragment)
+            self._wake.set()
+
+    async def stop(self) -> None:
+        """Stop the flush loop and append anything still queued."""
+        self._task.cancel()
+        with suppress(asyncio.CancelledError):
+            await self._task
+        # Markdown.append reads its parse position before taking its lock, so an
+        # append still in flight must finish before the final one starts.
+        if self._appending is not None:
+            await self._appending
+        if self._pending:
+            await self._markdown.append(self._take_pending())
+
+    def _take_pending(self) -> str:
+        text = "".join(self._pending)
+        self._pending.clear()
+        return text
+
+    async def _run(self) -> None:
+        while True:
+            await self._wake.wait()
+            self._wake.clear()
+            self._appending = asyncio.ensure_future(self._markdown.append(self._take_pending()))
+            await asyncio.shield(self._appending)
+            await asyncio.sleep(self._interval)
+
+
 class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
     """One assistant or thinking Markdown block that accepts streamed fragments."""
 
@@ -814,7 +869,7 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
             raise ValueError("Streaming transcript widgets only support assistant/thinking items")
         self.item = item
         self.selection_text = item.text
-        self._stream: MarkdownStream | None = None
+        self._stream: TranscriptMarkdownStream | None = None
         self._is_streaming = True
         super().__init__(item.text, theme=theme)
         self.add_class("transcript-message")
@@ -826,9 +881,9 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
             self.styles.color = foreground
 
     @property
-    def stream(self) -> MarkdownStream:
+    def stream(self) -> TranscriptMarkdownStream:
         if self._stream is None:
-            self._stream = self.get_stream(self)
+            self._stream = TranscriptMarkdownStream(self, interval=STREAM_FLUSH_INTERVAL_SECONDS)
         return self._stream
 
     async def append_fragment(self, fragment: str) -> None:
@@ -840,7 +895,7 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
         await self.stream.write(fragment)
 
     async def _stop_stream(self) -> None:
-        """Stop the Textual markdown stream, flushing pending fragments first."""
+        """Stop the markdown stream, flushing pending fragments first."""
         stream = self._stream
         if stream is None:
             return
@@ -2144,23 +2199,29 @@ def render_compact_session_info(
     *,
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
-    """Render the session facts below the prompt."""
-    left = _styled_cwd(session.cwd, theme=theme)
-    right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
-    right.append(session.provider_name, style=theme.completion_description)
-    right.append(f":{session.model}", style=theme.prompt_text)
+    """Render the session facts below the prompt.
+
+    The first line shows the working directory; the second line shows the model
+    identity on the left and active context usage on the right.
+    """
+    model_line = Text(style=theme.muted_text, overflow="fold", no_wrap=False)
+    model_line.append(session.provider_name, style=theme.completion_description)
+    model_line.append(f":{session.model}", style=theme.prompt_text)
     thinking_level = _thinking_level(session)
     if thinking_level is not None:
-        right.append(" ")
-        right.append(f"({thinking_level})", style=theme.completion_description)
-    right.append("\n")
-    right.append(_context_usage(session), style=theme.completion_description)
-
-    table = Table.grid(expand=True)
-    table.add_column(ratio=1)
-    table.add_column(ratio=1, justify="right")
-    table.add_row(left, right)
-    return table
+        model_line.append(" ")
+        model_line.append(f"({thinking_level})", style=theme.completion_description)
+    context = Text(
+        _context_usage(session),
+        style=theme.completion_description,
+        no_wrap=True,
+        justify="right",
+    )
+    second_line = Table.grid(expand=True)
+    second_line.add_column(ratio=1)
+    second_line.add_column(justify="right", no_wrap=True)
+    second_line.add_row(model_line, context)
+    return Group(_styled_cwd(session.cwd, theme=theme), second_line)
 
 
 def render_chat_item(
