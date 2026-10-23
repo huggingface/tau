@@ -40,6 +40,11 @@ provider-neutral events — never from raw provider chunks. The portable `tau_ag
   Pi-compatible lifecycle
 - `ToolExecutionStartEvent` / `ToolExecutionUpdateEvent` / `ToolExecutionEndEvent`
   — a tool runs
+- `ModelChangeEvent` — the model changed mid-run via `render_turn`
+
+An optional `render_turn` callback may re-render the model, system prompt, and
+tools before each turn. A model change is announced with `ModelChangeEvent`;
+system-prompt and tool changes apply silently.
 
 Streaming detail is nested under
 `MessageUpdateEvent.assistant_message_event`. Those provider-neutral nested
