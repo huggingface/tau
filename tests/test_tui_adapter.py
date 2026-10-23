@@ -706,6 +706,48 @@ def test_tui_adapter_renders_skill_file_reads_with_skill_style() -> None:
     ]
 
 
+def test_restoring_many_reads_resolves_each_skill_path_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tau_coding.tui import state as state_module
+
+    skills = tuple(
+        Skill(
+            name=f"skill-{index}",
+            path=Path(f"/workspace/.tau/skills/skill-{index}.md"),
+            content="# Skill",
+            description="Skill",
+        )
+        for index in range(10)
+    )
+    state = TuiState(skills=skills)
+    resolved: list[str] = []
+    original_normalized_path = state_module._normalized_path
+
+    def counting_normalized_path(path: str | Path) -> Path:
+        resolved.append(str(path))
+        return original_normalized_path(path)
+
+    monkeypatch.setattr(state_module, "_normalized_path", counting_normalized_path)
+    reads = [
+        AssistantMessage(
+            content=[
+                ToolCall(
+                    id=f"call-{index}",
+                    name="read",
+                    arguments={"path": f"/workspace/.tau/skills/skill-{index % 12}.md"},
+                )
+            ]
+        )
+        for index in range(30)
+    ]
+
+    state.load_messages(reads)
+
+    assert len(resolved) == len(reads) + len(skills)
+    assert sum(item.role == "skill" for item in state.items) == 26
+
+
 def test_tui_adapter_records_retry_and_queue_status() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)

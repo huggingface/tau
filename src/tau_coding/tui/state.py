@@ -115,6 +115,12 @@ class TuiState:
         compare=False,
     )
     _next_tool_batch_id: int = field(default=0, init=False, repr=False, compare=False)
+    _skill_names_by_path: tuple[tuple[Skill, ...], dict[Path, str]] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def add_item(
         self,
@@ -704,11 +710,19 @@ class TuiState:
         path = _string_argument(tool_call.arguments, "path")
         if path is None:
             return None
-        read_path = _normalized_path(path)
+        return self._skill_names_by_resolved_path().get(_normalized_path(path))
+
+    def _skill_names_by_resolved_path(self) -> dict[Path, str]:
+        # Restoring a long session classifies every read call; resolving each
+        # skill path per call made that quadratic in filesystem lookups.
+        cached = self._skill_names_by_path
+        if cached is not None and cached[0] is self.skills:
+            return cached[1]
+        names: dict[Path, str] = {}
         for skill in self.skills:
-            if _normalized_path(skill.path) == read_path:
-                return skill.name
-        return None
+            names.setdefault(_normalized_path(skill.path), skill.name)
+        self._skill_names_by_path = (self.skills, names)
+        return names
 
 
 def _is_file_mutation_only_message(message: AssistantMessage) -> bool:
