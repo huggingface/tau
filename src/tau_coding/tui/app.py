@@ -6350,7 +6350,7 @@ class TauTuiApp(App[None]):
         if isinstance(event, (AutoRetryStartEvent, CompactionStartEvent)):
             await transcript.finish_assistant_message()
             if self.state.items and (
-                isinstance(event, AutoRetryStartEvent) or event.reason == "overflow"
+                isinstance(event, AutoRetryStartEvent) or event.reason in ("overflow", "threshold")
             ):
                 await transcript.append_item(
                     self.state.items[-1],
@@ -6362,6 +6362,17 @@ class TauTuiApp(App[None]):
         if isinstance(event, CompactionEndEvent):
             if event.reason == "overflow" and (event.aborted or event.error_message):
                 self._refresh()
+            elif (
+                event.reason == "threshold"
+                and (event.aborted or event.error_message)
+                and self.state.items
+            ):
+                await transcript.append_item(
+                    self.state.items[-1],
+                    theme=theme,
+                    show_tool_results=self.state.show_tool_results,
+                )
+                self._refresh_chrome()
             else:
                 self._refresh_chrome()
             return
