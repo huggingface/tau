@@ -3351,6 +3351,7 @@ class CodingSession:
         events: AsyncIterator[AgentEvent] | None = None
         settled_event: AgentSettledEvent | None = None
         auto_name_attempted = False
+        auto_name_task: asyncio.Task[None] | None = None
         overflow_message: AssistantMessage | None = None
         route_failure_message: AssistantMessage | None = None
         try:
@@ -3400,10 +3401,17 @@ class CodingSession:
                     )
                 else:
                     yield event
-                # Let frontends render the confirmed, expanded prompt before
-                # session naming performs its separate provider request.
+                # Frontends have rendered the confirmed, expanded prompt. Name
+                # the session alongside the agent's reply instead of delaying
+                # the reply's request behind the naming request.
                 if auto_name_message is not None:
-                    await self._try_auto_name_session(auto_name_message, context=context)
+                    auto_name_task = asyncio.create_task(
+                        self._try_auto_name_session(auto_name_message, context=context),
+                        name="tau-auto-name-session",
+                    )
+                    # Let the naming request start first so provider calls keep
+                    # a deterministic order.
+                    await asyncio.sleep(0)
             if overflow_message is not None:
                 session_event_1 = CompactionStartEvent(reason="overflow")
                 await self._extension_runtime.emit_event(session_event_1)
@@ -3468,6 +3476,8 @@ class CodingSession:
                     yield failover_event
             else:
                 await self._try_auto_compact(context=context, phase="auto_compact_after_prompt")
+            if auto_name_task is not None:
+                await auto_name_task
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -3476,6 +3486,8 @@ class CodingSession:
             )
             raise
         finally:
+            if auto_name_task is not None and not auto_name_task.done():
+                auto_name_task.cancel()
             try:
                 await self._reconcile_run_persistence(events, context=context)
             finally:
