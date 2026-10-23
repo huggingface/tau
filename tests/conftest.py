@@ -14,6 +14,12 @@ def prevent_browser_open(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(webbrowser, "open", fail_browser_open)
 
 
+@pytest.fixture(autouse=True)
+def skip_idle_garbage_collection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub out the TUI's idle-time GC; it acts on the whole pytest process."""
+    monkeypatch.setattr("tau_coding.tui.app._collect_garbage_while_idle", lambda: None)
+
+
 def isolate_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Point home-directory lookups at the pytest temp directory."""
     monkeypatch.delenv("TAU_HOME", raising=False)
