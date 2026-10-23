@@ -1,7 +1,8 @@
 import asyncio
+import gc
 import re
 import threading
-import time
+import weakref
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from datetime import datetime
@@ -33,7 +34,6 @@ from textual.widgets import (
     TextArea,
 )
 from textual.widgets import Markdown as TextualMarkdown
-from textual.widgets.markdown import MarkdownStream
 
 from conftest import isolate_home
 from tau_agent import (
@@ -136,6 +136,7 @@ from tau_coding.tui.app import (
     ToolsReferenceScreen,
     TreePickerScreen,
     _activity_prompt_border_color,
+    _collect_garbage_while_idle,
     _completion_selected_render_line,
     _render_activity_indicator,
     _resource_conflict_alert,
@@ -174,6 +175,7 @@ from tau_coding.tui.widgets import (
     SystemPromptSourcesWidget,
     TauMarkdownBlock,
     ThemedMarkdownWidget,
+    TranscriptMarkdownStream,
     TranscriptMessageWidget,
     TranscriptView,
     TranscriptWindowBoundary,
@@ -2911,39 +2913,6 @@ async def test_tool_transcript_uses_native_markdown_without_custom_selection_pai
 
 
 @pytest.mark.anyio
-async def test_streaming_message_coalesces_rapid_fragments() -> None:
-    from tau_coding.tui import widgets as tui_widgets
-
-    app = TauTuiApp(FakeSession())
-
-    async with app.run_test(size=(120, 30)) as pilot:
-        transcript = app.query_one("#transcript", TranscriptView)
-        widget = await transcript.start_assistant_message()
-        appended: list[str] = []
-        original_append = widget.append
-
-        async def tracking_append(markdown: str) -> None:
-            appended.append(markdown)
-            await original_append(markdown)
-
-        widget.append = tracking_append  # type: ignore[assignment,method-assign]
-        fragments = [f"word{index} " for index in range(10)]
-        started = time.monotonic()
-        for fragment in fragments:
-            await widget.append_fragment(fragment)
-            # Providers deliver deltas a few milliseconds apart.
-            await asyncio.sleep(0.01)
-        elapsed = time.monotonic() - started
-        await widget.finalize()
-        await pilot.pause()
-
-        # At most one append per interval, plus the flush when streaming stops.
-        assert len(appended) <= elapsed / tui_widgets.STREAM_APPEND_INTERVAL_SECONDS + 2
-        assert "".join(appended) == "".join(fragments)
-        assert widget.source == "".join(fragments)
-
-
-@pytest.mark.anyio
 async def test_tui_message_start_does_not_mount_empty_assistant_message() -> None:
     app = TauTuiApp(FakeSession())
 
@@ -2952,6 +2921,55 @@ async def test_tui_message_start_does_not_mount_empty_assistant_message() -> Non
         await pilot.pause()
 
         assert list(app.query(StreamingTranscriptMessageWidget)) == []
+
+
+@pytest.mark.anyio
+async def test_transcript_markdown_stream_coalesces_fragments_between_flushes() -> None:
+    class RecordingMarkdown:
+        def __init__(self) -> None:
+            self.appends: list[str] = []
+
+        async def append(self, markdown: str) -> None:
+            self.appends.append(markdown)
+
+    markdown = RecordingMarkdown()
+    stream = TranscriptMarkdownStream(markdown, interval=60)  # type: ignore[arg-type]
+
+    await stream.write("first ")
+    await asyncio.sleep(0)
+    for word in ("a ", "burst ", "of ", "tokens"):
+        await stream.write(word)
+    await asyncio.sleep(0)
+    # The first fragment shows at once; the rest wait out the interval.
+    assert markdown.appends == ["first "]
+
+    await stream.stop()
+    assert markdown.appends == ["first ", "a burst of tokens"]
+
+
+@pytest.mark.anyio
+async def test_transcript_markdown_stream_stop_lets_an_append_in_flight_finish() -> None:
+    release = asyncio.Event()
+    events: list[tuple[str, str]] = []
+
+    class SlowMarkdown:
+        async def append(self, markdown: str) -> None:
+            events.append(("start", markdown))
+            await release.wait()
+            events.append(("end", markdown))
+
+    stream = TranscriptMarkdownStream(SlowMarkdown(), interval=60)  # type: ignore[arg-type]
+    await stream.write("one ")
+    for _ in range(3):
+        await asyncio.sleep(0)
+    await stream.write("two")
+    stopping = asyncio.create_task(stream.stop())
+    for _ in range(3):
+        await asyncio.sleep(0)
+    release.set()
+    await stopping
+
+    assert events == [("start", "one "), ("end", "one "), ("start", "two"), ("end", "two")]
 
 
 @pytest.mark.anyio
@@ -2983,7 +3001,7 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
     full_stream_updates: list[str] = []
     original_replace_text = StreamingTranscriptMessageWidget.replace_text
     original_stream_update = StreamingTranscriptMessageWidget.update
-    original_stream_write = MarkdownStream.write
+    original_stream_write = TranscriptMarkdownStream.write
 
     def tracking_stream_update(
         self: StreamingTranscriptMessageWidget,
@@ -2993,7 +3011,7 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
             full_stream_updates.append(markdown)
         return original_stream_update(self, markdown)
 
-    async def tracking_stream_write(self: MarkdownStream, fragment: str) -> None:
+    async def tracking_stream_write(self: TranscriptMarkdownStream, fragment: str) -> None:
         stream_writes.append(fragment)
         await original_stream_write(self, fragment)
 
@@ -3006,7 +3024,7 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
 
     StreamingTranscriptMessageWidget.replace_text = tracking_replace_text  # type: ignore[method-assign]
     StreamingTranscriptMessageWidget.update = tracking_stream_update  # type: ignore[method-assign]
-    MarkdownStream.write = tracking_stream_write  # type: ignore[method-assign]
+    TranscriptMarkdownStream.write = tracking_stream_write  # type: ignore[method-assign]
     full_refreshes = 0
 
     original_refresh = app._refresh
@@ -3029,7 +3047,7 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
     finally:
         StreamingTranscriptMessageWidget.replace_text = original_replace_text  # type: ignore[method-assign]
         StreamingTranscriptMessageWidget.update = original_stream_update  # type: ignore[method-assign]
-        MarkdownStream.write = original_stream_write  # type: ignore[method-assign]
+        TranscriptMarkdownStream.write = original_stream_write  # type: ignore[method-assign]
 
     assert full_refreshes == 1
     assert stream_writes == ["alpha ", "beta"]
@@ -4963,6 +4981,56 @@ async def test_tui_app_notifies_when_agent_settles_while_unfocused() -> None:
         app.on_app_focus()
         await app._run_prompt("focused again")
         assert writes == ["\x1b]9;Tau turn finished\x07"]
+
+
+def test_collect_garbage_while_idle_frees_cycles_frozen_by_an_earlier_call() -> None:
+    class Node:
+        partner: object = None
+
+    node = Node()
+    node.partner = node
+    ref = weakref.ref(node)
+    try:
+        _collect_garbage_while_idle()
+        assert gc.get_freeze_count() > 0
+        del node
+        _collect_garbage_while_idle()
+        assert ref() is None
+    finally:
+        gc.unfreeze()
+
+
+@pytest.mark.anyio
+async def test_tui_app_collects_garbage_at_startup_and_when_agent_settles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SettledSession(FakeSession):
+        async def prompt(
+            self,
+            text: str,
+            *,
+            streaming_behavior: str | None = None,
+            source: str = "interactive",
+            custom_type: str | None = None,
+            details: dict[str, object] | None = None,
+        ) -> AsyncIterator[CodingSessionEvent]:
+            del streaming_behavior, source, custom_type, details
+            self.prompt_texts.append(text)
+            yield AgentStartEvent()
+            yield AgentEndEvent()
+            yield AgentSettledEvent()
+
+    collections: list[None] = []
+    monkeypatch.setattr(tui_app, "_collect_garbage_while_idle", lambda: collections.append(None))
+    app = TauTuiApp(SettledSession())
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert len(collections) == 1
+
+        await app._run_prompt("hello")
+        await pilot.pause()
+        assert len(collections) == 2
 
 
 @pytest.mark.anyio

@@ -16,7 +16,7 @@ disk work on the event loop, plus two bugs. The fixes:
 | First prompt of a new session | Auto-naming (a full provider request) ran before the reply's request was sent | Naming runs as a task alongside the reply and is awaited before the run settles |
 | Persisting each message | Re-read and re-parsed the whole session JSONL (~160 ms on a 16.8 MB session) | `JsonlSessionStorage` keeps parsed entries and extends them on its own appends (~0.25 ms) |
 | Sidebar | Every message remounted the context, skill, and prompt lists and ran `git branch --show-current` | Resource lists remount only when resources change; the branch is cached and re-read when `HEAD` changes |
-| Streaming | One Markdown append and layout pass per delta, over a 200-item window | Appends are batched to at most one per 50 ms; the window is 100 items |
+| Streaming | One Markdown append and layout pass per delta, over a 200-item window | Appends are batched to at most one per 100 ms; the window is 80 items |
 | Startup catalog loading | `effective_catalog()` parsed the user catalog and models.dev cache twice | Memoized by file stamps |
 | Startup update check | Blocking PyPI request (1.5 s timeout) before the TUI, with failures never cached | The TUI reads only the cache and runs a due check in a background daemon thread; failures are cached for an hour |
 | Restoring read calls | Every `read` call resolved every skill path | Resolved skill paths are cached per skills tuple |
