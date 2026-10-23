@@ -3917,10 +3917,20 @@ class CodingSession:
         *,
         context: AgentCallDiagnosticContext,
     ) -> None:
+        # Bind the naming result to the session that requested it: a concurrent
+        # resume/new adopts a different config and harness on this object while
+        # the naming request is in flight, and a late result must not rename the
+        # adopted session.
+        bound_session_id = self._config.session_id
+        bound_manager = self._config.session_manager
+        bound_provider = self._harness.config.provider
+        bound_model = self.model
         if not self._should_auto_name_session():
             return
         try:
-            title = await self._generate_session_name(first_message)
+            title = await self._generate_session_name(
+                first_message, provider=bound_provider, model=bound_model
+            )
         except Exception as exc:  # noqa: BLE001 - naming must not interrupt the agent turn
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -3931,6 +3941,13 @@ class CodingSession:
         if title is None:
             title = _fallback_session_name(first_message)
         if title is None:
+            return
+        if (
+            self._config.session_id != bound_session_id
+            or self._config.session_manager is not bound_manager
+        ):
+            # The session was replaced while naming ran; drop the stale result
+            # instead of retitling the adopted session.
             return
         persisted = self._persist_session_name(
             title,
@@ -3948,7 +3965,13 @@ class CodingSession:
             return False
         return sum(isinstance(message, UserMessage) for message in self._harness.messages) == 1
 
-    async def _generate_session_name(self, first_message: str) -> str | None:
+    async def _generate_session_name(
+        self,
+        first_message: str,
+        *,
+        provider: ModelProvider,
+        model: str,
+    ) -> str | None:
         prompt = (
             "Create a concise session name for this first user message. "
             "Use at most four words.\n\n"
@@ -3956,8 +3979,8 @@ class CodingSession:
         )
         text_parts: list[str] = []
         final_text: str | None = None
-        async for event in self._harness.config.provider.stream_response(
-            model=self.model,
+        async for event in provider.stream_response(
+            model=model,
             system=SESSION_NAME_SYSTEM_PROMPT,
             messages=[UserMessage(content=prompt)],
             tools=[],

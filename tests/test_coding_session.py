@@ -70,7 +70,7 @@ from tau_coding import (
 )
 from tau_coding import session as coding_session_module
 from tau_coding.codex_model_store import cached_codex_model_catalog, save_codex_model_catalog
-from tau_coding.events import AgentSettledEvent, QueueUpdateEvent
+from tau_coding.events import AgentSettledEvent, QueueUpdateEvent, SessionAgentEndEvent
 from tau_coding.extensions import (
     DynamicProvider,
     OpenAICompatibleTransport,
@@ -2874,6 +2874,97 @@ async def test_session_auto_naming_does_not_delay_the_agent_request(tmp_path: Pa
         session.messages,
         (UserMessage(content="Name me in parallel"), AssistantMessage(content="Done")),
     )
+
+
+@pytest.mark.anyio
+async def test_auto_naming_does_not_rename_a_session_adopted_mid_request(tmp_path: Path) -> None:
+    """Naming outliving the reply must not retitle a session adopted meanwhile."""
+
+    class NamingBlocksUntilReleasedProvider:
+        def __init__(self) -> None:
+            self.naming_release = asyncio.Event()
+            self.systems: list[str] = []
+
+        def stream_response(
+            self,
+            *,
+            model: str,
+            system: str,
+            messages: list[AgentMessage],
+            tools: list[AgentTool],
+            signal: CancellationToken | None = None,
+            session_id: str | None = None,
+        ) -> AsyncIterator[AssistantMessageEvent]:
+            del model, tools, signal, session_id
+            self.systems.append(system)
+            is_naming = system == SESSION_NAME_SYSTEM_PROMPT
+
+            async def iterator() -> AsyncIterator[AssistantMessageEvent]:
+                if is_naming:
+                    await self.naming_release.wait()
+                    yield assistant_start(model="fake")
+                    yield assistant_done(message=AssistantMessage(content="Late name"))
+                    return
+                yield assistant_start(model="fake")
+                yield assistant_done(message=AssistantMessage(content="Done"))
+
+            return iterator()
+
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    other = manager.create_session(cwd=tmp_path / "other", model="fake")
+    provider = NamingBlocksUntilReleasedProvider()
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+    from dataclasses import replace as dataclass_replace
+
+    replacement = await CodingSession.load(
+        dataclass_replace(
+            session._config,  # noqa: SLF001 - direct adoption ownership seam
+            storage=JsonlSessionStorage(other.path),
+            session_id=other.id,
+            extension_runtime=session.extension_runtime,
+        )
+    )
+
+    stream = session.prompt("Name me in parallel")
+    async for event in stream:
+        if isinstance(event, SessionAgentEndEvent):
+            break
+
+    async def drain() -> None:
+        async for _event in stream:
+            pass
+
+    # A pending collector pulls the harness stream to exhaustion, leaving the
+    # harness idle while the naming request is still in flight.
+    collector = asyncio.create_task(drain())
+    while session.is_running:
+        await asyncio.sleep(0)
+    assert not session.is_running
+    await session._adopt_replacement(replacement, reason="branch")  # noqa: SLF001
+
+    provider.naming_release.set()
+    await asyncio.wait_for(collector, 2)
+
+    # The stale naming result is dropped: the adopted session keeps its own
+    # (missing) title and the originating record is not retitled with a result
+    # generated under the adopted runtime's metadata.
+    adopted = manager.get_session(other.id)
+    assert adopted is not None
+    assert adopted.title is None
+    original = manager.get_session(record.id)
+    assert original is not None
+    assert original.title is None
 
 
 @pytest.mark.anyio

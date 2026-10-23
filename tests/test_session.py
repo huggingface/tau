@@ -450,6 +450,25 @@ async def test_jsonl_storage_cache_matches_reread_when_append_retargets_legacy_l
     assert after == await JsonlSessionStorage(path).read_all()
 
 
+@pytest.mark.anyio
+async def test_jsonl_storage_reads_do_not_alias_cached_entries(tmp_path: Path) -> None:
+    path = tmp_path / "session.jsonl"
+    storage = JsonlSessionStorage(path)
+    first = MessageEntry(id="one", message=UserMessage(content="durable"))
+    await storage.append(first)
+
+    entries = await storage.read_all()
+    entries[0].message.content = "in-memory-only"
+
+    second = MessageEntry(id="two", parent_id="one", message=UserMessage(content="again"))
+    await storage.append(second)
+
+    # Mutating a returned entry must not corrupt future cached reads.
+    cached = await storage.read_all()
+    assert cached[0].message.content == "durable"
+    assert cached == await JsonlSessionStorage(path).read_all()
+
+
 def test_session_state_replays_linear_entries() -> None:
     user = UserMessage(content="Hi", timestamp=1)
     assistant = AssistantMessage(content="Hello", timestamp=2)

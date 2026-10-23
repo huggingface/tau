@@ -128,10 +128,10 @@ class JsonlSessionStorage:
             return []
         parsed = self._parsed
         if parsed is not None and parsed.stamp == stamp:
-            return list(parsed.entries)
+            return _isolated_entries(parsed.entries)
         entries = entries_from_json_lines(self.path.read_text(encoding="utf-8").split("\n"))
         self._parsed = _ParsedTranscript(stamp=stamp, entries=tuple(entries))
-        return entries
+        return _isolated_entries(entries)
 
     def _extend_parsed(
         self, previous_stamp: tuple[int, int, int] | None, lines: Sequence[str]
@@ -227,6 +227,16 @@ class InMemorySessionStorage:
     async def read_all(self) -> list[SessionEntry]:
         async with self._lock:
             return list(self.entries)
+
+
+def _isolated_entries(entries: Sequence[SessionEntry]) -> list[SessionEntry]:
+    """Return entries that do not alias the parsed cache.
+
+    Entries, their nested messages, and custom data are mutable; a caller that
+    edits a returned entry must not be able to change what future cached reads
+    return without any disk write, so every read hands out fresh copies.
+    """
+    return [entry.model_copy(deep=True) for entry in entries]
 
 
 def _appending_preserves_legacy_labels(entries: Sequence[SessionEntry]) -> bool:

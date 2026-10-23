@@ -3095,6 +3095,50 @@ async def test_tui_submit_prompt_optimistically_appends_user_message_without_ful
 
 
 @pytest.mark.anyio
+async def test_second_prompt_before_first_frame_queues_instead_of_cancelling() -> None:
+    """A submission racing the reserved prompt must queue, not replace it."""
+
+    class YieldingFakeSession(FakeSession):
+        # Yield control after every event so a second submission observes the
+        # running state instead of racing a turn that completes instantly.
+        async def prompt(self, text: str, **kwargs: object) -> AsyncIterator[AgentEvent]:
+            async for event in super().prompt(text, **kwargs):
+                yield event
+                await asyncio.sleep(0)
+
+    session = YieldingFakeSession(
+        events=[
+            AgentStartEvent(),
+            MessageEndEvent(message=UserMessage(content="first")),
+            AgentEndEvent(),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "first"
+        first = asyncio.create_task(app._submit_prompt_from_editor(streaming_behavior="steer"))
+        while app._pending_prompt_run_id is None:
+            await asyncio.sleep(0)
+        prompt.text = "second"
+        second = asyncio.create_task(app._submit_prompt_from_editor(streaming_behavior="steer"))
+
+        for _ in range(100):
+            if first.done() and second.done() and app._pending_prompt_run_id is None:
+                break
+            await pilot.pause()
+        await pilot.pause()
+
+    # Both prompts reach the session: the first was never cancelled, and the
+    # second was queued against the running turn instead of replacing it.
+    assert session.prompt_texts == ["first", "second"]
+    assert session.streaming_behaviors == [None, "steer"]
+    assert app._optimistic_user_messages == []
+    assert app._pending_prompt_run_id is None
+
+
+@pytest.mark.anyio
 async def test_tui_transformed_prompt_replaces_optimistic_user_message() -> None:
     # An extension `input` hook may transform the submitted text inside
     # session.prompt, so the confirmed UserMessage content differs from the

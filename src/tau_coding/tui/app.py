@@ -4675,6 +4675,12 @@ class TauTuiApp(App[None]):
         self._extension_component_failures_reported: set[str] = set()
         self._connect_extension_runtime(session)
         self._prompt_worker: Worker[None] | None = None
+        # A submitted prompt is "pending" from its submit call until its worker
+        # receives the session's first event (or is cancelled). Submissions
+        # arriving in that window must queue instead of replacing the reserved
+        # exclusive worker, which would cancel the prompt before it ever runs.
+        self._pending_prompt_run_id: int | None = None
+        self._pending_prompt_started = asyncio.Event()
         self._compaction_worker: Worker[None] | None = None
         self._compacting = False
         self._compaction_run_id = 0
@@ -5241,6 +5247,18 @@ class TauTuiApp(App[None]):
                 self.exit()
             return
 
+        if self._pending_prompt_run_id is not None:
+            # A submitted prompt is waiting for its first frame; hold this
+            # submission so it cannot replace the reserved exclusive worker
+            # before the session run starts.
+            started = self._pending_prompt_started
+            await started.wait()
+            if self.state.running or bool(getattr(self.session, "is_running", False)):
+                # The reserved run is live; queue as during any running turn.
+                self._remember_prompt(text)
+                await self._queue_prompt(text, streaming_behavior=streaming_behavior)
+                return
+            # The reserved run resolved without starting; submit fresh below.
         if self.state.running:
             self._remember_prompt(text)
             await self._queue_prompt(text, streaming_behavior=streaming_behavior)
@@ -5325,26 +5343,48 @@ class TauTuiApp(App[None]):
         """Add a prompt to the transcript and start the agent worker."""
         self._prompt_run_id += 1
         run_id = self._prompt_run_id
-        # Custom messages are never rendered optimistically: the optimistic
-        # dedupe matches on exact content equality with the post-expansion
-        # event (see _consume_optimistic_user_event), and a mismatch would
-        # double-render. They render once, from the confirmed user event,
-        # which carries their custom_type/details.
-        if custom_type is None and _should_optimistically_render_prompt(text):
-            self._optimistic_user_messages.append((run_id, text))
-            await self._append_optimistic_user_message(text)
-        self._prompt_worker = self.run_worker(
-            self._run_prompt_after_refresh(
-                text, run_id, source=source, custom_type=custom_type, details=details
-            ),
-            exclusive=True,
-        )
+        # Reserve the run before any await: a submission arriving while this
+        # one renders its optimistic row or waits for its first frame must
+        # queue instead of replacing the reserved exclusive worker, which
+        # would cancel the prompt before it ever reaches the session.
+        started = asyncio.Event()
+        self._pending_prompt_run_id = run_id
+        self._pending_prompt_started = started
+        try:
+            # Custom messages are never rendered optimistically: the optimistic
+            # dedupe matches on exact content equality with the post-expansion
+            # event (see _consume_optimistic_user_event), and a mismatch would
+            # double-render. They render once, from the confirmed user event,
+            # which carries their custom_type/details.
+            if custom_type is None and _should_optimistically_render_prompt(text):
+                self._optimistic_user_messages.append((run_id, text))
+                await self._append_optimistic_user_message(text)
+            self._prompt_worker = self.run_worker(
+                self._run_prompt_after_refresh(
+                    text,
+                    run_id,
+                    started=started,
+                    source=source,
+                    custom_type=custom_type,
+                    details=details,
+                ),
+                exclusive=True,
+            )
+        except BaseException:
+            # The run never started, so its optimistic row has no confirming
+            # event coming; release submitters and drop the reservation.
+            if self._pending_prompt_run_id == run_id:
+                self._pending_prompt_run_id = None
+            started.set()
+            self._clear_optimistic_user_messages(run_id=run_id)
+            raise
 
     async def _run_prompt_after_refresh(
         self,
         text: str,
         run_id: int,
         *,
+        started: asyncio.Event,
         source: Literal["interactive", "extension"],
         custom_type: str | None,
         details: dict[str, JSONValue] | None,
@@ -5355,11 +5395,25 @@ class TauTuiApp(App[None]):
         # handler and delays the frame that shows the submitted prompt.
         # (`App.wait_for_refresh` cannot be used: it requires `App._task`,
         # which only `run_test` sets.)
-        refreshed = asyncio.Event()
-        if self.call_after_refresh(refreshed.set):
-            await refreshed.wait()
+        try:
+            refreshed = asyncio.Event()
+            if self.call_after_refresh(refreshed.set):
+                await refreshed.wait()
+        except asyncio.CancelledError:
+            # The run never started, so its optimistic row has no confirming
+            # event coming; release submitters and drop the reservation.
+            if self._pending_prompt_run_id == run_id:
+                self._pending_prompt_run_id = None
+            started.set()
+            self._clear_optimistic_user_messages(run_id=run_id)
+            raise
         await self._run_prompt(
-            text, run_id, source=source, custom_type=custom_type, details=details
+            text,
+            run_id,
+            source=source,
+            custom_type=custom_type,
+            details=details,
+            on_started=started,
         )
 
     async def _append_optimistic_user_message(
@@ -6234,13 +6288,21 @@ class TauTuiApp(App[None]):
         source: Literal["interactive", "extension"] = "interactive",
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
+        on_started: asyncio.Event | None = None,
     ) -> None:
         """Run one prompt and stream session events into the TUI state."""
         active_run_id = self._prompt_run_id if run_id is None else run_id
+        run_started = False
         try:
             async for event in self.session.prompt(
                 text, source=source, custom_type=custom_type, details=details
             ):
+                if not run_started:
+                    # The session is running from the first event on; release
+                    # submitters waiting for the reserved prompt to start.
+                    run_started = True
+                    if on_started is not None:
+                        on_started.set()
                 if active_run_id != self._prompt_run_id:
                     return
                 if self._consume_optimistic_user_event(event, run_id=active_run_id):
@@ -6290,6 +6352,12 @@ class TauTuiApp(App[None]):
             self._refresh()
         finally:
             self._clear_optimistic_user_messages(run_id=active_run_id)
+            if self._pending_prompt_run_id == active_run_id:
+                self._pending_prompt_run_id = None
+            if on_started is not None:
+                # Runs without events (for example an input hook that handled
+                # the prompt) must still release submitters.
+                on_started.set()
             if active_run_id == self._prompt_run_id:
                 self._prompt_worker = None
 
