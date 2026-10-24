@@ -22,6 +22,7 @@ from tau_coding import (
     create_write_tool,
 )
 from tau_coding.image_processing import DEFAULT_MAX_SOURCE_IMAGE_BYTES
+from tau_coding.tools import ToolInputError
 
 
 def image_bytes(format_name: str = "PNG", *, size: tuple[int, int] = (8, 6)) -> bytes:
@@ -486,3 +487,75 @@ async def test_bash_tool_cancellation_kills_shell_children(tmp_path: Path) -> No
     assert result.details["cancelled"] is True
     assert "cancelled" in result.text
     assert duration < 0.5
+
+
+@pytest.mark.anyio
+async def test_cut_off_write_names_the_cut_off_not_the_path(tmp_path: Path) -> None:
+    tool = create_write_tool(cwd=tmp_path)
+    text = '{"path":"x.txt","content":"abc'
+
+    with pytest.raises(ToolInputError) as caught:
+        await tool.execute("call-1", {"_raw_arguments": text})
+
+    message = str(caught.value)
+    assert f"after {len(text)} characters" in message
+    assert "cut off" in message
+    assert "nothing was written" in message
+    assert "path must be a string" not in message
+    assert not (tmp_path / "x.txt").exists()
+
+
+@pytest.mark.anyio
+async def test_cut_off_bash_does_not_run(tmp_path: Path) -> None:
+    tool = create_bash_tool(cwd=tmp_path)
+
+    with pytest.raises(ToolInputError) as caught:
+        await tool.execute("call-1", {"_raw_arguments": '{"command":"touch MARK'})
+
+    assert "the bash tool did not run" in str(caught.value)
+    assert not (tmp_path / "MARK").exists()
+
+
+@pytest.mark.anyio
+async def test_parsed_arguments_still_reach_the_tool(tmp_path: Path) -> None:
+    tool = create_write_tool(cwd=tmp_path)
+
+    await tool.execute("call-1", {"path": "x.txt", "content": "abc"})
+
+    assert (tmp_path / "x.txt").read_text(encoding="utf-8") == "abc"
+
+
+@pytest.mark.anyio
+async def test_missing_path_names_the_missing_argument(tmp_path: Path) -> None:
+    tool = create_write_tool(cwd=tmp_path)
+
+    with pytest.raises(ToolInputError) as caught:
+        await tool.execute("call-1", {"content": "abc"})
+
+    message = str(caught.value)
+    assert "`path` is missing" in message
+    assert "must be a string" not in message
+    assert "nothing was run" in message
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.anyio
+async def test_missing_argument_lists_the_keys_the_call_sent(tmp_path: Path) -> None:
+    tool = create_bash_tool(cwd=tmp_path)
+
+    with pytest.raises(ToolInputError) as caught:
+        await tool.execute("call-1", {"description": "list files"})
+
+    message = str(caught.value)
+    assert "`command` is missing" in message
+    assert "`description`" in message
+
+
+@pytest.mark.anyio
+async def test_non_string_path_still_says_must_be_a_string(tmp_path: Path) -> None:
+    tool = create_write_tool(cwd=tmp_path)
+
+    with pytest.raises(ToolInputError) as caught:
+        await tool.execute("call-1", {"path": 3, "content": "abc"})
+
+    assert "path must be a string" in str(caught.value)
