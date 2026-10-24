@@ -6588,8 +6588,18 @@ class TauTuiApp(App[None]):
         applied = self._apply_selected_completion(prompt.text)
         if applied is None or item is None:
             return
-        prompt.text = applied
         cursor = item.cursor_after_apply()
+        if item.kind is CompletionKind.FILE_REFERENCE and item.replacement.endswith("/"):
+            # Commit a directory reference instead of drilling into it: leave
+            # the @ token by moving past (or inserting) a separating space, so
+            # accepting a directory does not immediately reopen the picker on
+            # the directory's children.
+            if cursor < len(applied) and applied[cursor].isspace():
+                cursor += 1
+            else:
+                applied = f"{applied[:cursor]} {applied[cursor:]}"
+                cursor += 1
+        prompt.text = applied
         prompt.cursor_position = cursor
         self._completion_state = self._build_completion_state(prompt.text, cursor=cursor)
         self._refresh_completions()
