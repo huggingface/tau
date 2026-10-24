@@ -81,6 +81,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "opencode-go",
         "opencode",
         "github-copilot",
+        "cheaperinference",
     ]
 
 
@@ -500,6 +501,31 @@ def test_model_cost_for_input_tokens_rejects_invalid_count(input_tokens: int) ->
 
     with pytest.raises(ValueError, match="non-negative integer"):
         model_cost_for_input_tokens(metadata, input_tokens)
+
+
+def test_builtin_catalog_golden_cheaperinference_entry() -> None:
+    entry = builtin_provider_entry("cheaperinference")
+    assert entry is not None
+    assert entry.display_name == "Cheaper Inference"
+    assert entry.kind == "openai-compatible"
+    assert entry.base_url == "https://api.cheaperinference.com/v1"
+    assert entry.api_key_env == "CHEAPER_INFERENCE_API_KEY"
+    assert entry.credential_name == "cheaperinference"
+    assert entry.api == "openai-completions"
+    assert entry.models == (
+        "gpt-5.4-mini",
+        "gpt-5.4",
+        "claude-sonnet-5",
+        "gemini-3.1-pro",
+        "deepseek-v4-flash",
+    )
+    assert entry.default_model == "gpt-5.4-mini"
+    assert entry.context_windows["gemini-3.1-pro"] == 1048576
+    assert entry.thinking_levels is None
+    assert entry.model_metadata["gpt-5.4-mini"].input == ("text", "image")
+    assert entry.model_metadata["deepseek-v4-flash"].input == ("text",)
+    assert entry.model_metadata["deepseek-v4-flash"].max_tokens == 384000
+    assert entry.docs_url == "https://cheaperinference.com/docs"
 
 
 def test_builtin_catalog_entries_are_internally_consistent() -> None:
