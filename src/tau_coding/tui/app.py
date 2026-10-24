@@ -176,7 +176,11 @@ from tau_coding.tui.local_backends import (
     LocalSearchResultsScreen,
 )
 from tau_coding.tui.project_trust import ProjectTrustScreen, prompt_project_trust
-from tau_coding.tui.state import TuiState, format_terminal_command_result_block
+from tau_coding.tui.state import (
+    TuiState,
+    format_terminal_command_result_block,
+    has_visible_assistant_text,
+)
 from tau_coding.tui.terminal_notification import TerminalNotificationController
 from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.themes import (
@@ -6406,19 +6410,25 @@ class TauTuiApp(App[None]):
                     # boundary so the mounted transcript cannot drop the error.
                     self._refresh()
                     return
+                # Mirrors ``TuiState.add_assistant_message``: the two filters
+                # must agree, or the canonical-item slice below misaligns.
                 visible_blocks = [
                     block
                     for block in event.message.content
                     if (
                         isinstance(block, TextContent)
-                        and bool(block.text)
+                        and has_visible_assistant_text(block.text)
                         or isinstance(block, ThinkingContent)
                         and bool(block.thinking)
                     )
                 ]
                 canonical_items = self.state.items[-len(visible_blocks) :] if visible_blocks else []
                 if (
-                    any(isinstance(block, ThinkingContent) for block in visible_blocks)
+                    # No visible content means the message contributed nothing
+                    # but tool rows; drop its provisional streaming widgets
+                    # instead of appending a blank block.
+                    not visible_blocks
+                    or any(isinstance(block, ThinkingContent) for block in visible_blocks)
                     or len(visible_blocks) > 1
                 ):
                     # Replace only this message's provisional streaming widgets;

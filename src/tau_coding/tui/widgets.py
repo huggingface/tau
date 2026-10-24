@@ -628,7 +628,7 @@ class TranscriptMessageWidget(Horizontal):
     TranscriptMessageWidget {
         width: 1fr;
         height: auto;
-        margin: 1 1 2 0;
+        margin: 1 1 1 0;
     }
 
     TranscriptMessageWidget > .transcript-message-body {
@@ -639,6 +639,12 @@ class TranscriptMessageWidget(Horizontal):
 
     TranscriptMessageWidget > .transcript-markdown-body > MarkdownParagraph {
         margin: 0 0 1 0;
+    }
+
+    /* The final paragraph reserves no trailing blank line; the widget margin
+       below already separates blocks, matching plain-body rows. */
+    TranscriptMessageWidget > .transcript-markdown-body > MarkdownParagraph:last-child {
+        margin: 0;
     }
 
     """
@@ -871,12 +877,18 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
     StreamingTranscriptMessageWidget {
         width: 1fr;
         height: auto;
-        margin: 1 1 2 1;
+        margin: 1 1 1 1;
         padding: 0 1 0 0;
     }
 
     StreamingTranscriptMessageWidget > MarkdownParagraph {
         margin: 0 0 1 0;
+    }
+
+    /* The final paragraph reserves no trailing blank line; the widget margin
+       below already separates blocks, matching plain-body rows. */
+    StreamingTranscriptMessageWidget > MarkdownParagraph:last-child {
+        margin: 0;
     }
 
     StreamingTranscriptMessageWidget.-streaming MarkdownFence {

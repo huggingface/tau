@@ -198,7 +198,12 @@ def test_tui_state_groups_adjacent_reads_from_one_assistant_message() -> None:
     assert [member.tool_call_id for member in item.grouped_tool_calls] == ["call-1", "call-2"]
     assert state.find_tool_item("call-1") is item
     assert state.find_tool_item("call-2") is item
-    assert state.resolve_tool_invocation(item, expanded=True) == "→ read a.py\n→ read b.py"
+    # Collapsed, the widget falls back to the compact path list.
+    assert state.resolve_tool_invocation(item, expanded=False) is None
+    # Expanding a read run shows each member's previewed result, like edits.
+    assert state.resolve_tool_invocation(item, expanded=True) == (
+        "→ read a.py\n\n✓ read\none\n\n→ read b.py\n\n✓ read\ntwo"
+    )
     assert item.tool_result_text == "✓ read group"
 
 
@@ -628,7 +633,8 @@ def test_tui_adapter_does_not_group_reads_separated_by_assistant_text() -> None:
     assert [item.text for item in state.items] == ["then", "→ read a.py", "→ read b.py"]
 
 
-def test_tui_state_does_not_group_reads_from_different_assistant_messages() -> None:
+def test_tui_state_groups_reads_from_tool_only_messages() -> None:
+    """Read runs continue across tool-only messages, like every other tool."""
     state = TuiState()
     state.load_messages(
         [
@@ -643,7 +649,12 @@ def test_tui_state_does_not_group_reads_from_different_assistant_messages() -> N
         ]
     )
 
-    assert [item.text for item in state.items] == ["→ read a.py", "→ read b.py"]
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == "→ Read 2 files\n  - a.py\n  - b.py"
+    assert item.grouped_tool_calls is not None
+    assert [member.tool_call_id for member in item.grouped_tool_calls] == ["call-1", "call-2"]
+    assert state.find_tool_item("call-2") is item
 
 
 def test_tui_adapter_records_tool_progress_and_result() -> None:
