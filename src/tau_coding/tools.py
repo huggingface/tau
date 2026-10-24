@@ -534,7 +534,7 @@ def create_edit_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
             raise ToolInputError(f"Could not edit file: {path}. Path is a directory.")
 
         async with _file_lock(path):
-            raw_content = path.read_text(encoding="utf-8")
+            raw_content = path.read_bytes().decode("utf-8")
             bom, content = _strip_bom(raw_content)
             original_ending = detect_line_ending(content)
             normalized = normalize_to_lf(content)
@@ -542,7 +542,7 @@ def create_edit_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
                 normalized, edits, str(path)
             )
             final_content = bom + restore_line_endings(new_content, original_ending)
-            path.write_text(final_content, encoding="utf-8")
+            path.write_text(final_content, encoding="utf-8", newline="")
 
         diff_text, first_changed_line = generate_diff_string(base_content, new_content)
         patch = generate_unified_patch(str(path), base_content, new_content)
