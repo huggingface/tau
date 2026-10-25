@@ -51,6 +51,7 @@ jobs:
           path: website/dist
 
   deploy:
+    if: github.repository == 'huggingface/tau'
     permissions:
       id-token: write
       pages: write
