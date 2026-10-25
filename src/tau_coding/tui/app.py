@@ -8,6 +8,7 @@ import gc
 import os
 import stat
 import tempfile
+import threading
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
@@ -4607,12 +4608,14 @@ class TauTuiApp(App[None]):
         startup_message: str | None = None,
         startup_notice: str | None = None,
         startup_update_notice: str | None = None,
+        deferred_update_notice: Callable[[], str | None] | None = None,
         startup_alerts: Sequence[str] = (),
         startup_notices: Sequence[str] = (),
         initial_prompt: str | None = None,
     ) -> None:
         self.tui_settings = tui_settings or TuiSettings()
         self.startup_message = startup_message
+        self._deferred_update_notice = deferred_update_notice
         legacy_notices = (startup_notice,) if startup_notice else ()
         self.startup_notices = tuple((*startup_notices, *legacy_notices))
         self.initial_prompt = initial_prompt
@@ -4630,7 +4633,7 @@ class TauTuiApp(App[None]):
         self._applying_settings_theme = False
         self._bindings = BindingsMap(_app_bindings(self.tui_settings.keybindings))
         self.session = session
-        self.state = TuiState(skills=session.skills)
+        self.state = TuiState(skills=session.skills, cwd=session.cwd)
         if startup_update_notice is not None:
             self.state.add_item("status", startup_update_notice, highlight="update")
         for alert in startup_alerts:
@@ -4672,6 +4675,12 @@ class TauTuiApp(App[None]):
         self._extension_component_failures_reported: set[str] = set()
         self._connect_extension_runtime(session)
         self._prompt_worker: Worker[None] | None = None
+        # A submitted prompt is "pending" from its submit call until its worker
+        # receives the session's first event (or is cancelled). Submissions
+        # arriving in that window must queue instead of replacing the reserved
+        # exclusive worker, which would cancel the prompt before it ever runs.
+        self._pending_prompt_run_id: int | None = None
+        self._pending_prompt_started = asyncio.Event()
         self._compaction_worker: Worker[None] | None = None
         self._compacting = False
         self._compaction_run_id = 0
@@ -4691,6 +4700,7 @@ class TauTuiApp(App[None]):
         self._app_has_focus = True
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
+        self._terminal_session_title: str | None = None
         self._sync_session_title()
 
     async def prompt_project_trust(self, request: ProjectTrustRequest) -> TrustChoice | None:
@@ -4699,6 +4709,7 @@ class TauTuiApp(App[None]):
 
     def _sync_session_title(self) -> None:
         """Reflect the active session name in the terminal tab title."""
+        self._terminal_session_title = getattr(self.session, "session_title", None)
         self._sync_terminal_title()
 
     def _is_working(self) -> bool:
@@ -4707,8 +4718,10 @@ class TauTuiApp(App[None]):
 
     def _sync_terminal_title(self) -> None:
         """Reflect the active session name and running state in the terminal tab title."""
+        # Spinner ticks call this several times per second; the session title
+        # is re-read only by `_sync_session_title`, which hits the index.
         self._terminal_title.update(
-            getattr(self.session, "session_title", None),
+            self._terminal_session_title,
             running=self._is_working(),
             frame=self._activity_frame,
         )
@@ -4851,6 +4864,8 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
         if self.startup_message:
             self._notify(self.startup_message, severity="warning")
+        if self._deferred_update_notice is not None:
+            self.run_worker(self._show_deferred_update_notice(), group="update-check")
         # UI is live and the bridge is installed (__init__) — release the
         # deferred session_start so handlers can notify / open dialogs.
         await self.session.emit_pending_session_start()
@@ -4859,6 +4874,30 @@ class TauTuiApp(App[None]):
         else:
             # Freeze import-time objects; an initial prompt collects when it settles.
             self.call_after_refresh(_collect_garbage_while_idle)
+
+    async def _show_deferred_update_notice(self) -> None:
+        """Run a due PyPI update check off the event loop and show any notice."""
+        check = self._deferred_update_notice
+        self._deferred_update_notice = None
+        if check is None:
+            return
+        message = await _run_in_daemon_thread(check)
+        if message is None or not self.screen_stack:
+            return
+        if self._is_working():
+            # Appending a transcript row would cut into the streaming reply.
+            self._notify(message)
+            return
+        self.state.add_item("status", message, highlight="update")
+        try:
+            transcript = self.query_one("#transcript", TranscriptView)
+        except NoMatches:
+            return
+        await transcript.append_item(
+            self.state.items[-1],
+            theme=self.tui_settings.resolved_theme,
+            show_tool_results=self.state.show_tool_results,
+        )
 
     async def on_event(self, event: events.Event) -> None:
         """Consult extension key interceptors before Textual's dispatch.
@@ -5208,6 +5247,18 @@ class TauTuiApp(App[None]):
                 self.exit()
             return
 
+        if self._pending_prompt_run_id is not None:
+            # A submitted prompt is waiting for its first frame; hold this
+            # submission so it cannot replace the reserved exclusive worker
+            # before the session run starts.
+            started = self._pending_prompt_started
+            await started.wait()
+            if self.state.running or bool(getattr(self.session, "is_running", False)):
+                # The reserved run is live; queue as during any running turn.
+                self._remember_prompt(text)
+                await self._queue_prompt(text, streaming_behavior=streaming_behavior)
+                return
+            # The reserved run resolved without starting; submit fresh below.
         if self.state.running:
             self._remember_prompt(text)
             await self._queue_prompt(text, streaming_behavior=streaming_behavior)
@@ -5292,17 +5343,77 @@ class TauTuiApp(App[None]):
         """Add a prompt to the transcript and start the agent worker."""
         self._prompt_run_id += 1
         run_id = self._prompt_run_id
-        # Custom messages are never rendered optimistically: the optimistic
-        # dedupe matches on exact content equality with the post-expansion
-        # event (see _consume_optimistic_user_event), and a mismatch would
-        # double-render. They render once, from the confirmed user event,
-        # which carries their custom_type/details.
-        if custom_type is None and _should_optimistically_render_prompt(text):
-            self._optimistic_user_messages.append((run_id, text))
-            await self._append_optimistic_user_message(text)
-        self._prompt_worker = self.run_worker(
-            self._run_prompt(text, run_id, source=source, custom_type=custom_type, details=details),
-            exclusive=True,
+        # Reserve the run before any await: a submission arriving while this
+        # one renders its optimistic row or waits for its first frame must
+        # queue instead of replacing the reserved exclusive worker, which
+        # would cancel the prompt before it ever reaches the session.
+        started = asyncio.Event()
+        self._pending_prompt_run_id = run_id
+        self._pending_prompt_started = started
+        try:
+            # Custom messages are never rendered optimistically: the optimistic
+            # dedupe matches on exact content equality with the post-expansion
+            # event (see _consume_optimistic_user_event), and a mismatch would
+            # double-render. They render once, from the confirmed user event,
+            # which carries their custom_type/details.
+            if custom_type is None and _should_optimistically_render_prompt(text):
+                self._optimistic_user_messages.append((run_id, text))
+                await self._append_optimistic_user_message(text)
+            self._prompt_worker = self.run_worker(
+                self._run_prompt_after_refresh(
+                    text,
+                    run_id,
+                    started=started,
+                    source=source,
+                    custom_type=custom_type,
+                    details=details,
+                ),
+                exclusive=True,
+            )
+        except BaseException:
+            # The run never started, so its optimistic row has no confirming
+            # event coming; release submitters and drop the reservation.
+            if self._pending_prompt_run_id == run_id:
+                self._pending_prompt_run_id = None
+            started.set()
+            self._clear_optimistic_user_messages(run_id=run_id)
+            raise
+
+    async def _run_prompt_after_refresh(
+        self,
+        text: str,
+        run_id: int,
+        *,
+        started: asyncio.Event,
+        source: Literal["interactive", "extension"],
+        custom_type: str | None,
+        details: dict[str, JSONValue] | None,
+    ) -> None:
+        """Start a prompt run once the optimistic prompt has been painted."""
+        # Textual starts workers eagerly, so without this wait the session's
+        # synchronous setup (input hooks, persistence) runs inside the submit
+        # handler and delays the frame that shows the submitted prompt.
+        # (`App.wait_for_refresh` cannot be used: it requires `App._task`,
+        # which only `run_test` sets.)
+        try:
+            refreshed = asyncio.Event()
+            if self.call_after_refresh(refreshed.set):
+                await refreshed.wait()
+        except asyncio.CancelledError:
+            # The run never started, so its optimistic row has no confirming
+            # event coming; release submitters and drop the reservation.
+            if self._pending_prompt_run_id == run_id:
+                self._pending_prompt_run_id = None
+            started.set()
+            self._clear_optimistic_user_messages(run_id=run_id)
+            raise
+        await self._run_prompt(
+            text,
+            run_id,
+            source=source,
+            custom_type=custom_type,
+            details=details,
+            on_started=started,
         )
 
     async def _append_optimistic_user_message(
@@ -6177,13 +6288,21 @@ class TauTuiApp(App[None]):
         source: Literal["interactive", "extension"] = "interactive",
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
+        on_started: asyncio.Event | None = None,
     ) -> None:
         """Run one prompt and stream session events into the TUI state."""
         active_run_id = self._prompt_run_id if run_id is None else run_id
+        run_started = False
         try:
             async for event in self.session.prompt(
                 text, source=source, custom_type=custom_type, details=details
             ):
+                if not run_started:
+                    # The session is running from the first event on; release
+                    # submitters waiting for the reserved prompt to start.
+                    run_started = True
+                    if on_started is not None:
+                        on_started.set()
                 if active_run_id != self._prompt_run_id:
                     return
                 if self._consume_optimistic_user_event(event, run_id=active_run_id):
@@ -6233,6 +6352,12 @@ class TauTuiApp(App[None]):
             self._refresh()
         finally:
             self._clear_optimistic_user_messages(run_id=active_run_id)
+            if self._pending_prompt_run_id == active_run_id:
+                self._pending_prompt_run_id = None
+            if on_started is not None:
+                # Runs without events (for example an input hook that handled
+                # the prompt) must still release submitters.
+                on_started.set()
             if active_run_id == self._prompt_run_id:
                 self._prompt_worker = None
 
@@ -8112,6 +8237,37 @@ def _session_option(record: SessionCompletionRecord) -> CompletionOption:
     return CompletionOption(value=record.id, description=" - ".join(description_parts))
 
 
+async def _run_in_daemon_thread[T](function: Callable[[], T]) -> T:
+    """Run blocking work in a daemon thread so quitting never waits for it.
+
+    `asyncio.to_thread` would make interpreter shutdown join the worker,
+    holding an early quit until a slow network request times out.
+    """
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[T] = loop.create_future()
+
+    def resolve(result: T | None, error: BaseException | None) -> None:
+        if future.done():
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(cast(T, result))
+
+    def run() -> None:
+        result: T | None = None
+        error: BaseException | None = None
+        try:
+            result = function()
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the awaiting task
+            error = exc
+        with suppress(RuntimeError):  # the event loop closed while this ran
+            loop.call_soon_threadsafe(resolve, result, error)
+
+    threading.Thread(target=run, name="tau-background-check", daemon=True).start()
+    return await future
+
+
 def _short_path(path: Path) -> str:
     home = Path.home()
     try:
@@ -8768,6 +8924,7 @@ async def run_tui_app(
     session_manager: SessionManager | None = None,
     startup_notice: str | None = None,
     startup_update_notice: str | None = None,
+    deferred_startup_update_notice: Callable[[], str | None] | None = None,
     startup_notices: Sequence[str] = (),
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
@@ -8963,6 +9120,7 @@ async def run_tui_app(
             tui_settings=load_tui_settings(),
             startup_message=startup_message,
             startup_update_notice=startup_update_notice,
+            deferred_update_notice=deferred_startup_update_notice,
             startup_alerts=startup_alerts,
             startup_notices=all_startup_notices,
             initial_prompt=initial_prompt,

@@ -1480,7 +1480,7 @@ class CodingSession:
         """Return this session's indexed human-friendly title, if named."""
         if self._config.session_id is None or self._config.session_manager is None:
             return None
-        record = self._config.session_manager.get_session(self._config.session_id)
+        record = self._config.session_manager.get_session(self._config.session_id, cwd=self.cwd)
         if record is None:
             return None
         return record.title
@@ -3351,6 +3351,7 @@ class CodingSession:
         events: AsyncIterator[AgentEvent] | None = None
         settled_event: AgentSettledEvent | None = None
         auto_name_attempted = False
+        auto_name_task: asyncio.Task[None] | None = None
         overflow_message: AssistantMessage | None = None
         route_failure_message: AssistantMessage | None = None
         try:
@@ -3400,10 +3401,17 @@ class CodingSession:
                     )
                 else:
                     yield event
-                # Let frontends render the confirmed, expanded prompt before
-                # session naming performs its separate provider request.
+                # Frontends have rendered the confirmed, expanded prompt. Name
+                # the session alongside the agent's reply instead of delaying
+                # the reply's request behind the naming request.
                 if auto_name_message is not None:
-                    await self._try_auto_name_session(auto_name_message, context=context)
+                    auto_name_task = asyncio.create_task(
+                        self._try_auto_name_session(auto_name_message, context=context),
+                        name="tau-auto-name-session",
+                    )
+                    # Let the naming request start first so provider calls keep
+                    # a deterministic order.
+                    await asyncio.sleep(0)
             if overflow_message is not None:
                 session_event_1 = CompactionStartEvent(reason="overflow")
                 await self._extension_runtime.emit_event(session_event_1)
@@ -3468,6 +3476,8 @@ class CodingSession:
                     yield failover_event
             else:
                 await self._try_auto_compact(context=context, phase="auto_compact_after_prompt")
+            if auto_name_task is not None:
+                await auto_name_task
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -3476,6 +3486,8 @@ class CodingSession:
             )
             raise
         finally:
+            if auto_name_task is not None and not auto_name_task.done():
+                auto_name_task.cancel()
             try:
                 await self._reconcile_run_persistence(events, context=context)
             finally:
@@ -3741,6 +3753,7 @@ class CodingSession:
                 inference_provider=self._inference_provider,
                 inference_provider_mode=self._inference_provider_mode,
                 preserve_inference_provider=False,
+                cwd=self.cwd,
             )
 
     async def _read_session_entries(self) -> list[SessionEntry]:
@@ -3904,10 +3917,20 @@ class CodingSession:
         *,
         context: AgentCallDiagnosticContext,
     ) -> None:
+        # Bind the naming result to the session that requested it: a concurrent
+        # resume/new adopts a different config and harness on this object while
+        # the naming request is in flight, and a late result must not rename the
+        # adopted session.
+        bound_session_id = self._config.session_id
+        bound_manager = self._config.session_manager
+        bound_provider = self._harness.config.provider
+        bound_model = self.model
         if not self._should_auto_name_session():
             return
         try:
-            title = await self._generate_session_name(first_message)
+            title = await self._generate_session_name(
+                first_message, provider=bound_provider, model=bound_model
+            )
         except Exception as exc:  # noqa: BLE001 - naming must not interrupt the agent turn
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -3918,6 +3941,13 @@ class CodingSession:
         if title is None:
             title = _fallback_session_name(first_message)
         if title is None:
+            return
+        if (
+            self._config.session_id != bound_session_id
+            or self._config.session_manager is not bound_manager
+        ):
+            # The session was replaced while naming ran; drop the stale result
+            # instead of retitling the adopted session.
             return
         persisted = self._persist_session_name(
             title,
@@ -3930,12 +3960,18 @@ class CodingSession:
     def _should_auto_name_session(self) -> bool:
         if self._config.session_id is None or self._config.session_manager is None:
             return False
-        record = self._config.session_manager.get_session(self._config.session_id)
+        record = self._config.session_manager.get_session(self._config.session_id, cwd=self.cwd)
         if record is not None and record.title:
             return False
         return sum(isinstance(message, UserMessage) for message in self._harness.messages) == 1
 
-    async def _generate_session_name(self, first_message: str) -> str | None:
+    async def _generate_session_name(
+        self,
+        first_message: str,
+        *,
+        provider: ModelProvider,
+        model: str,
+    ) -> str | None:
         prompt = (
             "Create a concise session name for this first user message. "
             "Use at most four words.\n\n"
@@ -3943,8 +3979,8 @@ class CodingSession:
         )
         text_parts: list[str] = []
         final_text: str | None = None
-        async for event in self._harness.config.provider.stream_response(
-            model=self.model,
+        async for event in provider.stream_response(
+            model=model,
             system=SESSION_NAME_SYSTEM_PROMPT,
             messages=[UserMessage(content=prompt)],
             tools=[],

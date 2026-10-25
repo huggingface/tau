@@ -8,6 +8,7 @@ Tau now performs a small, best-effort update check in CLI startup paths that lau
 - Versions are compared with `packaging.version.Version` so PEP 440 releases sort correctly.
 - The result is cached under `~/.tau/cache/update-check.json` and refreshed at most once per day.
 - Failures are quiet no-ops: network errors, malformed JSON, missing fields, and invalid versions do not stop startup.
+- Failed fetches are cached too (`"failed": true`) and retried after an hour, so offline launches do not each wait for the 1.5 s request timeout.
 - `TAU_NO_UPDATE_CHECK=1` disables the check, and the check is skipped automatically when `CI` is set.
 - `tau update` upgrades `tau-ai` with the package manager that owns the active Tau environment.
 
@@ -17,7 +18,8 @@ This lives in `tau_coding`, not `tau_agent`, because update notification is CLI 
 
 ## Output policy
 
-- TUI startup renders the update notice as the first transcript item in fixed bright-yellow, bold styling, before release notes, provider errors, theme diagnostics, or session history.
+- TUI startup renders a cached update notice as the first transcript item in fixed bright-yellow, bold styling, before release notes, provider errors, theme diagnostics, or session history.
+- The TUI never waits for PyPI. `cached_update_notice` reads only the cache; when a check is due, the app runs `startup_update_notice` in a daemon thread after mount and appends the notice when it resolves (as a toast if an agent turn is streaming). The daemon thread keeps an early quit from waiting on the request.
 - Print mode writes the notice to stderr for normal text output.
 - Structured print output (`--mode json`) suppresses the notice to avoid corrupting scripted output.
 - Utility commands (`tau --version`, `tau update`, `tau sessions`, `tau export`, `tau providers`, `tau setup`) do not run the update check.

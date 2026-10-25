@@ -48,6 +48,26 @@ class ToolInputError(ValueError):
     """Raised when a tool receives invalid structured arguments."""
 
 
+def _cut_off_arguments_error(name: str, text: str) -> str:
+    """Error for a call whose arguments arrived as unparsed `_raw_arguments`."""
+    try:
+        json.loads(text)
+    except ValueError as exc:
+        error = str(exc)
+    else:
+        error = "not an object of named arguments"
+    outcome = f"the {name} tool did not run"
+    if name == "write":
+        outcome += " and nothing was written"
+    return (
+        f"The {name} call's arguments are not valid JSON after {len(text)} characters "
+        f"({error}), so {outcome}. The reply was probably cut off at the output limit. "
+        "Send less per call: write a long file in parts (write the first part, then "
+        "append with edit or bash; a second write replaces the file), or generate "
+        "repetitive data with a script through bash."
+    )
+
+
 @dataclass(slots=True)
 class ImageSupportState:
     """Mutable active-model image capability shared with built-in tools."""
@@ -121,6 +141,10 @@ class ToolDefinition:
             on_update: ToolUpdateCallback | None = None,
         ) -> AgentToolResult:
             del tool_call_id, on_update
+            if set(arguments) == {"_raw_arguments"}:
+                raise ToolInputError(
+                    _cut_off_arguments_error(self.name, str(arguments["_raw_arguments"]))
+                )
             return await self.executor(arguments, signal)
 
         return AgentTool(
@@ -1027,7 +1051,13 @@ def _truncate_string_to_bytes_from_end(text: str, max_bytes: int) -> str:
 
 
 def _str_arg(arguments: Mapping[str, JSONValue], name: str) -> str:
-    value = arguments.get(name)
+    if name not in arguments:
+        sent = ", ".join(f"`{key}`" for key in arguments) or "no arguments"
+        raise ToolInputError(
+            f"`{name}` is missing (the call sent {sent}); nothing was run. "
+            f"Send the call again with `{name}`."
+        )
+    value = arguments[name]
     if not isinstance(value, str):
         raise ToolInputError(f"{name} must be a string")
     return value

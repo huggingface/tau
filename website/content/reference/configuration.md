@@ -74,7 +74,8 @@ policy. The default is `ask`. Interactive `ask` opens the trust modal; headless
 relative paths or unknown fields. See [Project trust](/guides/project-trust/).
 
 Startup update checks cache their latest PyPI result in
-`~/.tau/cache/update-check.json` and refresh at most once per day. Set
+`~/.tau/cache/update-check.json` and refresh at most once per day. A failed
+check (for example while offline) is retried after an hour. Set
 `TAU_NO_UPDATE_CHECK=1` to disable the check; Tau also skips it when `CI` is set.
 
 `models-store.json` caches an ETag-revalidated models.dev catalog newer than the

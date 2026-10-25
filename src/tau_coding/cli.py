@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 from os import environ
 from pathlib import Path
@@ -71,6 +71,7 @@ from tau_coding.thinking import THINKING_LEVELS, ThinkingLevel, normalize_thinki
 from tau_coding.tui import run_tui_app
 from tau_coding.update_check import (
     UpdateNotice,
+    cached_update_notice,
     startup_release_notes_notice,
     startup_update_notice,
 )
@@ -551,7 +552,8 @@ def main(
         raise typer.Exit()
 
     if not print_requested:
-        notice = _startup_update_notice()
+        # A due PyPI check runs in the background once the TUI is up.
+        notice = _cached_startup_update_notice()
         try:
             tui_args = (
                 model,
@@ -650,6 +652,7 @@ async def run_openai_tui(
     """Run the Textual TUI and return its resumable session id, if any."""
     release_notes_notice = startup_release_notes_notice(_current_version())
     startup_notices = (release_notes_notice.message,) if release_notes_notice is not None else ()
+    deferred_update_notice = _deferred_startup_update_notice() if update_notice is None else None
     return await run_tui_app(
         model=model,
         cwd=cwd,
@@ -659,6 +662,7 @@ async def run_openai_tui(
         auto_compact_token_threshold=auto_compact_token_threshold,
         initial_prompt=initial_prompt,
         startup_update_notice=update_notice.message if update_notice is not None else None,
+        deferred_startup_update_notice=deferred_update_notice,
         startup_notices=startup_notices,
         extension_paths=extension_paths,
         extensions_enabled=extensions_enabled,
@@ -672,6 +676,25 @@ async def run_openai_tui(
 
 def _startup_update_notice() -> UpdateNotice | None:
     return startup_update_notice(_current_version())
+
+
+def _cached_startup_update_notice() -> UpdateNotice | None:
+    """Return a cached update notice without contacting PyPI."""
+    notice, _check_due = cached_update_notice(_current_version())
+    return notice
+
+
+def _deferred_startup_update_notice() -> Callable[[], str | None] | None:
+    """Return a blocking PyPI check for the TUI to run when the cache is stale."""
+    _notice, check_due = cached_update_notice(_current_version())
+    if not check_due:
+        return None
+
+    def check() -> str | None:
+        notice = _startup_update_notice()
+        return notice.message if notice is not None else None
+
+    return check
 
 
 def update_models_command() -> None:
@@ -1329,6 +1352,7 @@ async def run_print_mode(
     renderer = create_event_renderer(
         output,
         custom_message_renderer=session.extension_runtime.render_custom_message,
+        cwd=session.cwd,
     )
     try:
         terminal_command = parse_terminal_command(prompt)

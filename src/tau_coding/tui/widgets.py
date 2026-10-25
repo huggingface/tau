@@ -194,6 +194,7 @@ class SessionSidebar(Vertical):
         yield Static("", id="sidebar-brand")
 
     _summary_fingerprint: tuple[object, ...] | None = None
+    _resource_fingerprint: tuple[object, ...] | None = None
 
     def update_from_session(
         self,
@@ -201,7 +202,7 @@ class SessionSidebar(Vertical):
         *,
         theme: TuiTheme = TAU_DARK_THEME,
     ) -> None:
-        """Redraw the sidebar only when displayed session metadata changed."""
+        """Redraw only the sidebar sections whose displayed inputs changed."""
         fingerprint = _session_summary_fingerprint(session, theme=theme)
         if fingerprint == self._summary_fingerprint:
             return
@@ -210,13 +211,30 @@ class SessionSidebar(Vertical):
         self.query_one("#sidebar-content", Static).update(
             Group(*_separate_sidebar_sections(content.summary_sections[:4], theme=theme)),
         )
+        self.query_one("#sidebar-after-context-content", Static).update(
+            Group(*_separate_sidebar_sections(content.summary_sections[5:], theme=theme)),
+        )
+        self.query_one("#sidebar-extensions-content", Static).update(
+            _sidebar_section("extensions", content.extensions, theme=theme),
+        )
+        # Usage and context totals change after every message; the resource
+        # lists below are remounted only when the resources themselves change.
+        resource_fingerprint = _session_resource_fingerprint(session, theme=theme)
+        if resource_fingerprint == self._resource_fingerprint:
+            return
+        self._resource_fingerprint = resource_fingerprint
+        self._update_resource_sections(session, theme=theme)
+
+    def _update_resource_sections(
+        self,
+        session: SessionSummarySource,
+        *,
+        theme: TuiTheme,
+    ) -> None:
         self.query_one("#sidebar-context-title", Static).styles.color = theme.prompt_text
         _replace_sidebar_file_widgets(
             self.query_one("#sidebar-context-content", Vertical),
             _context_file_widgets(session.context_files, cwd=session.cwd, theme=theme),
-        )
-        self.query_one("#sidebar-after-context-content", Static).update(
-            Group(*_separate_sidebar_sections(content.summary_sections[5:], theme=theme)),
         )
         skills = self.query_one("#sidebar-skills", Collapsible)
         skills.title = _skill_section_title(session, theme=theme)
@@ -233,9 +251,6 @@ class SessionSidebar(Vertical):
         _replace_sidebar_file_widgets(
             self.query_one("#sidebar-prompts-content", Vertical),
             _prompt_file_widgets(session.prompt_templates, cwd=session.cwd, theme=theme),
-        )
-        self.query_one("#sidebar-extensions-content", Static).update(
-            _sidebar_section("extensions", content.extensions, theme=theme),
         )
         for separator in self.query(Static).filter(".sidebar-separator"):
             separator.update(_sidebar_separator(theme=theme))
@@ -290,8 +305,7 @@ def _session_summary_fingerprint(
     theme: TuiTheme,
 ) -> tuple[object, ...]:
     return (
-        theme.name,
-        session.cwd,
+        *_session_resource_fingerprint(session, theme=theme),
         session.provider_name,
         session.model,
         session.thinking_level,
@@ -302,6 +316,19 @@ def _session_summary_fingerprint(
         session.session_title,
         session.session_stats,
         tuple(session.extension_names),
+        tuple(session.system_prompt_files),
+    )
+
+
+def _session_resource_fingerprint(
+    session: SessionSummarySource,
+    *,
+    theme: TuiTheme,
+) -> tuple[object, ...]:
+    """Inputs of the sidebar's mounted context, skill, and prompt lists."""
+    return (
+        theme.name,
+        session.cwd,
         tuple(tool.name for tool in session.tools),
         tuple(
             (skill.name, skill.path, skill.description, skill.disable_model_invocation)
@@ -309,7 +336,6 @@ def _session_summary_fingerprint(
         ),
         tuple((template.name, template.path) for template in session.prompt_templates),
         tuple(context.path for context in session.context_files),
-        tuple(session.system_prompt_files),
     )
 
 
@@ -1531,6 +1557,13 @@ class TranscriptView(VerticalScroll):
         if item is not None:
             widget.item = item
             self._item_widgets[id(item)] = widget
+            # The streamed widget now renders this item, so the mounted window
+            # covers it; otherwise the next append sees a stale window and
+            # remounts the whole transcript.
+            state = self._render_state
+            item_index = _identity_index(state.items, item) if state is not None else None
+            if item_index is not None:
+                self._window_end = max(self._window_end, item_index + 1)
         self._active_assistant_widget = None
         self._active_message_widgets = [
             candidate for candidate in self._active_message_widgets if candidate is not widget
@@ -2835,7 +2868,64 @@ def _thinking_level(session: SessionSummarySource) -> str | None:
     return str(thinking_level) if thinking_level else "--"
 
 
+GIT_BRANCH_RECHECK_SECONDS = 5.0
+
+
+@dataclass(frozen=True, slots=True)
+class _GitBranchLookup:
+    head_stamp: tuple[int, int, int] | None
+    checked_at: float
+    branch: str
+
+
+_GIT_BRANCH_CACHE: dict[Path, _GitBranchLookup] = {}
+
+
 def _git_branch(cwd: Path) -> str:
+    """Return the checked-out branch, re-running git only when it may have changed.
+
+    Session chrome re-renders after every message, and a synchronous git
+    subprocess each time stalls the UI. Checkouts rewrite `HEAD`, so its stamp
+    catches branch switches immediately; the periodic recheck covers setups
+    where `HEAD` cannot be found or does not move (for example reftable repos).
+    """
+    head_stamp = _git_head_stamp(cwd)
+    now = time.monotonic()
+    cached = _GIT_BRANCH_CACHE.get(cwd)
+    if (
+        cached is not None
+        and cached.head_stamp == head_stamp
+        and now - cached.checked_at < GIT_BRANCH_RECHECK_SECONDS
+    ):
+        return cached.branch
+    branch = _read_git_branch(cwd)
+    _GIT_BRANCH_CACHE[cwd] = _GitBranchLookup(head_stamp=head_stamp, checked_at=now, branch=branch)
+    return branch
+
+
+def _git_head_stamp(cwd: Path) -> tuple[int, int, int] | None:
+    """Return the stamp of the `HEAD` file git would use for `cwd`, if found."""
+    for directory in (cwd, *cwd.parents):
+        dot_git = directory / ".git"
+        try:
+            if dot_git.is_dir():
+                head = dot_git / "HEAD"
+            elif dot_git.is_file():
+                # Worktrees and submodules point at their git dir from a file.
+                pointer = dot_git.read_text(encoding="utf-8").strip()
+                if not pointer.startswith("gitdir:"):
+                    return None
+                head = (directory / pointer.removeprefix("gitdir:").strip()) / "HEAD"
+            else:
+                continue
+            stat = head.stat()
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+    return None
+
+
+def _read_git_branch(cwd: Path) -> str:
     try:
         result = run(
             ["git", "-C", str(cwd), "branch", "--show-current"],

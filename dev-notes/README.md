@@ -34,5 +34,7 @@ User-facing documentation lives in `website/content/` and is published at
   failure handling, and Phase 5 validation.
 - `architecture/phase-6-local-inference-hardening.md` — second-backend contract
   validation, lifecycle hardening, migration, and security decisions.
+- `tui-latency-fixes.md` — profiled causes of slow prompt echo and startup, and
+  the stamp-validated caches and scheduling changes that fixed them.
 
 The roadmap is tracked in [GitHub issue #1](https://github.com/huggingface/tau/issues/1).

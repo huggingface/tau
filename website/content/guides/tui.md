@@ -167,7 +167,9 @@ tool row.
 Adjacent built-in tool calls from one model response share one transcript block,
 with one compact line per logical action. Each line retains its own status color,
 and adjacent reads, edits, or writes remain clustered under one headline with
-every file path listed beneath it. Expanded edit and write groups retain each
+every file path listed beneath it. File paths for `read` and `edit` calls are
+displayed relative to the session working directory, even when the model passes
+an absolute path, so the transcript stays compact. Expanded edit and write groups retain each
 invocation and result; expanded read groups omit repeated file contents. The
 complete block remains one selectable text surface,
 including across line boundaries.

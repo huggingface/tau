@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -25,6 +26,22 @@ def _assistant_update(event) -> MessageUpdateEvent:  # noqa: ANN001
 
 def _error_end(message: str) -> MessageEndEvent:
     return MessageEndEvent(message=AssistantMessage(stop_reason="error", error_message=message))
+
+
+def test_transcript_renderer_shortens_read_paths_relative_to_cwd(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    renderer = TranscriptRenderer(cwd=tmp_path)
+
+    renderer.render(
+        ToolExecutionStartEvent(
+            tool_call_id="call-1",
+            tool_name="read",
+            args={"path": str(tmp_path / "a.py")},
+        )
+    )
+
+    assert "read a.py" in capsys.readouterr().err
 
 
 def test_transcript_renderer_streams_text_and_tool_events(
