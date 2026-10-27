@@ -169,14 +169,18 @@ with one compact line per logical action. Each line retains its own status color
 and adjacent reads, edits, or writes remain clustered under one headline with
 every file path listed beneath it. File paths for `read` and `edit` calls are
 displayed relative to the session working directory, even when the model passes
-an absolute path, so the transcript stays compact. Expanded edit and write groups retain each
-invocation and result; expanded read groups omit repeated file contents. The
-complete block remains one selectable text surface,
-including across line boundaries.
-Batches never cross assistant text, thinking, or unrelated responses. Consecutive
-same-tool edit or write continuations are grouped so providers that serialize
-file mutations one at a time still produce one file list. Extension tools, custom
-rendered call cards, and skill loads remain separate.
+an absolute path, so the transcript stays compact. Expanded groups retain each
+invocation and result: edit and write rows show their patch or written content,
+and read rows show a preview of each file. The collapsed path list keeps each
+read's line range as `file:start-end`. The complete block remains one selectable
+text surface, including across line boundaries.
+
+Same-tool runs continue across consecutive narration-free responses, so a
+provider that serializes one call at a time still produces one block. Assistant
+text or thinking, a different tool, a failed call, and a new user prompt all end
+the run. A run stops growing after eight rows and the next call starts a fresh
+block. Extension tools, custom rendered call cards, and skill loads remain
+separate.
 
 Tool results (like long `read` or `bash` output) render as compact previews so
 the transcript stays readable. Tau requires the model to give each `bash` call a
@@ -189,16 +193,16 @@ show the generic `Running shell command` label until expanded.
 
 When one model response reads or edits several files, adjacent calls of the same
 type share one group. The group lists every path, reports progress as results
-arrive, and shows an aggregate failure count when needed. Calls from different
-model responses are never combined; shell calls and extension tools remain
-separate.
+arrive, and shows an aggregate failure count when needed. Consecutive
+narration-free responses continue the same group; shell calls and extension tools
+remain separate.
 
-Toggle grouped reads into their individual call list with **Ctrl+O**. Grouped read
-rows omit file-content previews even when expanded, keeping the transcript focused
-on which files were read. The same toggle reveals exact shell commands and full
-output for other tools. Compaction and grouping affect only the TUI display;
-execution, session history, and print-mode transcripts retain every complete call
-and result.
+Toggle a group into its individual call list with **Ctrl+O**. Expanded read rows
+show each file's preview, so the group still answers what was read instead of
+hiding the contents. The same toggle reveals exact shell commands and full output
+for other tools. Compaction and grouping affect only the TUI display; execution,
+session history, and print-mode transcripts retain every complete call and
+result.
 
 Markdown link hover styling underlines only the linked text, never the rest of its
 row. User message blocks use the same theme background as the prompt field and sidebar,

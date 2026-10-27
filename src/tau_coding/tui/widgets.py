@@ -628,7 +628,7 @@ class TranscriptMessageWidget(Horizontal):
     TranscriptMessageWidget {
         width: 1fr;
         height: auto;
-        margin: 1 1 2 0;
+        margin: 1 1 1 0;
     }
 
     TranscriptMessageWidget > .transcript-message-body {
@@ -639,6 +639,12 @@ class TranscriptMessageWidget(Horizontal):
 
     TranscriptMessageWidget > .transcript-markdown-body > MarkdownParagraph {
         margin: 0 0 1 0;
+    }
+
+    /* The final paragraph reserves no trailing blank line; the widget margin
+       below already separates blocks, matching plain-body rows. */
+    TranscriptMessageWidget > .transcript-markdown-body > MarkdownParagraph:last-child {
+        margin: 0;
     }
 
     """
@@ -871,12 +877,18 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
     StreamingTranscriptMessageWidget {
         width: 1fr;
         height: auto;
-        margin: 1 1 2 1;
+        margin: 1 1 1 1;
         padding: 0 1 0 0;
     }
 
     StreamingTranscriptMessageWidget > MarkdownParagraph {
         margin: 0 0 1 0;
+    }
+
+    /* The final paragraph reserves no trailing blank line; the widget margin
+       below already separates blocks, matching plain-body rows. */
+    StreamingTranscriptMessageWidget > MarkdownParagraph:last-child {
+        margin: 0;
     }
 
     StreamingTranscriptMessageWidget.-streaming MarkdownFence {
@@ -1569,6 +1581,26 @@ class TranscriptView(VerticalScroll):
             candidate for candidate in self._active_message_widgets if candidate is not widget
         ]
         self._hidden_thinking_placeholder_visible = False
+
+    async def discard_provisional_assistant_message(self) -> None:
+        """Drop a message's provisional widgets without remounting the window.
+
+        A tool-only message streams a blank text buffer that never becomes a
+        canonical item. Removing its widgets is all that is needed; remounting
+        the window here would pull a user reading earlier output forward.
+        """
+        for widget in tuple(self._active_message_widgets):
+            if widget.parent is self:
+                await widget.remove()
+        self._active_message_widgets.clear()
+        self._active_assistant_widget = None
+        self._active_thinking_widget = None
+        self._hidden_thinking_placeholder_visible = False
+        # The adapter deleted this message's provisional items, so stop counting
+        # them in the window even though nothing is remounted here.
+        state = self._render_state
+        if state is not None:
+            self._window_end = min(self._window_end, len(state.items))
 
     async def finish_structured_assistant_message(
         self,

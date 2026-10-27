@@ -176,7 +176,11 @@ from tau_coding.tui.local_backends import (
     LocalSearchResultsScreen,
 )
 from tau_coding.tui.project_trust import ProjectTrustScreen, prompt_project_trust
-from tau_coding.tui.state import TuiState, format_terminal_command_result_block
+from tau_coding.tui.state import (
+    TuiState,
+    assistant_block_is_visible,
+    format_terminal_command_result_block,
+)
 from tau_coding.tui.terminal_notification import TerminalNotificationController
 from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.themes import (
@@ -6406,18 +6410,22 @@ class TauTuiApp(App[None]):
                     # boundary so the mounted transcript cannot drop the error.
                     self._refresh()
                     return
+                # Mirrors ``TuiState.add_assistant_message``: the two filters
+                # must agree, or the canonical-item slice below misaligns.
                 visible_blocks = [
                     block
                     for block in event.message.content
-                    if (
-                        isinstance(block, TextContent)
-                        and bool(block.text)
-                        or isinstance(block, ThinkingContent)
-                        and bool(block.thinking)
-                    )
+                    if isinstance(block, TextContent | ThinkingContent)
+                    and assistant_block_is_visible(block)
                 ]
                 canonical_items = self.state.items[-len(visible_blocks) :] if visible_blocks else []
-                if (
+                if not visible_blocks:
+                    # Tool-only message: it streamed a blank buffer (providers
+                    # emit "\n\n" next to calls), so drop its provisional
+                    # widgets without remounting the window, which would yank a
+                    # user who scrolled back to earlier output.
+                    await transcript.discard_provisional_assistant_message()
+                elif (
                     any(isinstance(block, ThinkingContent) for block in visible_blocks)
                     or len(visible_blocks) > 1
                 ):
