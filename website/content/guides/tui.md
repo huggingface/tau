@@ -140,8 +140,11 @@ complete files and directories outside the project root. External completion
 follows only the path you type instead of scanning the surrounding filesystem.
 Dot-prefixed content such as `.env` and `.agents/` is included. Tau still skips
 known metadata and generated directories such as `.git`, `.venv`, `node_modules`,
-`__pycache__`, `build`, and `dist`. Press **Tab** to insert the highlighted file;
-press **Enter** to submit exactly what you typed without inserting it. The same
+`__pycache__`, `build`, and `dist`. Press **Tab** to insert the highlighted path.
+Directories are shown with a trailing `/`, and inserting one commits it as a
+directory reference like `@src/`; to reference a file inside a directory, keep
+typing its path or pick the file from the same list. Press **Enter** to submit
+exactly what you typed without inserting it. The same
 rule applies to `@` suggestions in skill and custom-prompt argument text.
 
 ## Dropping files into the prompt

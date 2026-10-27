@@ -7391,6 +7391,92 @@ async def test_tui_app_accepts_file_reference_completion(tmp_path: Path) -> None
 
 
 @pytest.mark.anyio
+async def test_tui_app_accepts_directory_reference_completion(tmp_path: Path) -> None:
+    # Regression test for issue #464: accepting a directory in the @ picker
+    # committed nothing — the trailing slash just re-opened completion on the
+    # directory's children, forcing the user to pick a file.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+
+    session = FakeSession()
+    session.cwd = tmp_path
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "inspect @sr"
+        app._completion_state = app._build_completion_state(prompt.value)
+        app._refresh_completions()
+
+        assert [item.display for item in app._completion_state.items] == [
+            "@src/",
+            "@src/app.py",
+        ]
+        await pilot.press("tab")
+
+        assert prompt.value == "inspect @src/ "
+        assert app._completion_state.items == ()
+
+        # Typing into the token still drills into the directory's children.
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert [item.display for item in app._completion_state.items] == ["@src/app.py"]
+
+
+@pytest.mark.anyio
+async def test_tui_app_accepts_directory_reference_before_existing_space(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+
+    session = FakeSession()
+    session.cwd = tmp_path
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "look at @sr and fix it"
+        prompt.cursor_position = len("look at @sr")
+        await pilot.pause()
+        app._completion_state = app._build_completion_state(
+            prompt.value,
+            cursor=prompt.cursor_position,
+        )
+        app._refresh_completions()
+
+        assert app._completion_state.selected is not None
+        assert app._completion_state.selected.display == "@src/"
+        await pilot.press("tab")
+
+        assert prompt.value == "look at @src/ and fix it"
+        assert prompt.cursor_position == len("look at @src/ ")
+        assert app._completion_state.items == ()
+
+
+@pytest.mark.anyio
+async def test_tui_app_submits_committed_directory_reference(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+
+    session = FakeSession()
+    session.cwd = tmp_path
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "inspect @sr"
+        app._completion_state = app._build_completion_state(prompt.value)
+        app._refresh_completions()
+
+        await pilot.press("tab")
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert session.prompt_texts == ["inspect @src/"]
+
+
+@pytest.mark.anyio
 async def test_tui_app_accepts_shell_path_completion(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
 
