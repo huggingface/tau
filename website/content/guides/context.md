@@ -71,6 +71,14 @@ the original context. During successful overflow recovery, the TUI shows compact
 and retry progress instead of presenting the intermediate provider rejection as a
 terminal error. The error becomes visible only if recovery cannot complete.
 
+Threshold compaction is visible too. When Tau compacts because the estimate crossed
+the threshold, the transcript shows a `Compacting context` status row while the
+summary is generated, and the row disappears once compaction succeeds. If
+summarization fails, the row stays in place as `Automatic compaction failed: <reason>`
+so the turn does not appear to stall silently. The enclosing turn still owns the
+single turn-finished notification, so a turn that ends with threshold compaction
+notifies once, not twice.
+
 ## Manual compaction
 
 Compact on demand any time:

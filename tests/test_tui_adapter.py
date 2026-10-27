@@ -93,6 +93,40 @@ def test_tui_adapter_replaces_recovered_overflow_with_terminal_retry_error() -> 
     assert "context window exceeded" not in state.error
 
 
+def test_tui_adapter_shows_threshold_compaction_status() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(CompactionStartEvent(reason="threshold"))
+
+    assert state.compacting is True
+    assert [(item.role, item.text) for item in state.items] == [("status", "… Compacting context")]
+
+    adapter.apply(CompactionEndEvent(reason="threshold"))
+
+    assert state.compacting is False
+    assert state.items == []
+
+
+def test_tui_adapter_keeps_threshold_compaction_failure_visible() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(CompactionStartEvent(reason="threshold"))
+    adapter.apply(
+        CompactionEndEvent(
+            reason="threshold",
+            aborted=True,
+            error_message="summary provider failed",
+        )
+    )
+
+    assert state.compacting is False
+    assert [(item.role, item.text) for item in state.items] == [
+        ("status", "… Automatic compaction failed: summary provider failed")
+    ]
+
+
 def test_tui_adapter_builds_assistant_item_from_nested_stream_events() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)

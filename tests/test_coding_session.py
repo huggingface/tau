@@ -70,7 +70,13 @@ from tau_coding import (
 )
 from tau_coding import session as coding_session_module
 from tau_coding.codex_model_store import cached_codex_model_catalog, save_codex_model_catalog
-from tau_coding.events import AgentSettledEvent, QueueUpdateEvent, SessionAgentEndEvent
+from tau_coding.events import (
+    AgentSettledEvent,
+    CompactionEndEvent,
+    CompactionStartEvent,
+    QueueUpdateEvent,
+    SessionAgentEndEvent,
+)
 from tau_coding.extensions import (
     DynamicProvider,
     OpenAICompatibleTransport,
@@ -4088,6 +4094,128 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
             UserMessage(content="Next."),
         ],
     )
+
+
+@pytest.mark.anyio
+async def test_session_auto_compaction_emits_threshold_events(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    large_prompt = "Explain sessions.\n" + ("old context " * 12_000)
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="First answer")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Generated automatic summary")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            auto_compact_token_threshold=1,
+        )
+    )
+
+    first_events = await _collect_session_events(session.prompt(large_prompt))
+    second_events = await _collect_session_events(session.prompt("Continue."))
+
+    assert not [
+        event
+        for event in first_events
+        if isinstance(event, (CompactionStartEvent, CompactionEndEvent))
+    ]
+    starts = [event for event in second_events if isinstance(event, CompactionStartEvent)]
+    ends = [event for event in second_events if isinstance(event, CompactionEndEvent)]
+    assert [event.reason for event in starts] == ["threshold"]
+    assert [event.reason for event in ends] == ["threshold"]
+    assert ends[0].aborted is False
+    assert ends[0].error_message is None
+
+
+@pytest.mark.anyio
+async def test_session_auto_compaction_emits_no_events_below_threshold(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Answer")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            auto_compact_token_threshold=1_000_000,
+        )
+    )
+
+    events = await _collect_session_events(session.prompt("Hello."))
+
+    assert not [
+        event for event in events if isinstance(event, (CompactionStartEvent, CompactionEndEvent))
+    ]
+
+
+@pytest.mark.anyio
+async def test_session_auto_compaction_failure_emits_aborted_end_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    large_prompt = "Explain sessions.\n" + ("old context " * 12_000)
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="First answer")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            auto_compact_token_threshold=1,
+        )
+    )
+
+    async def fail_summary(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("summary provider failed")
+
+    monkeypatch.setattr(session, "_generate_compaction_summary", fail_summary)
+
+    await _collect_session_events(session.prompt(large_prompt))
+    events = await _collect_session_events(session.prompt("Continue."))
+
+    starts = [event for event in events if isinstance(event, CompactionStartEvent)]
+    ends = [event for event in events if isinstance(event, CompactionEndEvent)]
+    assert [event.reason for event in starts] == ["threshold"]
+    assert [event.reason for event in ends] == ["threshold"]
+    assert ends[0].aborted is True
+    assert ends[0].error_message == "summary provider failed"
 
 
 @pytest.mark.anyio

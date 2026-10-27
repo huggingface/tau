@@ -637,6 +637,15 @@ Observation events mirror the canonical agent/session stream. Handlers receive
 | `auto_retry_start` | `attempt`, `max_attempts`, `delay_ms`, `error_message` |
 | `auto_retry_end` | `success`, `attempt`, `final_error` |
 
+`compaction_start` and `compaction_end` bracket the compactions the session
+performs. `threshold` is emitted when automatic compaction runs because the
+estimated context crossed the configured limit, so extensions can observe
+background compaction that happens after a turn's response has already been
+delivered. `overflow` is emitted for recovery from a provider context-overflow
+error. A failed threshold compaction still emits `compaction_end` with `aborted`
+set and `error_message` populated. Manual `/compact` runs are driven by the CLI
+and do not emit these events.
+
 `message_update.assistant_message_event` is the provider-neutral incremental
 stream. Its nested `type` is one of `text_start`, `text_delta`, `text_end`,
 `thinking_start`, `thinking_delta`, `thinking_end`, `toolcall_start`,
