@@ -3482,6 +3482,111 @@ async def test_reserved_tools_template_cannot_shadow_picker_command(tmp_path: Pa
 
 
 @pytest.mark.anyio
+async def test_reserved_new_template_cannot_shadow_new_command(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    prompts_dir = resource_root / "prompts"
+    prompts_dir.mkdir(parents=True)
+    reserved_path = prompts_dir / "new.md"
+    reserved_path.write_text("Shadow /new", encoding="utf-8")
+    (prompts_dir / "review.md").write_text("Review $1.", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+
+    result = session.handle_command("/new")
+
+    assert result.handled is True
+    assert result.new_session_requested is True
+    # Autocomplete and the /prompts picker consume session.prompt_templates, so the
+    # rejected template is never advertised while non-conflicting ones still expand.
+    assert [template.name for template in session.prompt_templates] == ["review"]
+    assert session.expand_prompt_text("/review src/app.py") == "Review src/app.py."
+    assert any(
+        diagnostic.path == reserved_path
+        and "reserved by the built-in /new command" in diagnostic.message
+        for diagnostic in session.resource_diagnostics
+    )
+
+
+@pytest.mark.anyio
+async def test_reserved_quit_and_exit_templates_cannot_shadow_quit_command(
+    tmp_path: Path,
+) -> None:
+    resource_root = tmp_path / "resources"
+    prompts_dir = resource_root / "prompts"
+    prompts_dir.mkdir(parents=True)
+    quit_path = prompts_dir / "quit.md"
+    exit_path = prompts_dir / "exit.md"
+    quit_path.write_text("Shadow /quit", encoding="utf-8")
+    exit_path.write_text("Shadow /exit", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+
+    quit_result = session.handle_command("/quit")
+    exit_result = session.handle_command("/exit")
+
+    assert quit_result.handled is True
+    assert quit_result.exit_requested is True
+    assert exit_result.handled is True
+    assert exit_result.exit_requested is True
+    assert session.prompt_templates == ()
+    assert any(
+        diagnostic.path == quit_path
+        and "reserved by the built-in /quit command" in diagnostic.message
+        for diagnostic in session.resource_diagnostics
+    )
+    assert any(
+        diagnostic.path == exit_path
+        and "reserved by the built-in /exit command" in diagnostic.message
+        for diagnostic in session.resource_diagnostics
+    )
+
+
+@pytest.mark.anyio
+async def test_reserved_prompt_templates_stay_ignored_after_reload(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    prompts_dir = resource_root / "prompts"
+    prompts_dir.mkdir(parents=True)
+    reserved_path = prompts_dir / "new.md"
+    reserved_path.write_text("Shadow /new", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+
+    await session.reload()
+
+    assert session.prompt_templates == ()
+    assert session.handle_command("/new").new_session_requested is True
+    assert any(
+        diagnostic.path == reserved_path
+        and "reserved by the built-in /new command" in diagnostic.message
+        for diagnostic in session.resource_diagnostics
+    )
+
+
+@pytest.mark.anyio
 async def test_session_skill_index_lets_agent_read_relevant_skill_file(tmp_path: Path) -> None:
     resource_root = tmp_path / "resources"
     skills_dir = resource_root / "skills" / "testing"
