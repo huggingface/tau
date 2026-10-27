@@ -106,7 +106,13 @@ class SessionState:
                     )
                 case "branch_summary":
                     message_rows.append(
-                        (entry.id, UserMessage(content=_format_branch_summary(entry)))
+                        (
+                            entry.id,
+                            UserMessage(
+                                content=_format_branch_summary(entry),
+                                timestamp=round(entry.timestamp * 1000),
+                            ),
+                        )
                     )
 
         return cls(
@@ -154,7 +160,13 @@ def _apply_compaction(
     *,
     path_before: list[SessionEntry],
 ) -> list[tuple[str, AgentMessage]]:
-    summary_row = (entry.id, UserMessage(content=_format_compaction_summary(entry.summary)))
+    summary_row = (
+        entry.id,
+        UserMessage(
+            content=_format_compaction_summary(entry.summary),
+            timestamp=round(entry.timestamp * 1000),
+        ),
+    )
 
     # Tau originally persisted arbitrary replacement-id sets. Explicit legacy
     # fields take precedence, including an empty list, so old sessions retain
