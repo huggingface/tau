@@ -91,6 +91,9 @@ class TuiState:
     error: str | None = None
     show_tool_results: bool = False
     show_thinking: bool = False
+    # Index of the streaming assistant message's first provisional row;
+    # MessageEnd replaces items[streaming_from:].
+    streaming_from: int | None = None
     queued_steering: tuple[str, ...] = ()
     queued_follow_up: tuple[str, ...] = ()
     skills: tuple[Skill, ...] = ()

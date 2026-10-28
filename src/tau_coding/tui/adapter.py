@@ -27,7 +27,6 @@ from tau_coding.tui.state import TuiState, _is_file_mutation_only_message
 class TuiEventAdapter:
     def __init__(self, state: TuiState) -> None:
         self.state = state
-        self._assistant_start_item_index: int | None = None
         self._pending_overflow_error: AssistantMessage | None = None
         self._tool_batch_ids: dict[str, int] = {}
         self._file_mutation_continuation_calls: set[str] = set()
@@ -59,14 +58,20 @@ class TuiEventAdapter:
         if isinstance(event, MessageStartEvent):
             if isinstance(event.message, AssistantMessage):
                 self.state.assistant_buffer = event.message.text
-                self._assistant_start_item_index = len(self.state.items)
+                self.state.streaming_from = len(self.state.items)
             return
         if isinstance(event, MessageUpdateEvent):
             nested = event.assistant_message_event
             if isinstance(nested, TextDeltaEvent):
                 self.state.assistant_buffer += nested.delta
             elif isinstance(nested, ThinkingDeltaEvent):
-                self.state.add_thinking_delta(nested.delta)
+                if len(self.state.items) == self.state.streaming_from:
+                    # A thinking row that ends the transcript here belongs to
+                    # the previous message; this message's thinking starts its
+                    # own row, inside the range MessageEnd replaces.
+                    self.state.add_item("thinking", nested.delta)
+                else:
+                    self.state.add_thinking_delta(nested.delta)
             return
         if isinstance(event, MessageEndEvent):
             message = event.message
@@ -81,7 +86,7 @@ class TuiEventAdapter:
             elif isinstance(message, AssistantMessage):
                 # Replace provisional delta rows with the final canonical
                 # message so persisted block boundaries and ordering win.
-                start = self._assistant_start_item_index
+                start = self.state.streaming_from
                 if start is not None:
                     del self.state.items[start:]
                 if message.stop_reason in {"error", "aborted"}:
@@ -113,7 +118,7 @@ class TuiEventAdapter:
                         else:
                             previous_was_tool = False
                 self.state.assistant_buffer = ""
-                self._assistant_start_item_index = None
+                self.state.streaming_from = None
             return
         if isinstance(event, ToolExecutionStartEvent):
             self._flush()
