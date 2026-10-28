@@ -181,12 +181,20 @@ def test_builtin_catalog_separates_openai_api_and_codex_context_limits() -> None
         (
             "opencode-go",
             {
+                "deepseek-v4-flash-vision-exp",
+                "gpt-5.6-luna",
+                "gpt-6-luna",
+                "grok-4.6",
+                "grok-4.7",
                 "kimi-k2.6",
                 "kimi-k2.7-code",
+                "kimi-k3",
                 "mimo-v2.5",
+                "mimo-v2.6-flash",
                 "minimax-m3",
-                "qwen3.6-plus",
                 "qwen3.7-plus",
+                "qwen3.8-flash",
+                "qwen3.8-max",
             },
         ),
         (
@@ -269,6 +277,46 @@ def test_builtin_catalog_oauth_and_opencode_auth_methods() -> None:
     assert opencode is not None and opencode.auth_methods == ("api_key",)
     assert opencode_go.api_key_env == "OPENCODE_API_KEY"
     assert opencode.api_key_env == "OPENCODE_API_KEY"
+
+
+def test_builtin_catalog_opencode_go_routes_match_documented_endpoints() -> None:
+    entry = builtin_provider_entry("opencode-go")
+    assert entry is not None
+    assert entry.api == "openai-completions"
+    assert entry.base_url == "https://opencode.ai/zen/go/v1"
+    assert entry.compat.get("sendSessionAffinityHeaders") is True
+    assert entry.compat.get("sessionAffinityFormat") == "opencode"
+    assert "muse-spark-1.3-contributor" in entry.models
+    assert "muse-spark-1.2-contributor" in entry.models
+
+    responses_models = {
+        "grok-4.7",
+        "grok-4.6",
+        "gpt-6-luna",
+        "gpt-5.6-luna",
+        "muse-spark-1.3-contributor",
+        "muse-spark-1.2-contributor",
+    }
+    anthropic_models = {
+        "minimax-m3",
+        "minimax-m2.7",
+        "qwen3.8-max",
+        "qwen3.8-flash",
+        "qwen3.7-plus",
+    }
+    assert responses_models <= set(entry.models)
+    assert anthropic_models <= set(entry.models)
+    for model in responses_models:
+        assert entry.model_metadata[model].api == "openai-responses"
+    for model in anthropic_models:
+        assert entry.model_metadata[model].api == "anthropic-messages"
+    assert entry.model_metadata["kimi-k2.7-code"].api is None
+    assert entry.default_model == "kimi-k2.7-code"
+
+    zen = builtin_provider_entry("opencode")
+    assert zen is not None
+    assert zen.base_url == "https://opencode.ai/zen/v1"
+    assert zen.compat.get("sendSessionAffinityHeaders") is not True
 
 
 def test_builtin_catalog_copilot_claude_max_tokens() -> None:

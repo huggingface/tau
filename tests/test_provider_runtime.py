@@ -66,6 +66,101 @@ def test_direct_openai_runtime_enables_responses_cache_affinity(tmp_path) -> Non
     assert provider._config.compat["sessionAffinityFormat"] == "openai"
 
 
+def test_opencode_go_runtime_enables_session_affinity(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("opencode-go", "go-test")
+
+    provider = create_model_provider(
+        provider_config_from_catalog_entry("opencode-go"),
+        credential_store=store,
+        model="deepseek-v4-flash",
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.compat["sendSessionAffinityHeaders"] is True
+    assert provider._config.compat["sessionAffinityFormat"] == "opencode"
+
+
+def test_opencode_go_responses_model_uses_responses_api(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("opencode-go", "go-test")
+
+    provider = create_model_provider(
+        provider_config_from_catalog_entry("opencode-go"),
+        credential_store=store,
+        model="muse-spark-1.3-contributor",
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.api == "openai-responses"
+    assert provider._config.compat["sessionAffinityFormat"] == "opencode"
+
+
+def test_opencode_go_anthropic_model_uses_api_key_without_oauth(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("opencode-go", "go-test")
+
+    provider = create_model_provider(
+        provider_config_from_catalog_entry("opencode-go"),
+        credential_store=store,
+        model="minimax-m3",
+    )
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.api_key == "go-test"
+    assert provider._config.bearer_auth is False
+    assert provider._config.credential_resolver is None
+    assert provider._config.compat["sendSessionAffinityHeaders"] is True
+    assert provider._config.compat["sessionAffinityFormat"] == "opencode"
+
+
+def test_opencode_go_sets_tau_user_agent_only_for_go(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("opencode-go", "go-test")
+    store.set_api_key("opencode", "zen-test")
+
+    go_provider = create_model_provider(
+        provider_config_from_catalog_entry("opencode-go"),
+        credential_store=store,
+        model="kimi-k2.7-code",
+    )
+    go_anthropic = create_model_provider(
+        provider_config_from_catalog_entry("opencode-go"),
+        credential_store=store,
+        model="qwen3.7-plus",
+    )
+    zen_provider = create_model_provider(
+        provider_config_from_catalog_entry("opencode"),
+        credential_store=store,
+        model="kimi-k2.7-code",
+    )
+
+    assert isinstance(go_provider, OpenAICompatibleProvider)
+    assert isinstance(go_anthropic, AnthropicProvider)
+    assert isinstance(zen_provider, OpenAICompatibleProvider)
+    assert go_provider._config.headers["User-Agent"].startswith("tau/")
+    assert go_anthropic._config.headers["User-Agent"].startswith("tau/")
+    assert not any(key.casefold() == "user-agent" for key in zen_provider._config.headers)
+    assert zen_provider._config.compat.get("sendSessionAffinityHeaders") is not True
+
+
+def test_anthropic_auth_api_key_allows_anthropic_protocol_without_oauth(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("test", "key")
+    config = OpenAICompatibleProviderConfig(
+        name="test",
+        api_key_env="TEST_KEY",
+        credential_name="test",
+        anthropic_auth="api-key",
+        models=("m",),
+        default_model="m",
+        model_metadata={"m": ProviderModelMetadata(api="anthropic-messages")},
+    )
+
+    provider = create_model_provider(config, credential_store=store, model="m")
+    assert isinstance(provider, AnthropicProvider)
+
+
 def test_huggingface_runtime_pins_backing_provider_with_model_alias(tmp_path) -> None:
     store = FileCredentialStore(tmp_path / "credentials.json")
     store.set_api_key("huggingface", "hf-test")
