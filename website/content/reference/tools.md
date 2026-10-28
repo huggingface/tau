@@ -108,6 +108,7 @@ Runs a shell command in the working directory.
 | Argument | Required | Type | Description |
 | --- | --- | --- | --- |
 | `command` | yes | string | Shell command to run. |
+| `description` | no | string | Short summary of the command's purpose, shown as the call's label. |
 | `timeout` | no | number | Max runtime in seconds (> 0). No default. |
 
 Combines stdout and stderr, succeeds on exit code `0`, and returns the **tail**

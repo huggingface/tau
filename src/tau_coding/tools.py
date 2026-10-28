@@ -25,6 +25,7 @@ from tau_agent.messages import ImageContent, TextContent
 from tau_agent.tools import (
     AgentTool,
     AgentToolResult,
+    ToolArgumentPreparer,
     ToolCancellationToken,
     ToolUpdateCallback,
 )
@@ -130,6 +131,7 @@ class ToolDefinition:
     executor: Callable[
         [Mapping[str, JSONValue], ToolCancellationToken | None], Awaitable[AgentToolResult]
     ]
+    prepare_arguments: ToolArgumentPreparer | None = None
 
     def to_agent_tool(self) -> AgentTool:
         """Convert the coding definition to the Pi-compatible core tool."""
@@ -155,6 +157,7 @@ class ToolDefinition:
             execute_fn=execute,
             prompt_snippet=self.prompt_snippet,
             prompt_guidelines=self.prompt_guidelines,
+            prepare_arguments=self.prepare_arguments,
         )
 
 
@@ -601,6 +604,7 @@ def create_edit_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
             "additionalProperties": False,
         },
         executor=execute,
+        prepare_arguments=_prepare_edit_arguments,
     )
 
 
@@ -752,7 +756,8 @@ def create_bash_tool_definition(
                     "description": "Timeout in seconds (optional, no default timeout)",
                 },
             },
-            "required": ["command", "description"],
+            # `description` only labels the call, so a call without it still runs.
+            "required": ["command"],
         },
         executor=execute,
     )
@@ -1089,8 +1094,8 @@ def _optional_float_arg(arguments: Mapping[str, JSONValue], name: str) -> float 
     return float(value)
 
 
-def _prepare_edit_arguments(arguments: Mapping[str, JSONValue]) -> Mapping[str, JSONValue]:
-    prepared = dict(arguments)
+def _prepare_edit_arguments(arguments: object) -> Mapping[str, JSONValue]:
+    prepared: dict[str, JSONValue] = dict(arguments) if isinstance(arguments, Mapping) else {}
     edits_value = prepared.get("edits")
     if isinstance(edits_value, str):
         try:
