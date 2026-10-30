@@ -706,6 +706,48 @@ def test_tui_adapter_renders_skill_file_reads_with_skill_style() -> None:
     ]
 
 
+def test_restoring_many_reads_resolves_each_skill_path_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tau_coding.tui import state as state_module
+
+    skills = tuple(
+        Skill(
+            name=f"skill-{index}",
+            path=Path(f"/workspace/.tau/skills/skill-{index}.md"),
+            content="# Skill",
+            description="Skill",
+        )
+        for index in range(10)
+    )
+    state = TuiState(skills=skills)
+    resolved: list[str] = []
+    original_normalized_path = state_module._normalized_path
+
+    def counting_normalized_path(path: str | Path) -> Path:
+        resolved.append(str(path))
+        return original_normalized_path(path)
+
+    monkeypatch.setattr(state_module, "_normalized_path", counting_normalized_path)
+    reads = [
+        AssistantMessage(
+            content=[
+                ToolCall(
+                    id=f"call-{index}",
+                    name="read",
+                    arguments={"path": f"/workspace/.tau/skills/skill-{index % 12}.md"},
+                )
+            ]
+        )
+        for index in range(30)
+    ]
+
+    state.load_messages(reads)
+
+    assert len(resolved) == len(reads) + len(skills)
+    assert sum(item.role == "skill" for item in state.items) == 26
+
+
 def test_tui_adapter_records_retry_and_queue_status() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)
@@ -786,6 +828,82 @@ def test_tool_formatters_keep_human_readable_output() -> None:
     assert "line 8" in block
     assert "line 9" not in block
     assert "3 more lines" in block
+
+
+def test_file_tool_formatter_shortens_absolute_paths_under_cwd(tmp_path: Path) -> None:
+    nested = tmp_path / "src" / "app.py"
+    read_call = ToolCall(id="call-1", name="read", arguments={"path": str(nested)})
+    edit_call = ToolCall(id="call-2", name="edit", arguments={"path": str(nested)})
+
+    assert format_tool_call_block(read_call, cwd=tmp_path) == "→ read src/app.py"
+    assert format_tool_call_invocation(read_call, cwd=tmp_path) == "read src/app.py"
+    assert format_tool_call_block(edit_call, cwd=tmp_path) == "→ edit src/app.py"
+    assert format_tool_call_invocation(edit_call, cwd=tmp_path) == "edit src/app.py"
+
+
+def test_file_tool_formatter_leaves_relative_and_outside_paths_unchanged(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path.parent / "elsewhere" / "notes.md"
+    relative = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    absolute = ToolCall(id="call-2", name="read", arguments={"path": str(outside)})
+    edit_relative = ToolCall(id="call-3", name="edit", arguments={"path": "README.md"})
+
+    assert format_tool_call_block(relative, cwd=tmp_path) == "→ read README.md"
+    assert format_tool_call_block(absolute, cwd=tmp_path) == f"→ read {outside}"
+    assert format_tool_call_block(edit_relative, cwd=tmp_path) == "→ edit README.md"
+
+
+def test_tui_state_shortens_absolute_file_paths_in_transcript(tmp_path: Path) -> None:
+    state = TuiState(cwd=tmp_path)
+    state.add_tool_call(
+        ToolCall(id="call-1", name="read", arguments={"path": str(tmp_path / "a.py")}),
+    )
+    state.add_tool_call(
+        ToolCall(id="call-2", name="edit", arguments={"path": str(tmp_path / "b.py")}),
+    )
+
+    assert state.items[0].text == "→ read a.py"
+    assert state.items[1].text == "→ edit b.py"
+
+
+def test_tui_state_shortens_absolute_paths_in_grouped_reads_and_edits(tmp_path: Path) -> None:
+    state = TuiState(cwd=tmp_path)
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="call-1",
+                        name="read",
+                        arguments={"path": str(tmp_path / "a.py")},
+                    ),
+                    ToolCall(
+                        id="call-2",
+                        name="read",
+                        arguments={"path": str(tmp_path / "b.py")},
+                    ),
+                ]
+            ),
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="call-3",
+                        name="edit",
+                        arguments={"path": str(tmp_path / "c.py")},
+                    ),
+                    ToolCall(
+                        id="call-4",
+                        name="edit",
+                        arguments={"path": str(tmp_path / "d.py")},
+                    ),
+                ]
+            ),
+        ]
+    )
+
+    assert state.items[0].text == "→ Reading 2 files\n  - a.py\n  - b.py"
+    assert state.items[1].text == "→ Editing 2 files\n  - c.py\n  - d.py"
 
 
 def test_bash_tool_formatter_hides_short_command_until_expanded() -> None:

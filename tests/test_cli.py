@@ -545,6 +545,60 @@ def test_cli_without_prompt_invokes_tui_runner(
     assert calls == [(None, tmp_path, None, False, None, None, None)]
 
 
+def test_tui_startup_does_not_wait_for_pypi_update_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    notices: list[object] = []
+
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        del kwargs
+        notices.append(args[7])
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "_startup_update_notice",
+        lambda: (_ for _ in ()).throw(AssertionError("no blocking update check")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "cached_update_notice",
+        lambda version: (UpdateNotice(current_version=version, latest_version="9.9.9"), False),
+    )
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, [])
+
+    assert result.exit_code == 0
+    assert [getattr(notice, "latest_version", None) for notice in notices] == ["9.9.9"]
+
+
+@pytest.mark.anyio
+async def test_run_openai_tui_defers_due_update_check_to_the_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    deferred_checks: list[object] = []
+
+    async def fake_run_tui_app(**kwargs: object) -> None:
+        deferred_checks.append(kwargs["deferred_startup_update_notice"])
+
+    monkeypatch.setattr(cli, "run_tui_app", fake_run_tui_app)
+    monkeypatch.setattr(cli, "startup_release_notes_notice", lambda version: None)
+    monkeypatch.setattr(cli, "_current_version", lambda: "0.1.0")
+    monkeypatch.setattr(cli, "cached_update_notice", lambda version: (None, True))
+    monkeypatch.setattr(
+        cli,
+        "_startup_update_notice",
+        lambda: UpdateNotice(current_version="0.1.0", latest_version="0.2.0"),
+    )
+
+    await cli.run_openai_tui(model=None, cwd=tmp_path)
+
+    [check] = deferred_checks
+    assert callable(check)
+    assert check() == UpdateNotice(current_version="0.1.0", latest_version="0.2.0").message
+
+
 def test_cli_prints_resume_hint_after_tui_exit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

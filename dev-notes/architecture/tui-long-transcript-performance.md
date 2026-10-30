@@ -29,7 +29,7 @@ TuiState.items (complete display history)
 TranscriptView window (bounded Textual DOM)
 ```
 
-The latest 200 items are mounted initially. Small boundary rows indicate when earlier or later
+The latest 80 items are mounted initially. Small boundary rows indicate when earlier or later
 items are outside the window. Reaching a boundary moves the window by a smaller page while
 keeping an existing message as the scroll anchor. The state is never truncated, and session
 persistence is unchanged.
@@ -50,6 +50,13 @@ Common event paths no longer rebuild transcript history:
 
 The prompt activity animation remains smooth, but fixed-size animation frames skip layout and
 tool elapsed-time rows update at most once per second.
+
+Streaming keeps the window small for a second reason: every streamed Markdown append triggers a
+layout pass that visits all mounted widgets. The window was reduced from 200 to 80 items after
+profiling showed that shrinking it roughly doubled the streaming frame rate on a long resumed
+session. `TranscriptMarkdownStream` also limits appends to one per
+`STREAM_FLUSH_INTERVAL_SECONDS` (100 ms), batching the deltas that arrive in between, and flushes
+pending text as soon as the message finishes.
 
 ## Tradeoffs
 

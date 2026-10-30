@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import TimeoutExpired, run
@@ -34,7 +36,7 @@ from textual.widget import Widget
 from textual.widgets import Collapsible, Static
 from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets._markdown import MarkdownParagraph  # not publicly re-exported
-from textual.widgets.markdown import MarkdownFence, MarkdownStream
+from textual.widgets.markdown import MarkdownFence
 
 from tau_agent.tools import AgentTool, ToolCall
 from tau_coding.context_window import estimate_text_tokens
@@ -192,6 +194,7 @@ class SessionSidebar(Vertical):
         yield Static("", id="sidebar-brand")
 
     _summary_fingerprint: tuple[object, ...] | None = None
+    _resource_fingerprint: tuple[object, ...] | None = None
 
     def update_from_session(
         self,
@@ -199,7 +202,7 @@ class SessionSidebar(Vertical):
         *,
         theme: TuiTheme = TAU_DARK_THEME,
     ) -> None:
-        """Redraw the sidebar only when displayed session metadata changed."""
+        """Redraw only the sidebar sections whose displayed inputs changed."""
         fingerprint = _session_summary_fingerprint(session, theme=theme)
         if fingerprint == self._summary_fingerprint:
             return
@@ -208,13 +211,30 @@ class SessionSidebar(Vertical):
         self.query_one("#sidebar-content", Static).update(
             Group(*_separate_sidebar_sections(content.summary_sections[:4], theme=theme)),
         )
+        self.query_one("#sidebar-after-context-content", Static).update(
+            Group(*_separate_sidebar_sections(content.summary_sections[5:], theme=theme)),
+        )
+        self.query_one("#sidebar-extensions-content", Static).update(
+            _sidebar_section("extensions", content.extensions, theme=theme),
+        )
+        # Usage and context totals change after every message; the resource
+        # lists below are remounted only when the resources themselves change.
+        resource_fingerprint = _session_resource_fingerprint(session, theme=theme)
+        if resource_fingerprint == self._resource_fingerprint:
+            return
+        self._resource_fingerprint = resource_fingerprint
+        self._update_resource_sections(session, theme=theme)
+
+    def _update_resource_sections(
+        self,
+        session: SessionSummarySource,
+        *,
+        theme: TuiTheme,
+    ) -> None:
         self.query_one("#sidebar-context-title", Static).styles.color = theme.prompt_text
         _replace_sidebar_file_widgets(
             self.query_one("#sidebar-context-content", Vertical),
             _context_file_widgets(session.context_files, cwd=session.cwd, theme=theme),
-        )
-        self.query_one("#sidebar-after-context-content", Static).update(
-            Group(*_separate_sidebar_sections(content.summary_sections[5:], theme=theme)),
         )
         skills = self.query_one("#sidebar-skills", Collapsible)
         skills.title = _skill_section_title(session, theme=theme)
@@ -231,9 +251,6 @@ class SessionSidebar(Vertical):
         _replace_sidebar_file_widgets(
             self.query_one("#sidebar-prompts-content", Vertical),
             _prompt_file_widgets(session.prompt_templates, cwd=session.cwd, theme=theme),
-        )
-        self.query_one("#sidebar-extensions-content", Static).update(
-            _sidebar_section("extensions", content.extensions, theme=theme),
         )
         for separator in self.query(Static).filter(".sidebar-separator"):
             separator.update(_sidebar_separator(theme=theme))
@@ -288,8 +305,7 @@ def _session_summary_fingerprint(
     theme: TuiTheme,
 ) -> tuple[object, ...]:
     return (
-        theme.name,
-        session.cwd,
+        *_session_resource_fingerprint(session, theme=theme),
         session.provider_name,
         session.model,
         session.thinking_level,
@@ -300,6 +316,19 @@ def _session_summary_fingerprint(
         session.session_title,
         session.session_stats,
         tuple(session.extension_names),
+        tuple(session.system_prompt_files),
+    )
+
+
+def _session_resource_fingerprint(
+    session: SessionSummarySource,
+    *,
+    theme: TuiTheme,
+) -> tuple[object, ...]:
+    """Inputs of the sidebar's mounted context, skill, and prompt lists."""
+    return (
+        theme.name,
+        session.cwd,
         tuple(tool.name for tool in session.tools),
         tuple(
             (skill.name, skill.path, skill.description, skill.disable_model_invocation)
@@ -307,7 +336,6 @@ def _session_summary_fingerprint(
         ),
         tuple((template.name, template.path) for template in session.prompt_templates),
         tuple(context.path for context in session.context_files),
-        tuple(session.system_prompt_files),
     )
 
 
@@ -453,9 +481,11 @@ class ThemedMarkdownWidget(TextualMarkdown):
 # matching how they appear while streaming.
 _BORDERLESS_TRANSCRIPT_ROLES = frozenset({"assistant", "thinking"})
 _HIDDEN_THINKING_PLACEHOLDER = "Thinking… Press Ctrl+T to show thinking tokens."
-TRANSCRIPT_WINDOW_ITEMS = 200
-TRANSCRIPT_WINDOW_PAGE_ITEMS = 80
-TRANSCRIPT_WINDOW_OVERSCAN_ITEMS = 40
+# Mounted transcript items; each streamed append re-lays out all of them.
+# PAGE must stay below WINDOW: paging anchors on an already-mounted item.
+TRANSCRIPT_WINDOW_ITEMS = 80
+TRANSCRIPT_WINDOW_PAGE_ITEMS = 32
+TRANSCRIPT_WINDOW_OVERSCAN_ITEMS = 16
 
 
 class TranscriptWindowBoundary(Static):
@@ -783,6 +813,57 @@ class TranscriptMessageWidget(Horizontal):
         return True
 
 
+# Each Markdown append re-lays out every mounted transcript row, and providers
+# send 50-150 fragments/s, so coalesce appends to ~10/s.
+STREAM_FLUSH_INTERVAL_SECONDS = 0.1
+
+
+class TranscriptMarkdownStream:
+    """Like Textual's ``MarkdownStream``, but appends at most once per ``interval``.
+
+    The first fragment is appended immediately.
+    """
+
+    def __init__(self, markdown: TextualMarkdown, *, interval: float) -> None:
+        self._markdown = markdown
+        self._interval = interval
+        self._pending: list[str] = []
+        self._wake = asyncio.Event()
+        self._appending: asyncio.Future[None] | None = None
+        self._task = asyncio.create_task(self._run())
+
+    async def write(self, fragment: str) -> None:
+        """Queue a fragment for the next flush."""
+        if fragment:
+            self._pending.append(fragment)
+            self._wake.set()
+
+    async def stop(self) -> None:
+        """Stop the flush loop and append anything still queued."""
+        self._task.cancel()
+        with suppress(asyncio.CancelledError):
+            await self._task
+        # Markdown.append reads its parse position before taking its lock, so an
+        # append still in flight must finish before the final one starts.
+        if self._appending is not None:
+            await self._appending
+        if self._pending:
+            await self._markdown.append(self._take_pending())
+
+    def _take_pending(self) -> str:
+        text = "".join(self._pending)
+        self._pending.clear()
+        return text
+
+    async def _run(self) -> None:
+        while True:
+            await self._wake.wait()
+            self._wake.clear()
+            self._appending = asyncio.ensure_future(self._markdown.append(self._take_pending()))
+            await asyncio.shield(self._appending)
+            await asyncio.sleep(self._interval)
+
+
 class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
     """One assistant or thinking Markdown block that accepts streamed fragments."""
 
@@ -814,7 +895,7 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
             raise ValueError("Streaming transcript widgets only support assistant/thinking items")
         self.item = item
         self.selection_text = item.text
-        self._stream: MarkdownStream | None = None
+        self._stream: TranscriptMarkdownStream | None = None
         self._is_streaming = True
         super().__init__(item.text, theme=theme)
         self.add_class("transcript-message")
@@ -826,9 +907,9 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
             self.styles.color = foreground
 
     @property
-    def stream(self) -> MarkdownStream:
+    def stream(self) -> TranscriptMarkdownStream:
         if self._stream is None:
-            self._stream = self.get_stream(self)
+            self._stream = TranscriptMarkdownStream(self, interval=STREAM_FLUSH_INTERVAL_SECONDS)
         return self._stream
 
     async def append_fragment(self, fragment: str) -> None:
@@ -840,7 +921,7 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
         await self.stream.write(fragment)
 
     async def _stop_stream(self) -> None:
-        """Stop the Textual markdown stream, flushing pending fragments first."""
+        """Stop the markdown stream, flushing pending fragments first."""
         stream = self._stream
         if stream is None:
             return
@@ -1476,6 +1557,13 @@ class TranscriptView(VerticalScroll):
         if item is not None:
             widget.item = item
             self._item_widgets[id(item)] = widget
+            # The streamed widget now renders this item, so the mounted window
+            # covers it; otherwise the next append sees a stale window and
+            # remounts the whole transcript.
+            state = self._render_state
+            item_index = _identity_index(state.items, item) if state is not None else None
+            if item_index is not None:
+                self._window_end = max(self._window_end, item_index + 1)
         self._active_assistant_widget = None
         self._active_message_widgets = [
             candidate for candidate in self._active_message_widgets if candidate is not widget
@@ -2144,23 +2232,29 @@ def render_compact_session_info(
     *,
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
-    """Render the session facts below the prompt."""
-    left = _styled_cwd(session.cwd, theme=theme)
-    right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
-    right.append(session.provider_name, style=theme.completion_description)
-    right.append(f":{session.model}", style=theme.prompt_text)
+    """Render the session facts below the prompt.
+
+    The first line shows the working directory; the second line shows the model
+    identity on the left and active context usage on the right.
+    """
+    model_line = Text(style=theme.muted_text, overflow="fold", no_wrap=False)
+    model_line.append(session.provider_name, style=theme.completion_description)
+    model_line.append(f":{session.model}", style=theme.prompt_text)
     thinking_level = _thinking_level(session)
     if thinking_level is not None:
-        right.append(" ")
-        right.append(f"({thinking_level})", style=theme.completion_description)
-    right.append("\n")
-    right.append(_context_usage(session), style=theme.completion_description)
-
-    table = Table.grid(expand=True)
-    table.add_column(ratio=1)
-    table.add_column(ratio=1, justify="right")
-    table.add_row(left, right)
-    return table
+        model_line.append(" ")
+        model_line.append(f"({thinking_level})", style=theme.completion_description)
+    context = Text(
+        _context_usage(session),
+        style=theme.completion_description,
+        no_wrap=True,
+        justify="right",
+    )
+    second_line = Table.grid(expand=True)
+    second_line.add_column(ratio=1)
+    second_line.add_column(justify="right", no_wrap=True)
+    second_line.add_row(model_line, context)
+    return Group(_styled_cwd(session.cwd, theme=theme), second_line)
 
 
 def render_chat_item(
@@ -2774,7 +2868,64 @@ def _thinking_level(session: SessionSummarySource) -> str | None:
     return str(thinking_level) if thinking_level else "--"
 
 
+GIT_BRANCH_RECHECK_SECONDS = 5.0
+
+
+@dataclass(frozen=True, slots=True)
+class _GitBranchLookup:
+    head_stamp: tuple[int, int, int] | None
+    checked_at: float
+    branch: str
+
+
+_GIT_BRANCH_CACHE: dict[Path, _GitBranchLookup] = {}
+
+
 def _git_branch(cwd: Path) -> str:
+    """Return the checked-out branch, re-running git only when it may have changed.
+
+    Session chrome re-renders after every message, and a synchronous git
+    subprocess each time stalls the UI. Checkouts rewrite `HEAD`, so its stamp
+    catches branch switches immediately; the periodic recheck covers setups
+    where `HEAD` cannot be found or does not move (for example reftable repos).
+    """
+    head_stamp = _git_head_stamp(cwd)
+    now = time.monotonic()
+    cached = _GIT_BRANCH_CACHE.get(cwd)
+    if (
+        cached is not None
+        and cached.head_stamp == head_stamp
+        and now - cached.checked_at < GIT_BRANCH_RECHECK_SECONDS
+    ):
+        return cached.branch
+    branch = _read_git_branch(cwd)
+    _GIT_BRANCH_CACHE[cwd] = _GitBranchLookup(head_stamp=head_stamp, checked_at=now, branch=branch)
+    return branch
+
+
+def _git_head_stamp(cwd: Path) -> tuple[int, int, int] | None:
+    """Return the stamp of the `HEAD` file git would use for `cwd`, if found."""
+    for directory in (cwd, *cwd.parents):
+        dot_git = directory / ".git"
+        try:
+            if dot_git.is_dir():
+                head = dot_git / "HEAD"
+            elif dot_git.is_file():
+                # Worktrees and submodules point at their git dir from a file.
+                pointer = dot_git.read_text(encoding="utf-8").strip()
+                if not pointer.startswith("gitdir:"):
+                    return None
+                head = (directory / pointer.removeprefix("gitdir:").strip()) / "HEAD"
+            else:
+                continue
+            stat = head.stat()
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+    return None
+
+
+def _read_git_branch(cwd: Path) -> str:
     try:
         result = run(
             ["git", "-C", str(cwd), "branch", "--show-current"],

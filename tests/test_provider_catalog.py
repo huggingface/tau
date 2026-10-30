@@ -521,6 +521,22 @@ def test_effective_catalog_without_user_file_is_builtin(tmp_path: Path) -> None:
     assert effective_catalog(paths) == builtin_catalog()
 
 
+def test_effective_catalog_is_reused_until_user_catalog_changes(tmp_path: Path) -> None:
+    paths = _write_user_catalog(tmp_path / ".tau", VALID_PROVIDER)
+    first = effective_catalog(paths)
+
+    assert effective_catalog(paths) is first
+
+    _write_user_catalog(
+        tmp_path / ".tau",
+        VALID_PROVIDER.replace("Nebius AI Studio", "Nebius Token Factory"),
+    )
+    updated = effective_catalog(paths)
+
+    assert updated is not first
+    assert updated[-1].display_name == "Nebius Token Factory"
+
+
 def test_user_catalog_adds_new_provider(tmp_path: Path) -> None:
     paths = _write_user_catalog(tmp_path / ".tau", VALID_PROVIDER)
     catalog = effective_catalog(paths)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -93,6 +94,8 @@ class TuiState:
     queued_steering: tuple[str, ...] = ()
     queued_follow_up: tuple[str, ...] = ()
     skills: tuple[Skill, ...] = ()
+    # Working directory used to shorten absolute read paths in the transcript.
+    cwd: Path | None = None
     custom_renderer: CustomMessageMarkup | None = None
     tool_call_renderer: ToolCallMarkup | None = None
     tool_result_renderer: ToolResultMarkup | None = None
@@ -115,6 +118,12 @@ class TuiState:
         compare=False,
     )
     _next_tool_batch_id: int = field(default=0, init=False, repr=False, compare=False)
+    _skill_names_by_path: tuple[tuple[Skill, ...], dict[Path, str]] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def add_item(
         self,
@@ -284,7 +293,7 @@ class TuiState:
     ) -> ChatItem:
         return ChatItem(
             role="tool",
-            text=format_tool_call_block(tool_call),
+            text=format_tool_call_block(tool_call, cwd=self.cwd),
             tool_call_id=tool_call.id,
             tool_name=tool_call.name,
             tool_arguments=tool_call.arguments,
@@ -406,7 +415,8 @@ class TuiState:
                         id=item.tool_call_id or "display-call",
                         name=item.tool_name or "read",
                         arguments=item.tool_arguments or {},
-                    )
+                    ),
+                    cwd=self.cwd,
                 ),
                 tool_result_text=item.tool_result_text,
                 tool_result=item.tool_result,
@@ -419,7 +429,7 @@ class TuiState:
             tool_call_id=tool_call.id,
             tool_name=tool_call.name,
             tool_arguments=tool_call.arguments,
-            text=format_tool_call_block(tool_call),
+            text=format_tool_call_block(tool_call, cwd=self.cwd),
             started_at=time.monotonic(),
         )
         item.grouped_tool_calls.append(member)
@@ -453,13 +463,15 @@ class TuiState:
             for member in completed
             if member.tool_result_text is not None and member.tool_result_text.startswith("✗")
         ]
-        paths = [
-            _string_argument(member.tool_arguments, "path") or "[unknown path]"
-            for member in members
-        ]
+        action = item.tool_name if item.tool_name in GROUPABLE_FILE_TOOL_NAMES else "read"
+        paths = []
+        for member in members:
+            path = _string_argument(member.tool_arguments, "path") or "[unknown path]"
+            if action in {"read", "edit"}:
+                path = _display_tool_path(path, self.cwd)
+            paths.append(path)
         path_list = "\n".join(f"  - {path}" for path in paths)
         all_complete = len(completed) == len(members)
-        action = item.tool_name if item.tool_name in GROUPABLE_FILE_TOOL_NAMES else "read"
         running_verb = {"edit": "Editing", "read": "Reading", "write": "Writing"}[action]
         completed_verb = {"edit": "Edited", "read": "Read", "write": "Written"}[action]
         if not all_complete:
@@ -704,11 +716,19 @@ class TuiState:
         path = _string_argument(tool_call.arguments, "path")
         if path is None:
             return None
-        read_path = _normalized_path(path)
+        return self._skill_names_by_resolved_path().get(_normalized_path(path))
+
+    def _skill_names_by_resolved_path(self) -> dict[Path, str]:
+        # Restoring a long session classifies every read call; resolving each
+        # skill path per call made that quadratic in filesystem lookups.
+        cached = self._skill_names_by_path
+        if cached is not None and cached[0] is self.skills:
+            return cached[1]
+        names: dict[Path, str] = {}
         for skill in self.skills:
-            if _normalized_path(skill.path) == read_path:
-                return skill.name
-        return None
+            names.setdefault(_normalized_path(skill.path), skill.name)
+        self._skill_names_by_path = (self.skills, names)
+        return names
 
 
 def _is_file_mutation_only_message(message: AssistantMessage) -> bool:
@@ -751,27 +771,31 @@ def format_elapsed(seconds: float) -> str:
     return f"{hours}h {minutes}m"
 
 
-def format_tool_call_block(tool_call: ToolCall, *, compact: bool = True) -> str:
+def format_tool_call_block(
+    tool_call: ToolCall, *, compact: bool = True, cwd: Path | None = None
+) -> str:
     """Format a tool call, optionally compacting long bash invocations."""
-    invocation = format_tool_call_invocation(tool_call, expanded=not compact)
+    invocation = format_tool_call_invocation(tool_call, expanded=not compact, cwd=cwd)
     if tool_call.name == "bash":
         return invocation
     return f"→ {invocation}"
 
 
-def format_tool_call_invocation(tool_call: ToolCall, *, expanded: bool = False) -> str:
+def format_tool_call_invocation(
+    tool_call: ToolCall, *, expanded: bool = False, cwd: Path | None = None
+) -> str:
     """Format a tool call as a terse human-readable invocation."""
     arguments = tool_call.arguments
     if tool_call.name == "read":
         path = _string_argument(arguments, "path")
         if path is None:
             return _fallback_tool_call_invocation(tool_call)
-        return f"read {path}{_read_line_suffix(arguments)}"
+        return f"read {_display_tool_path(path, cwd)}{_read_line_suffix(arguments)}"
     if tool_call.name == "edit":
         path = _string_argument(arguments, "path")
         if path is None:
             return _fallback_tool_call_invocation(tool_call)
-        return f"edit {path}"
+        return f"edit {_display_tool_path(path, cwd)}"
     if tool_call.name == "write":
         path = _string_argument(arguments, "path")
         if path is None:
@@ -835,6 +859,29 @@ def _string_argument(arguments: dict[str, JSONValue], key: str) -> str | None:
 
 def _normalized_path(path: str | Path) -> Path:
     return Path(path).expanduser().resolve(strict=False)
+
+
+def _display_tool_path(path: str, cwd: Path | None) -> str:
+    """Shorten an absolute file path to a cwd-relative one when it is inside cwd.
+
+    Relative paths and paths outside ``cwd`` are returned unchanged so the
+    transcript never renders a misleading ``../..`` chain.
+    """
+    if cwd is None:
+        return path
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        return path
+    try:
+        return str(candidate.resolve().relative_to(_resolved_cwd(cwd)))
+    except (OSError, ValueError):
+        return path
+
+
+@lru_cache(maxsize=8)
+def _resolved_cwd(cwd: Path) -> Path:
+    """Resolve a working directory once per distinct value (restores call hot)."""
+    return cwd.expanduser().resolve()
 
 
 def _int_argument(arguments: dict[str, JSONValue], key: str) -> int | None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from contextlib import suppress
 from dataclasses import dataclass
@@ -119,6 +120,21 @@ class CodingSessionRecord:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _IndexSnapshot:
+    """Parsed index records plus the file stamp they were read from."""
+
+    stamp: tuple[int, int, int]
+    records: tuple[CodingSessionRecord, ...]
+
+
+# Frontends look up the active session's record many times per second (titles,
+# sidebars), and each lookup scans every project index. Parsed records are
+# reused until an index file's stamp changes. The cache is shared by all
+# managers so a write through one is never hidden from another.
+_INDEX_CACHE: dict[Path, _IndexSnapshot] = {}
+
+
 class SessionManager:
     """Create, index, list, and resume user-home coding sessions."""
 
@@ -149,8 +165,18 @@ class SessionManager:
         records = self._read_project_records(cwd) if cwd is not None else self._read_all_records()
         return sorted(records, key=lambda record: record.updated_at, reverse=True)
 
-    def get_session(self, session_id: str) -> CodingSessionRecord | None:
-        """Return a session record by id, if present."""
+    def get_session(
+        self, session_id: str, *, cwd: Path | None = None
+    ) -> CodingSessionRecord | None:
+        """Return a session record by id, if present.
+
+        ``cwd`` is a lookup hint: that project's index is searched first, and
+        every index is scanned only when the session is not found there.
+        """
+        if cwd is not None:
+            for record in self._read_project_records(cwd):
+                if record.id == session_id:
+                    return record
         for record in self._read_all_records():
             if record.id == session_id:
                 return record
@@ -380,9 +406,10 @@ class SessionManager:
         inference_provider_mode: InferenceProviderMode | None = None,
         preserve_inference_provider: bool = True,
         title: str | None = None,
+        cwd: Path | None = None,
     ) -> CodingSessionRecord | None:
-        """Update a session's last-used metadata."""
-        existing = self.get_session(session_id)
+        """Update a session's last-used metadata; ``cwd`` is a lookup hint."""
+        existing = self.get_session(session_id, cwd=cwd)
         if existing is None:
             return None
         updated = CodingSessionRecord(
@@ -407,8 +434,13 @@ class SessionManager:
         return updated
 
     def _read_index(self, path: Path) -> list[CodingSessionRecord]:
-        if not path.exists():
+        stamp = _index_stamp(path)
+        if stamp is None:
+            _INDEX_CACHE.pop(path, None)
             return []
+        cached = _INDEX_CACHE.get(path)
+        if cached is not None and cached.stamp == stamp:
+            return list(cached.records)
 
         records: list[CodingSessionRecord] = []
         # Split on newlines only: str.splitlines() would also split on characters
@@ -419,6 +451,7 @@ class SessionManager:
                 continue
             model = SessionRecordModel.model_validate_json(stripped)
             records.append(CodingSessionRecord.from_model(model))
+        _INDEX_CACHE[path] = _IndexSnapshot(stamp=stamp, records=tuple(records))
         return records
 
     def _read_project_records(self, cwd: Path) -> list[CodingSessionRecord]:
@@ -431,9 +464,18 @@ class SessionManager:
 
     def _read_all_records(self) -> list[CodingSessionRecord]:
         records = self._read_index(self.index_path)
-        for index_path in self.paths.sessions_dir.glob("*/index.jsonl"):
+        for index_path in self._project_index_paths():
             records.extend(self._read_index(index_path))
         return _deduplicate_records(records)
+
+    def _project_index_paths(self) -> list[Path]:
+        # Listing project directories directly avoids `glob("*/index.jsonl")`,
+        # which scans every project directory's contents on each call.
+        try:
+            entries = list(os.scandir(self.paths.sessions_dir))
+        except (FileNotFoundError, NotADirectoryError):
+            return []
+        return [Path(entry.path) / "index.jsonl" for entry in entries if entry.is_dir()]
 
     def _write_index(self, path: Path, records: list[CodingSessionRecord]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -441,6 +483,13 @@ class SessionManager:
         if content:
             content += "\n"
         path.write_text(content, encoding="utf-8")
+        # Seed the cache with what was just written: two writes inside one
+        # filesystem timestamp tick can leave the stamp unchanged.
+        stamp = _index_stamp(path)
+        if stamp is None:
+            _INDEX_CACHE.pop(path, None)
+        else:
+            _INDEX_CACHE[path] = _IndexSnapshot(stamp=stamp, records=tuple(records))
 
     def _upsert(self, record: CodingSessionRecord) -> None:
         path = self.project_index_path(record.cwd)
@@ -466,6 +515,14 @@ class SessionManager:
 
     def _remove_from_archive(self, session_id: str) -> None:
         self._remove_from_index(self.archive_index_path, session_id)
+
+
+def _index_stamp(path: Path) -> tuple[int, int, int] | None:
+    try:
+        stat = path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
 
 
 def _deduplicate_records(records: list[CodingSessionRecord]) -> list[CodingSessionRecord]:

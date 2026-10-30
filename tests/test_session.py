@@ -362,6 +362,113 @@ async def test_jsonl_storage_reads_existing_file_with_unicode_line_separator(
     assert await storage.read_all() == [entry]
 
 
+@pytest.mark.anyio
+async def test_jsonl_storage_reuses_parsed_entries_after_own_appends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tau_agent.session import storage as storage_module
+
+    path = tmp_path / "session.jsonl"
+    storage = JsonlSessionStorage(path)
+    first = MessageEntry(id="one", message=UserMessage(content="Hi"))
+    second = MessageEntry(id="two", parent_id="one", message=UserMessage(content="Again"))
+    third = CustomEntry(id="three", parent_id="two", namespace="ext", data={"n": 1})
+    await storage.append(first)
+    assert await storage.read_all() == [first]
+    full_parses = 0
+    original_parse = storage_module.entries_from_json_lines
+
+    def counting_parse(lines: list[str]) -> list[object]:
+        nonlocal full_parses
+        full_parses += 1
+        return original_parse(lines)  # type: ignore[return-value]
+
+    monkeypatch.setattr(storage_module, "entries_from_json_lines", counting_parse)
+
+    await storage.append(second)
+    await storage.append_batch([third])
+    cached = await storage.read_all()
+
+    assert full_parses == 0
+    assert cached == [first, second, third]
+    assert cached[1] is not second
+    assert cached == await JsonlSessionStorage(path).read_all()
+
+
+@pytest.mark.anyio
+async def test_jsonl_storage_rereads_after_external_writes(tmp_path: Path) -> None:
+    path = tmp_path / "session.jsonl"
+    storage = JsonlSessionStorage(path)
+    other_process = JsonlSessionStorage(path)
+    first = MessageEntry(id="one", message=UserMessage(content="Hi"))
+    second = MessageEntry(id="two", parent_id="one", message=UserMessage(content="Other"))
+    third = MessageEntry(id="three", parent_id="one", message=UserMessage(content="Mine"))
+    await storage.append(first)
+    assert await storage.read_all() == [first]
+
+    await other_process.append(second)
+    assert await storage.read_all() == [first, second]
+
+    # An append after an unseen external write cannot extend stale entries.
+    path.write_text(entry_to_json_line(first), encoding="utf-8")
+    await storage.append(third)
+    assert await storage.read_all() == [first, third]
+
+
+@pytest.mark.anyio
+async def test_jsonl_storage_cache_matches_reread_when_append_retargets_legacy_label(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "session.jsonl"
+    path.write_text(
+        json.dumps({"type": "session_info", "id": "info", "timestamp": 1, "created_at": 1})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "label",
+                "id": "legacy-label",
+                "parent_id": "info",
+                "timestamp": 2,
+                "label": "Legacy name",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    storage = JsonlSessionStorage(path)
+    before = await storage.read_all()
+    assert isinstance(before[-1], LabelEntry)
+    assert before[-1].target_id == "info"
+
+    await storage.append(
+        MessageEntry(id="first-message", parent_id="info", message=UserMessage(content="hi"))
+    )
+
+    after = await storage.read_all()
+    assert isinstance(after[1], LabelEntry)
+    assert after[1].target_id == "first-message"
+    assert after == await JsonlSessionStorage(path).read_all()
+
+
+@pytest.mark.anyio
+async def test_jsonl_storage_reads_do_not_alias_cached_entries(tmp_path: Path) -> None:
+    path = tmp_path / "session.jsonl"
+    storage = JsonlSessionStorage(path)
+    first = MessageEntry(id="one", message=UserMessage(content="durable"))
+    await storage.append(first)
+
+    entries = await storage.read_all()
+    entries[0].message.content = "in-memory-only"
+
+    second = MessageEntry(id="two", parent_id="one", message=UserMessage(content="again"))
+    await storage.append(second)
+
+    # Mutating a returned entry must not corrupt future cached reads.
+    cached = await storage.read_all()
+    assert cached[0].message.content == "durable"
+    assert cached == await JsonlSessionStorage(path).read_all()
+
+
 def test_session_state_replays_linear_entries() -> None:
     user = UserMessage(content="Hi", timestamp=1)
     assistant = AssistantMessage(content="Hello", timestamp=2)

@@ -6,7 +6,7 @@ from threading import Barrier
 import pytest
 
 from tau_coding.paths import TauPaths
-from tau_coding.session_manager import CodingSessionRecord, SessionManager
+from tau_coding.session_manager import CodingSessionRecord, SessionManager, SessionRecordModel
 
 
 def test_session_manager_creates_and_lists_sessions(tmp_path: Path) -> None:
@@ -303,6 +303,79 @@ def test_session_manager_touch_updates_metadata(tmp_path: Path) -> None:
     assert updated.title == "Updated"
     assert updated.updated_at >= record.updated_at
     assert manager.get_session(record.id) == updated
+
+
+def test_session_manager_reuses_parsed_index_until_file_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    record = manager.create_session(cwd=cwd, model="fake", title="Cached")
+    parses = 0
+    original_validate = SessionRecordModel.model_validate_json
+
+    def counting_validate(data: str | bytes) -> SessionRecordModel:
+        nonlocal parses
+        parses += 1
+        return original_validate(data)
+
+    monkeypatch.setattr(SessionRecordModel, "model_validate_json", counting_validate)
+
+    for _ in range(3):
+        cached = manager.get_session(record.id)
+        assert cached is not None
+        assert cached.title == "Cached"
+    assert parses == 0
+
+    index_path = manager.project_index_path(cwd)
+    renamed = json.loads(index_path.read_text(encoding="utf-8"))
+    renamed["title"] = "Renamed elsewhere"
+    index_path.write_text(json.dumps(renamed) + "\n", encoding="utf-8")
+
+    reread = manager.get_session(record.id)
+    assert reread is not None
+    assert reread.title == "Renamed elsewhere"
+    assert parses == 1
+
+
+def test_session_manager_writes_are_visible_to_other_managers(tmp_path: Path) -> None:
+    paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    writer = SessionManager(paths)
+    reader = SessionManager(paths)
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    record = writer.create_session(cwd=cwd, model="fake")
+    assert reader.get_session(record.id) == record
+
+    # Rewrites in quick succession can share a timestamp and size; writers seed
+    # the shared cache so readers never see the superseded records.
+    for title in ("First", "Second", "Third"):
+        writer.touch_session(record.id, title=title)
+        current = reader.get_session(record.id)
+        assert current is not None
+        assert current.title == title
+
+
+def test_session_manager_cwd_hint_skips_other_project_indexes(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    project = tmp_path / "project"
+    other = tmp_path / "other"
+    project.mkdir()
+    other.mkdir()
+    record = manager.create_session(cwd=project, model="fake", title="Hinted")
+    manager.create_session(cwd=other, model="fake")
+    manager.project_index_path(other).write_text("not json\n", encoding="utf-8")
+
+    hinted = manager.get_session(record.id, cwd=project)
+
+    assert hinted is not None
+    assert hinted.title == "Hinted"
+    with pytest.raises(ValueError):
+        manager.get_session(record.id)
+    with pytest.raises(ValueError):
+        # A wrong hint falls back to scanning every index.
+        manager.get_session(record.id, cwd=tmp_path)
 
 
 def test_session_manager_archives_session_without_deleting_transcript(tmp_path: Path) -> None:

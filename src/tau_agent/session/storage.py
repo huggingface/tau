@@ -7,11 +7,18 @@ import os
 import tempfile
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
 from tau_agent.session.entries import SessionEntry
-from tau_agent.session.jsonl import entries_from_json_lines, entry_to_json_line
+from tau_agent.session.jsonl import (
+    entries_from_json_lines,
+    entry_from_json_line,
+    entry_to_json_line,
+)
+
+_BRANCHABLE_ENTRY_TYPES = frozenset({"message", "compaction", "branch_summary"})
 
 
 class SessionStorage(Protocol):
@@ -35,6 +42,14 @@ class SessionStorage(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class _ParsedTranscript:
+    """Entries parsed from a transcript file plus the file stamp they match."""
+
+    stamp: tuple[int, int, int]
+    entries: tuple[SessionEntry, ...]
+
+
 class JsonlSessionStorage:
     """Local JSONL storage with a per-session cross-process lock.
 
@@ -42,22 +57,37 @@ class JsonlSessionStorage:
     shared lock when the platform provides one; every write uses an exclusive
     lock and re-reads the current file before changing it. Batch writes use a
     same-directory temporary file, fsync, replace, and directory fsync.
+
+    Parsed entries are kept between reads. Sessions persist after every
+    message and then read the transcript back, and parsing a long transcript
+    takes far longer than appending to it. A read reuses the parsed entries
+    while the file's (mtime, size, inode) stamp is unchanged, and this
+    storage's own appends extend them in place; any other change to the file
+    triggers a full re-read.
     """
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.lock_path = self.path.with_name(f".{self.path.name}.lock")
         self.temp_path = self.path.with_name(f".{self.path.name}.tmp")
+        self._parsed: _ParsedTranscript | None = None
 
     async def append(self, entry: SessionEntry) -> None:
         """Append one entry under the session's exclusive cross-process lock."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        line = entry_to_json_line(entry)
         with self._locked(exclusive=True):
             self._remove_incomplete_temp()
-            with self.path.open("ab") as file:
-                file.write(entry_to_json_line(entry).encode("utf-8"))
-                file.flush()
-                os.fsync(file.fileno())
+            previous_stamp = self._file_stamp()
+            try:
+                with self.path.open("ab") as file:
+                    file.write(line.encode("utf-8"))
+                    file.flush()
+                    os.fsync(file.fileno())
+            except BaseException:
+                self._parsed = None
+                raise
+            self._extend_parsed(previous_stamp, (line,))
 
     async def append_batch(self, entries: Sequence[SessionEntry]) -> None:
         """Atomically append all entries, preserving the old file on failure."""
@@ -65,12 +95,19 @@ class JsonlSessionStorage:
         if not batch:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        encoded = b"".join(entry_to_json_line(entry).encode("utf-8") for entry in batch)
+        lines = tuple(entry_to_json_line(entry) for entry in batch)
+        encoded = "".join(lines).encode("utf-8")
         with self._locked(exclusive=True):
             self._remove_incomplete_temp()
-            previous = self.path.read_bytes() if self.path.exists() else b""
+            previous_stamp = self._file_stamp()
+            previous = self.path.read_bytes() if previous_stamp is not None else b""
             data = previous + encoded
-            self._atomic_replace(data)
+            try:
+                self._atomic_replace(data)
+            except BaseException:
+                self._parsed = None
+                raise
+            self._extend_parsed(previous_stamp, lines)
 
     async def read_all(self) -> list[SessionEntry]:
         """Read all entries in file order; missing files are empty sessions."""
@@ -85,9 +122,48 @@ class JsonlSessionStorage:
             return self._read_unlocked()
 
     def _read_unlocked(self) -> list[SessionEntry]:
-        if not self.path.exists():
+        stamp = self._file_stamp()
+        if stamp is None:
+            self._parsed = None
             return []
-        return entries_from_json_lines(self.path.read_text(encoding="utf-8").split("\n"))
+        parsed = self._parsed
+        if parsed is not None and parsed.stamp == stamp:
+            return _isolated_entries(parsed.entries)
+        entries = entries_from_json_lines(self.path.read_text(encoding="utf-8").split("\n"))
+        self._parsed = _ParsedTranscript(stamp=stamp, entries=tuple(entries))
+        return _isolated_entries(entries)
+
+    def _extend_parsed(
+        self, previous_stamp: tuple[int, int, int] | None, lines: Sequence[str]
+    ) -> None:
+        """Record lines this storage just appended, if the cache saw the file before."""
+        parsed = self._parsed
+        previous: tuple[SessionEntry, ...]
+        if previous_stamp is None:
+            previous = ()
+        elif parsed is not None and parsed.stamp == previous_stamp:
+            previous = parsed.entries
+        else:
+            self._parsed = None
+            return
+        if not _appending_preserves_legacy_labels(previous):
+            self._parsed = None
+            return
+        stamp = self._file_stamp()
+        if stamp is None:
+            self._parsed = None
+            return
+        # Parse the written lines back instead of caching the caller's objects,
+        # so cached reads match a full re-read and never alias live models.
+        appended = tuple(entry_from_json_line(line) for line in lines)
+        self._parsed = _ParsedTranscript(stamp=stamp, entries=(*previous, *appended))
+
+    def _file_stamp(self) -> tuple[int, int, int] | None:
+        try:
+            stat = self.path.stat()
+        except FileNotFoundError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
 
     def _atomic_replace(self, data: bytes) -> None:
         descriptor, temporary = tempfile.mkstemp(
@@ -151,6 +227,28 @@ class InMemorySessionStorage:
     async def read_all(self) -> list[SessionEntry]:
         async with self._lock:
             return list(self.entries)
+
+
+def _isolated_entries(entries: Sequence[SessionEntry]) -> list[SessionEntry]:
+    """Return entries that do not alias the parsed cache.
+
+    Entries, their nested messages, and custom data are mutable; a caller that
+    edits a returned entry must not be able to change what future cached reads
+    return without any disk write, so every read hands out fresh copies.
+    """
+    return [entry.model_copy(deep=True) for entry in entries]
+
+
+def _appending_preserves_legacy_labels(entries: Sequence[SessionEntry]) -> bool:
+    """Return whether appended entries cannot retarget migrated legacy labels.
+
+    Target-less legacy labels resolve against the earliest branchable entry
+    in the whole file (see ``entries_from_json_lines``), so appending the
+    first branchable entry after such a label changes how earlier lines parse.
+    """
+    return any(entry.type in _BRANCHABLE_ENTRY_TYPES for entry in entries) or not any(
+        entry.type == "label" for entry in entries
+    )
 
 
 @contextmanager

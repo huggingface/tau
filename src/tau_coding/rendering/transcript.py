@@ -1,5 +1,7 @@
 """Human-readable Pi-compatible streaming transcript renderer."""
 
+from pathlib import Path
+
 import typer
 from rich.console import Console
 from rich.text import Text
@@ -24,11 +26,13 @@ class TranscriptRenderer:
         self,
         *,
         custom_message_renderer: CustomMessageMarkup | None = None,
+        cwd: Path | None = None,
         **_: object,
     ) -> None:
         self._assistant_started = False
         self._assistant_ended = False
         self._failed = False
+        self._cwd = cwd
         self._console = Console(stderr=True, highlight=False)
         self._custom_message_renderer = custom_message_renderer
 
@@ -42,7 +46,9 @@ class TranscriptRenderer:
         if isinstance(event, ToolExecutionStartEvent):
             self._newline()
             call = ToolCall(id=event.tool_call_id, name=event.tool_name, arguments=event.args)
-            self._console.print(Text(format_tool_call_block(call, compact=False), style="cyan"))
+            self._console.print(
+                Text(format_tool_call_block(call, compact=False, cwd=self._cwd), style="cyan")
+            )
             return
         if isinstance(event, ToolExecutionUpdateEvent):
             self._newline()

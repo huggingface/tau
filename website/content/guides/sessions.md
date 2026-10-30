@@ -107,9 +107,10 @@ not append another repair when history is already valid.
 
 New sessions are automatically given a short name from the first message when
 Tau can generate one. Tau shows the confirmed message first—including the
-expanded text from a prompt-template slash command—then performs naming without
-holding up that transcript update. The name appears anywhere session names are
-already shown, including the `/resume` picker and id completions.
+expanded text from a prompt-template slash command—then sends the naming request
+alongside the agent's reply, so naming delays neither the transcript nor the
+response. The name appears anywhere session names are already shown, including
+the `/resume` picker and id completions.
 
 Auto-naming makes one high-level provider request. The provider adapter may retry
 transient failures according to its configured `max_retries`. If those attempts

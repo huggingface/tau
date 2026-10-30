@@ -145,8 +145,41 @@ def user_catalog_path(paths: TauPaths | None = None) -> Path:
     return (paths or TauPaths()).home / USER_CATALOG_FILENAME
 
 
+_FileStamp = tuple[int, int, int]
+_EFFECTIVE_CATALOG_CACHE: dict[
+    tuple[Path, Path],
+    tuple[tuple[_FileStamp | None, _FileStamp | None], tuple[ProviderCatalogEntry, ...]],
+] = {}
+
+
 def effective_catalog(paths: TauPaths | None = None) -> tuple[ProviderCatalogEntry, ...]:
-    """Return bundled, refreshed, then user-overlaid provider model data."""
+    """Return bundled, refreshed, then user-overlaid provider model data.
+
+    Parsing and validating the user catalog and models.dev cache takes over
+    100 ms, and loading provider settings asks for the catalog more than once,
+    so the result is reused until either file's stamp changes.
+    """
+    from tau_coding.models_dev_store import models_store_path
+
+    key = (user_catalog_path(paths), models_store_path(paths))
+    stamps = (_file_stamp(key[0]), _file_stamp(key[1]))
+    cached = _EFFECTIVE_CATALOG_CACHE.get(key)
+    if cached is not None and cached[0] == stamps:
+        return cached[1]
+    entries = _load_effective_catalog(paths)
+    _EFFECTIVE_CATALOG_CACHE[key] = (stamps, entries)
+    return entries
+
+
+def _file_stamp(path: Path) -> _FileStamp | None:
+    try:
+        stat = path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+
+
+def _load_effective_catalog(paths: TauPaths | None) -> tuple[ProviderCatalogEntry, ...]:
     builtin_raw = _builtin_raw_with_cached_models(paths)
     path = user_catalog_path(paths)
     if not path.exists():

@@ -839,9 +839,22 @@ def _write_provider_settings(
     _atomic_write_text(path, dumps(settings.to_json(), indent=2, sort_keys=True) + "\n")
 
 
+_EFFECTIVE_PROVIDER_CONFIGS: (
+    tuple[tuple[ProviderCatalogEntry, ...], tuple[ProviderConfig, ...]] | None
+) = None
+
+
 def _effective_provider_configs(paths: TauPaths | None = None) -> tuple[ProviderConfig, ...]:
     """Return provider configs for the effective catalog (builtin + user overlay)."""
-    return tuple(provider_config_from_entry(entry) for entry in effective_catalog(paths))
+    global _EFFECTIVE_PROVIDER_CONFIGS
+    entries = effective_catalog(paths)
+    # `effective_catalog` returns the same tuple until its source files change.
+    cached = _EFFECTIVE_PROVIDER_CONFIGS
+    if cached is not None and cached[0] is entries:
+        return cached[1]
+    configs = tuple(provider_config_from_entry(entry) for entry in entries)
+    _EFFECTIVE_PROVIDER_CONFIGS = (entries, configs)
+    return configs
 
 
 def _append_catalog_providers(
