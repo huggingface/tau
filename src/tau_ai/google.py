@@ -313,11 +313,7 @@ def _build_google_payload(
 ) -> dict[str, JSONValue]:
     config: dict[str, JSONValue] = {}
     payload: dict[str, JSONValue] = {
-        "contents": [
-            item
-            for message in messages
-            for item in _messages_to_google(message, model=model, supports_images=supports_images)
-        ],
+        "contents": _google_contents(messages, model=model, supports_images=supports_images),
     }
     if system:
         payload["systemInstruction"] = {"parts": [{"text": system}]}
@@ -395,6 +391,64 @@ def _is_gemini3_flash_model(model: str) -> bool:
 
 def _is_gemma4_model(model: str) -> bool:
     return "gemma-4" in model.lower() or "gemma4" in model.lower()
+
+
+def _google_contents(
+    messages: list[AgentMessage], *, model: str, supports_images: bool
+) -> list[JSONValue]:
+    """Convert agent messages, keeping one parallel tool round in one user turn.
+
+    Gemini rejects a follow-up unless every ``functionResponse`` for a model
+    turn shares a single ``Content``. Image turns for models that cannot embed
+    images inside ``functionResponse`` stay after that merged turn.
+    """
+    contents: list[JSONValue] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if isinstance(message, ToolResultMessage):
+            run: list[dict[str, JSONValue]] = []
+            while index < len(messages) and isinstance(messages[index], ToolResultMessage):
+                run.extend(
+                    _messages_to_google(
+                        messages[index], model=model, supports_images=supports_images
+                    )
+                )
+                index += 1
+            contents.extend(_merge_parallel_function_responses(run))
+            continue
+        contents.extend(_messages_to_google(message, model=model, supports_images=supports_images))
+        index += 1
+    return contents
+
+
+def _merge_parallel_function_responses(
+    contents: list[dict[str, JSONValue]],
+) -> list[JSONValue]:
+    response_parts: list[JSONValue] = []
+    followups: list[dict[str, JSONValue]] = []
+    for content in contents:
+        parts = _function_response_parts(content)
+        if parts is None:
+            followups.append(content)
+            continue
+        response_parts.extend(parts)
+    if not response_parts:
+        return list(contents)
+    merged: list[JSONValue] = [{"role": "user", "parts": response_parts}]
+    merged.extend(followups)
+    return merged
+
+
+def _function_response_parts(content: dict[str, JSONValue]) -> list[JSONValue] | None:
+    if content.get("role") != "user":
+        return None
+    parts = content.get("parts")
+    if not isinstance(parts, list) or not parts:
+        return None
+    if not all(isinstance(part, dict) and set(part) == {"functionResponse"} for part in parts):
+        return None
+    return parts
 
 
 def _messages_to_google(
