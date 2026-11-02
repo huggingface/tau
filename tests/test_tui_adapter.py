@@ -198,7 +198,12 @@ def test_tui_state_groups_adjacent_reads_from_one_assistant_message() -> None:
     assert [member.tool_call_id for member in item.grouped_tool_calls] == ["call-1", "call-2"]
     assert state.find_tool_item("call-1") is item
     assert state.find_tool_item("call-2") is item
-    assert state.resolve_tool_invocation(item, expanded=True) == "→ read a.py\n→ read b.py"
+    # Collapsed, the widget falls back to the compact path list.
+    assert state.resolve_tool_invocation(item, expanded=False) is None
+    # Expanding a read run shows each member's previewed result, like edits.
+    assert state.resolve_tool_invocation(item, expanded=True) == (
+        "→ read a.py\n\n✓ read\none\n\n→ read b.py\n\n✓ read\ntwo"
+    )
     assert item.tool_result_text == "✓ read group"
 
 
@@ -628,7 +633,8 @@ def test_tui_adapter_does_not_group_reads_separated_by_assistant_text() -> None:
     assert [item.text for item in state.items] == ["then", "→ read a.py", "→ read b.py"]
 
 
-def test_tui_state_does_not_group_reads_from_different_assistant_messages() -> None:
+def test_tui_state_groups_reads_from_tool_only_messages() -> None:
+    """Read runs continue across tool-only messages, like every other tool."""
     state = TuiState()
     state.load_messages(
         [
@@ -643,7 +649,75 @@ def test_tui_state_does_not_group_reads_from_different_assistant_messages() -> N
         ]
     )
 
-    assert [item.text for item in state.items] == ["→ read a.py", "→ read b.py"]
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == "→ Read 2 files\n  - a.py\n  - b.py"
+    assert item.grouped_tool_calls is not None
+    assert [member.tool_call_id for member in item.grouped_tool_calls] == ["call-1", "call-2"]
+    assert state.find_tool_item("call-2") is item
+
+
+@pytest.mark.parametrize("tool_name", ["read", "edit", "write"])
+@pytest.mark.parametrize("streaming", [False, True], ids=["restored", "streamed"])
+def test_nested_file_groups_count_toward_tool_run_limit(
+    monkeypatch: pytest.MonkeyPatch, tool_name: str, streaming: bool
+) -> None:
+    monkeypatch.setattr("tau_coding.tui.state.TOOL_RUN_ROW_LIMIT", 5)
+    prefix_tool = "edit" if tool_name == "write" else "write"
+    rounds = [
+        AssistantMessage(
+            content=[
+                ToolCall(id="prefix-1", name=prefix_tool, arguments={"path": "a.py"}),
+                ToolCall(id="prefix-2", name=prefix_tool, arguments={"path": "b.py"}),
+                ToolCall(id="bash", name="bash", arguments={"command": "pwd"}),
+                ToolCall(id="c0", name=tool_name, arguments={"path": "f0.py"}),
+            ]
+        ),
+        *[
+            AssistantMessage(
+                content=[
+                    ToolCall(id=f"c{index}", name=tool_name, arguments={"path": f"f{index}.py"})
+                ]
+            )
+            for index in range(1, 4)
+        ],
+    ]
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+    messages: list[AssistantMessage | ToolResultMessage] = []
+    for message in rounds:
+        messages.append(message)
+        if streaming:
+            adapter.apply(MessageStartEvent(message=AssistantMessage()))
+            adapter.apply(MessageEndEvent(message=message))
+        for call in message.tool_calls:
+            messages.append(
+                ToolResultMessage(tool_call_id=call.id, tool_name=call.name, content="ok")
+            )
+            if streaming:
+                adapter.apply(
+                    ToolExecutionStartEvent(
+                        tool_call_id=call.id, tool_name=call.name, args=call.arguments
+                    )
+                )
+                adapter.apply(
+                    ToolExecutionEndEvent(
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        result=AgentToolResult(content="ok"),
+                        is_error=False,
+                    )
+                )
+    if not streaming:
+        state.load_messages(messages)
+
+    assert len(state.items) == 2
+    first, second = state.items
+    assert state._tool_run_tail(first) == (5, tool_name, {"path": "f1.py"})
+    assert state._tool_run_tail(second) == (2, tool_name, {"path": "f3.py"})
+    assert state.find_tool_item("c1") is first
+    assert state.find_tool_item("c2") is second
+    assert state.find_tool_item("c3") is second
 
 
 def test_tui_adapter_records_tool_progress_and_result() -> None:
