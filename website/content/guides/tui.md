@@ -179,8 +179,9 @@ Same-tool runs continue across consecutive narration-free responses, so a
 provider that serializes one call at a time still produces one block. Assistant
 text or thinking, a different tool, a failed call, and a new user prompt all end
 the run. A run stops growing after eight rows and the next call starts a fresh
-block. Extension tools, custom rendered call cards, and skill loads remain
-separate.
+block. Each file-group member counts toward this limit, including groups inside
+mixed-tool blocks. Extension tools, custom rendered call cards, and skill loads
+remain separate.
 
 Tool results (like long `read` or `bash` output) render as compact previews so
 the transcript stays readable. Tau requires the model to give each `bash` call a

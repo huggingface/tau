@@ -370,8 +370,9 @@ class TuiState:
             member = item.grouped_tool_calls[-1]
             return len(item.grouped_tool_calls), member.tool_name, member.tool_arguments
         if item.tool_batch_items:
-            row = item.tool_batch_items[-1]
-            return len(item.tool_batch_items), row.tool_name, row.tool_arguments or {}
+            runs = [self._tool_run_tail(row) for row in item.tool_batch_items]
+            _, tail_name, tail_arguments = runs[-1]
+            return sum(count for count, _, _ in runs), tail_name, tail_arguments
         return 1, item.tool_name, item.tool_arguments or {}
 
     def _has_custom_call_rendering(

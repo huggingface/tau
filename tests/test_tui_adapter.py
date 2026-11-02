@@ -657,6 +657,69 @@ def test_tui_state_groups_reads_from_tool_only_messages() -> None:
     assert state.find_tool_item("call-2") is item
 
 
+@pytest.mark.parametrize("tool_name", ["read", "edit", "write"])
+@pytest.mark.parametrize("streaming", [False, True], ids=["restored", "streamed"])
+def test_nested_file_groups_count_toward_tool_run_limit(
+    monkeypatch: pytest.MonkeyPatch, tool_name: str, streaming: bool
+) -> None:
+    monkeypatch.setattr("tau_coding.tui.state.TOOL_RUN_ROW_LIMIT", 5)
+    prefix_tool = "edit" if tool_name == "write" else "write"
+    rounds = [
+        AssistantMessage(
+            content=[
+                ToolCall(id="prefix-1", name=prefix_tool, arguments={"path": "a.py"}),
+                ToolCall(id="prefix-2", name=prefix_tool, arguments={"path": "b.py"}),
+                ToolCall(id="bash", name="bash", arguments={"command": "pwd"}),
+                ToolCall(id="c0", name=tool_name, arguments={"path": "f0.py"}),
+            ]
+        ),
+        *[
+            AssistantMessage(
+                content=[
+                    ToolCall(id=f"c{index}", name=tool_name, arguments={"path": f"f{index}.py"})
+                ]
+            )
+            for index in range(1, 4)
+        ],
+    ]
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+    messages: list[AssistantMessage | ToolResultMessage] = []
+    for message in rounds:
+        messages.append(message)
+        if streaming:
+            adapter.apply(MessageStartEvent(message=AssistantMessage()))
+            adapter.apply(MessageEndEvent(message=message))
+        for call in message.tool_calls:
+            messages.append(
+                ToolResultMessage(tool_call_id=call.id, tool_name=call.name, content="ok")
+            )
+            if streaming:
+                adapter.apply(
+                    ToolExecutionStartEvent(
+                        tool_call_id=call.id, tool_name=call.name, args=call.arguments
+                    )
+                )
+                adapter.apply(
+                    ToolExecutionEndEvent(
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        result=AgentToolResult(content="ok"),
+                        is_error=False,
+                    )
+                )
+    if not streaming:
+        state.load_messages(messages)
+
+    assert len(state.items) == 2
+    first, second = state.items
+    assert state._tool_run_tail(first) == (5, tool_name, {"path": "f1.py"})
+    assert state._tool_run_tail(second) == (2, tool_name, {"path": "f3.py"})
+    assert state.find_tool_item("c1") is first
+    assert state.find_tool_item("c2") is second
+    assert state.find_tool_item("c3") is second
+
+
 def test_tui_adapter_records_tool_progress_and_result() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)

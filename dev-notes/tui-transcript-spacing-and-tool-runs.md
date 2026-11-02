@@ -44,7 +44,10 @@ rows. One predicate decides visibility for both content types:
   `_is_tool_only_message` (run classification), so the three cannot disagree.
 
 `TuiAgentAdapter._flush` drops a whitespace-only assistant buffer for the same
-reason.
+reason. Finalizing a message that streamed thinking always reconciles its
+provisional widgets, even when only one visible text block remains. Otherwise,
+blank thinking would leave a placeholder (or an empty expanded row) mounted after
+its canonical item was filtered out.
 
 ### Tool runs continue across narration-free responses
 
@@ -65,8 +68,10 @@ calls (whitespace-only `"\n\n"` blocks defeated it on real provider traffic).
 - the run is below `TOOL_RUN_ROW_LIMIT` (8) rows.
 
 `_tool_run_tail` reports an item's visible row count and its last row's identity,
-counting `grouped_tool_calls` members as well as `tool_batch_items` rows: a file
-group is one collapsed row but must still consume the run's budget.
+recursively counting `grouped_tool_calls` members inside `tool_batch_items`:
+a file group is one collapsed row but every member still consumes the run's
+budget. The tail identity also comes from the group's last member, not its
+first call.
 
 Anything the transcript would render between the rows ends the run: visible
 prose, thinking, another tool, a failure, or a new user prompt. Merging across
@@ -115,9 +120,11 @@ same way it records batch ids.
 - `tests/test_tui_app.py`: paragraph margin and block-gap regressions, whitespace
   block projection (restored and streamed), run continuation (bash/edit/read),
   boundaries (prose, thinking, failure), the row cap for batches and file groups,
-  `Ctrl+O` read previews, and window/scroll stability for a paged-back transcript.
+  blank thinking before visible text (collapsed and expanded), `Ctrl+O` read
+  previews, and window/scroll stability for a paged-back transcript.
 - `tests/test_tui_adapter.py`: restored grouping for reads/edits/writes, tool-only
-  continuations, text boundaries, and path lists with line ranges.
+  continuations, text boundaries, path lists with line ranges, and recursive
+  mixed-batch row limits and tail identities in restored and streamed sessions.
 
 ```bash
 uv run pytest tests/test_tui_app.py tests/test_tui_adapter.py

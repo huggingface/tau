@@ -6426,10 +6426,11 @@ class TauTuiApp(App[None]):
                     # user who scrolled back to earlier output.
                     await transcript.discard_provisional_assistant_message()
                 elif (
-                    any(isinstance(block, ThinkingContent) for block in visible_blocks)
+                    any(isinstance(block, ThinkingContent) for block in event.message.content)
                     or len(visible_blocks) > 1
                 ):
-                    # Replace only this message's provisional streaming widgets;
+                    # Replace only this message's provisional streaming widgets,
+                    # including thinking filtered out as whitespace-only;
                     # unrelated history remains mounted and selectable.
                     await transcript.finish_structured_assistant_message(
                         canonical_items,

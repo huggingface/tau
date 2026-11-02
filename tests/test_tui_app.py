@@ -56,7 +56,7 @@ from tau_agent import (
     UserMessage,
 )
 from tau_agent.messages import assistant_content
-from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
+from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent, ThinkingEndEvent
 from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.commands import CommandResult
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
@@ -2285,6 +2285,67 @@ async def test_whitespace_only_thinking_keeps_the_tool_run() -> None:
     assert [item.role for item in app.state.items] == ["tool"]
     assert [widget.item.role for widget in rows] == ["tool"]
     assert len(rows[0].item.tool_batch_items or []) == 2
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("show_thinking", [False, True], ids=["collapsed", "expanded"])
+async def test_streamed_blank_thinking_before_text_leaves_no_provisional_row(
+    show_thinking: bool,
+) -> None:
+    partial = AssistantMessage()
+    app = TauTuiApp(
+        FakeSession(
+            events=[
+                AgentStartEvent(),
+                MessageStartEvent(message=partial),
+                MessageUpdateEvent(
+                    message=partial,
+                    assistant_message_event=ThinkingDeltaEvent(
+                        content_index=0, delta="\n\n", partial=partial
+                    ),
+                ),
+                MessageUpdateEvent(
+                    message=partial,
+                    assistant_message_event=ThinkingEndEvent(
+                        content_index=0, content="\n\n", partial=partial
+                    ),
+                ),
+                MessageUpdateEvent(
+                    message=partial,
+                    assistant_message_event=TextDeltaEvent(
+                        content_index=1, delta="answer", partial=partial
+                    ),
+                ),
+                MessageEndEvent(
+                    message=AssistantMessage(
+                        content=[ThinkingContent(thinking="\n\n"), TextContent(text="answer")]
+                    )
+                ),
+                AgentEndEvent(),
+                SessionAgentEndEvent(),
+            ]
+        )
+    )
+
+    async with app.run_test() as pilot:
+        if show_thinking:
+            await pilot.press("ctrl+t")
+        await app._run_prompt("stream")
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        rows = [
+            widget
+            for widget in transcript.children
+            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+        ]
+        assert [(item.role, item.text) for item in app.state.items] == [("assistant", "answer")]
+        assert [(widget.item.role, widget.selection_text) for widget in rows] == [
+            ("assistant", "answer")
+        ]
+        assert rows[0].item is app.state.items[0]
+        assert transcript._active_message_widgets == []
+        assert transcript._window_end == len(app.state.items)
 
 
 def test_tool_run_does_not_absorb_always_visible_rows() -> None:
