@@ -39,8 +39,10 @@ from tau_agent.provider_events import (
     ToolCallEndEvent,
     ToolCallStartEvent,
 )
+from tau_agent.tool_arguments import argument_problems, invalid_arguments_message
 from tau_agent.tool_history import repair_tool_history
 from tau_agent.tools import AgentTool, AgentToolResult
+from tau_agent.types import JSONValue
 
 BeforeToolCall = Callable[[ToolCall], Awaitable[tuple[bool, str | None]]]
 AfterToolCall = Callable[
@@ -332,14 +334,19 @@ async def _execute_tool_call(
             result = _error_result(f"Tool {call.name} not found")
             is_error = True
         else:
-            result, is_error, updates = await _run_tool(tool, call, signal)
-            for update in updates:
-                yield ToolExecutionUpdateEvent(
-                    tool_call_id=call.id,
-                    tool_name=call.name,
-                    args=call.arguments,
-                    partial_result=update,
-                )
+            arguments, problems = _checked_arguments(tool, call)
+            if problems:
+                result = _error_result(invalid_arguments_message(call.name, problems))
+                is_error = True
+            else:
+                result, is_error, updates = await _run_tool(tool, call, arguments, signal)
+                for update in updates:
+                    yield ToolExecutionUpdateEvent(
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        args=call.arguments,
+                        partial_result=update,
+                    )
 
     if after_tool_call is not None:
         result, is_error = await after_tool_call(call, result, is_error)
@@ -362,9 +369,26 @@ async def _execute_tool_call(
     yield MessageEndEvent(message=message)
 
 
+def _checked_arguments(
+    tool: AgentTool, call: ToolCall
+) -> tuple[Mapping[str, JSONValue], list[str]]:
+    # Arguments that did not parse as JSON arrive as `_raw_arguments` alone,
+    # and the tool reports those itself.
+    if set(call.arguments) == {"_raw_arguments"}:
+        return call.arguments, []
+    arguments: Mapping[str, JSONValue] = call.arguments
+    if tool.prepare_arguments is not None:
+        try:
+            arguments = tool.prepare_arguments(call.arguments)
+        except Exception as exc:  # noqa: BLE001 - tools are an isolation boundary
+            return call.arguments, [str(exc)]
+    return arguments, argument_problems(tool.parameters, arguments)
+
+
 async def _run_tool(
     tool: AgentTool,
     call: ToolCall,
+    arguments: Mapping[str, JSONValue],
     signal: CancellationToken | None,
 ) -> tuple[AgentToolResult, bool, list[AgentToolResult]]:
     updates: list[AgentToolResult] = []
@@ -375,7 +399,7 @@ async def _run_tool(
             updates.append(partial.model_copy(deep=True))
 
     try:
-        result = await tool.execute(call.id, call.arguments, signal, on_update)
+        result = await tool.execute(call.id, arguments, signal, on_update)
         return result, False, updates
     except asyncio.CancelledError:
         raise

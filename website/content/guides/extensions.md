@@ -375,6 +375,17 @@ section, and `prompt_guidelines` for usage guidance tied to the tool.
 Registering a tool with a built-in's name (`read`, `write`, `edit`,
 `bash`) replaces the built-in.
 
+Before a tool runs, the agent loop checks the call's arguments against
+`parameters`. A call that does not fit is not run: the model gets one error
+listing every problem (missing required keys, wrong types, values outside an
+`enum`, keys not declared when `additionalProperties` is `false`), with the path
+of each. The check covers `type`, `required`, `properties`,
+`additionalProperties`, `enum` and `items`, and ignores other keywords. An empty
+`parameters` mapping is not checked, and an optional argument sent as `null`
+counts as not sent. Nothing is coerced. To accept other shapes, set
+`prepare_arguments` to a function that rewrites the arguments into the declared
+shape; the loop checks its result and passes that to `execute_fn`.
+
 A long-running tool can stream progress: an executor that additionally
 uses `on_update` receives a callback accepting an `AgentToolResult`; each call becomes a
 `tool_execution_update` event and drives the TUI's live progress line.
@@ -695,7 +706,9 @@ Lifecycle and intercepting hooks:
   consumes it without an agent run and shows `message` as a notification.
 - `tool_call` runs before a tool executes. `block=True` prevents execution
   and reports `reason` to the model; returning `arguments` rewrites the
-  call. A crashing `tool_call` handler blocks the tool (fail-safe).
+  call. A crashing `tool_call` handler blocks the tool (fail-safe). It runs
+  after the arguments were checked against the tool's schema, so it never sees a
+  call that check refused, and arguments it returns are not checked again.
 - `tool_result` can rewrite a result's text `content` or `details`; execution
   error state belongs to the host's tool lifecycle rather than the result payload.
 
