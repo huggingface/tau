@@ -1,5 +1,26 @@
 [
   {
+    "version": "0.4.9",
+    "date": "2026-11-03",
+    "sections": {
+      "New": [
+        "Show read and edit paths relative to the session working directory in the transcript when the path is inside it.",
+        "Group narration-free tool runs in the transcript with expandable read previews."
+      ],
+      "Changed": [
+        "Compact the TUI prompt and session info footer: top and bottom prompt rules, cwd and model with context usage on the footer lines.",
+        "Replace the prompt activity indicator with a braille-dot spinner whose gap orbits the cell and whose accent color pulses.",
+        "Cut TUI prompt-echo and startup latency: cache session index and transcript reads by file stamp, memoize catalog and git/skill-path lookups, run auto-naming and the update check off the startup path, and reserve submitted prompts so a fast second submit queues instead of cancelling.",
+        "Reduce text input latency and CPU usage by coalescing streamed text appends, running full garbage collection when the agent settles, and keeping 80 transcript items mounted instead of 200.",
+        "Tighten transcript spacing and omit whitespace-only blocks."
+      ],
+      "Fixed": [
+        "End a run as aborted instead of erroring when a cancel arrives during tool execution, keeping a hook's cancel reason as the error message.",
+        "Name cut-off and missing tool call arguments in errors instead of reporting \"path must be a string\", and suggest sending less per call when arguments were cut off."
+      ]
+    }
+  },
+  {
     "version": "0.4.8",
     "date": "2026-10-14",
     "sections": {
