@@ -25,13 +25,18 @@ tau
 /login github-copilot # authenticate GitHub Copilot with a device code
 /login opencode-go  # save an OpenCode Go API key
 /login nvidia       # save an NVIDIA NIM API key
+/login tsubasa      # save a Tsubasa API key
 /login custom       # add an OpenAI-compatible custom provider
 ```
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
 (subscription), **GitHub Copilot**, **OpenCode Go**, **OpenCode Zen**,
 **Moonshot AI (Kimi)**, **Kimi Code** (subscription), **OpenRouter**, **Hugging Face**,
-and **NVIDIA NIM**.
+**NVIDIA NIM**, and **Tsubasa**.
+
+Tsubasa uses `TSUBASA_API_KEY` and the OpenAI-compatible Chat Completions
+endpoint at `https://api.tsubasa.sh/v1`. Select `tsubasa-pro` or `tsubasa-fast`
+with `/model`; both accept text input and have a 32,768-token context window.
 
 ### OAuth subscriptions
 
