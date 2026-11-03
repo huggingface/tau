@@ -2222,8 +2222,10 @@ class CodingSession:
 
     def will_auto_retry(self, message: AssistantMessage) -> bool:
         """Return whether session orchestration will retry this assistant error."""
-        return is_context_overflow_error(message) or self._should_auto_failover_huggingface_route(
-            message
+        return (
+            message.is_tool_result_recovery
+            or is_context_overflow_error(message)
+            or self._should_auto_failover_huggingface_route(message)
         )
 
     def _should_auto_failover_huggingface_route(
@@ -2288,6 +2290,7 @@ class CodingSession:
                     isinstance(retry_event, MessageEndEvent)
                     and isinstance(retry_event.message, AssistantMessage)
                     and retry_event.message.stop_reason in {"error", "aborted"}
+                    and not retry_event.message.is_tool_result_recovery
                 ):
                     final_error = retry_event.message.error_message or "Provider request aborted"
                     if retry_event.message.stop_reason == "error":
@@ -3382,6 +3385,7 @@ class CodingSession:
                     isinstance(event, MessageEndEvent)
                     and isinstance(event.message, AssistantMessage)
                     and event.message.stop_reason == "error"
+                    and not event.message.is_tool_result_recovery
                 ):
                     self._last_diagnostic_log_path = self._diagnostic_logger.log_assistant_error(
                         context=context,
@@ -3445,6 +3449,7 @@ class CodingSession:
                             isinstance(retry_event, MessageEndEvent)
                             and isinstance(retry_event.message, AssistantMessage)
                             and retry_event.message.stop_reason in {"error", "aborted"}
+                            and not retry_event.message.is_tool_result_recovery
                         ):
                             overflow_retry_error = (
                                 retry_event.message.error_message or "Provider request aborted"
@@ -3517,6 +3522,7 @@ class CodingSession:
                     isinstance(event, MessageEndEvent)
                     and isinstance(event.message, AssistantMessage)
                     and event.message.stop_reason == "error"
+                    and not event.message.is_tool_result_recovery
                 ):
                     self._last_diagnostic_log_path = self._diagnostic_logger.log_assistant_error(
                         context=context,

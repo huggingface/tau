@@ -730,6 +730,13 @@ class TuiState:
 
     def add_assistant_error(self, message: AssistantMessage) -> None:
         """Project any partial response followed by its terminal error."""
+        if message.is_tool_result_recovery:
+            self.add_item(
+                "status",
+                "… Image tool response rejected; retrying without images: "
+                f"{message.error_message or 'Error'}",
+            )
+            return
         self.add_assistant_message(message, include_tool_calls=False)
         text = message.error_message or "Error"
         self.error = text

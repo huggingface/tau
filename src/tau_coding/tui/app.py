@@ -6323,6 +6323,7 @@ class TauTuiApp(App[None]):
                     isinstance(event, MessageEndEvent)
                     and isinstance(event.message, AssistantMessage)
                     and event.message.stop_reason == "error"
+                    and not event.message.is_tool_result_recovery
                 ):
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
                     will_auto_retry = getattr(self.session, "will_auto_retry", None)

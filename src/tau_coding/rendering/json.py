@@ -18,6 +18,7 @@ class JsonEventRenderer:
             isinstance(event, MessageEndEvent)
             and isinstance(event.message, AssistantMessage)
             and event.message.stop_reason == "error"
+            and not event.message.is_tool_result_recovery
         ):
             self._failed = True
         typer.echo(event.model_dump_json(by_alias=True, exclude_none=True))

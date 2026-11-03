@@ -203,6 +203,13 @@ class AssistantMessage(WireModel):
         )
 
     @property
+    def is_tool_result_recovery(self) -> bool:
+        """Whether this provider failure is being fed back to an image tool."""
+        return any(
+            diagnostic.type == "tool_result_recovery" for diagnostic in self.diagnostics or ()
+        )
+
+    @property
     def tool_calls(self) -> tuple[ToolCall, ...]:
         return tuple(block for block in self.content if isinstance(block, ToolCall))
 
