@@ -84,7 +84,16 @@ class TranscriptRenderer:
                 self._console.print(rendered)
             return
         if isinstance(event, MessageEndEvent) and isinstance(event.message, AssistantMessage):
-            if event.message.stop_reason == "error":
+            if event.message.is_tool_result_recovery:
+                self._newline()
+                self._console.print(
+                    Text(
+                        "… Image tool response rejected; retrying without images: "
+                        f"{event.message.error_message}",
+                        style="bright_black",
+                    )
+                )
+            elif event.message.stop_reason == "error":
                 self._failed = True
                 self._newline()
                 self._console.print(

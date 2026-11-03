@@ -22,6 +22,8 @@ from tau_agent.events import (
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    AssistantMessageDiagnostic,
+    ImageContent,
     ResponseTiming,
     TextContent,
     ToolCall,
@@ -93,6 +95,7 @@ async def run_agent_loop(
     tool_by_name = {tool.name: tool for tool in tools}
     turn = 1
     first_turn = True
+    consecutive_errors = 0
     pending = tuple(get_steering_messages() if get_steering_messages else ())
     # Error text of the tool call that cancelled the run, e.g. a hook's reason.
     stop_note: str | None = None
@@ -145,11 +148,25 @@ async def run_agent_loop(
                 signal=signal,
                 session_id=session_id,
             ):
-                yield event
                 if isinstance(event, MessageEndEvent) and isinstance(
                     event.message, AssistantMessage
                 ):
                     assistant = event.message
+                    if (
+                        assistant.stop_reason == "error"
+                        and not assistant.content
+                        and consecutive_errors + 1 < 3
+                        and (max_turns is None or turn < max_turns)
+                        and _has_image_tool_results(messages)
+                        and not (signal is not None and signal.is_cancelled())
+                    ):
+                        # Mark before message_end: subscribers persist this
+                        # diagnostic and frontends must not report a final failure.
+                        assistant.diagnostics = [
+                            *(assistant.diagnostics or ()),
+                            AssistantMessageDiagnostic(type="tool_result_recovery"),
+                        ]
+                yield event
 
             if assistant is None:  # defensive: _assistant_events always terminates
                 assistant = _error_message(model, "Provider produced no assistant message")
@@ -159,10 +176,17 @@ async def run_agent_loop(
             messages.append(assistant)
             new_messages.append(assistant)
             if assistant.stop_reason in {"error", "aborted"}:
+                consecutive_errors += 1
                 yield TurnEndEvent(message=assistant)
+                if assistant.is_tool_result_recovery:
+                    # Replay replaces rejected images with the API error in the
+                    # existing tool responses; never rerun side-effecting tools.
+                    turn += 1
+                    continue
                 yield AgentEndEvent(messages=new_messages)
                 return
 
+            consecutive_errors = 0
             tool_results: list[ToolResultMessage] = []
             calls = list(assistant.tool_calls)
             has_more_tools = bool(calls)
@@ -209,18 +233,64 @@ def _provider_context(messages: list[AgentMessage]) -> list[AgentMessage]:
 
     Providers cannot consistently accept an assistant turn with no content. Tau
     persists terminal failures for diagnostics, but an empty failed or aborted
-    turn is not model context and must not poison the next request.
+    turn is not model context and must not poison the next request. After an
+    image-bearing tool batch fails, replay its results as text-only API errors.
+    Deriving this projection from history keeps JSONL replay safe without
+    modifying the original attachments or emitting duplicate tool responses.
     """
-    replayable = tuple(
-        message
-        for message in messages
-        if not (
+    replayable: list[AgentMessage] = []
+    image_results: list[tuple[int, ToolResultMessage]] = []
+    for message in messages:
+        if isinstance(message, AssistantMessage):
+            if not message.content and message.stop_reason in {"error", "aborted"}:
+                if message.stop_reason == "error":
+                    for index, original in image_results:
+                        replayable[index] = original.model_copy(
+                            update={
+                                "content": [
+                                    block
+                                    for block in original.content
+                                    if not isinstance(block, ImageContent)
+                                ]
+                                + [
+                                    TextContent(
+                                        text=(
+                                            "Image omitted because the provider rejected the "
+                                            "request. API error: "
+                                            f"{message.error_message or 'Unknown provider error'}"
+                                            "\nTry a smaller image or another approach."
+                                        )
+                                    )
+                                ],
+                                "is_error": True,
+                            }
+                        )
+                else:
+                    image_results = []
+                continue
+            image_results = []
+        elif isinstance(message, ToolResultMessage):
+            if any(isinstance(block, ImageContent) for block in message.content):
+                image_results.append((len(replayable), message))
+        else:
+            image_results = []
+        replayable.append(message)
+    return list(repair_tool_history(tuple(replayable)).messages)
+
+
+def _has_image_tool_results(messages: list[AgentMessage]) -> bool:
+    """Check the latest tool batch, including its empty failed requests."""
+    for message in reversed(messages):
+        if isinstance(message, ToolResultMessage):
+            if any(isinstance(block, ImageContent) for block in message.content):
+                return True
+        elif not (
             isinstance(message, AssistantMessage)
-            and message.stop_reason in {"error", "aborted"}
+            and message.stop_reason == "error"
             and not message.content
-        )
-    )
-    return list(repair_tool_history(replayable).messages)
+        ):
+            break
+    return False
 
 
 async def _assistant_events(

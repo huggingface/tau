@@ -41,6 +41,15 @@ upscaling or changing their aspect ratio. The processed attachment is limited to
 unsupported-format notices. If decoding, conversion, or resizing cannot produce
 a safe attachment, Tau returns a clear omission notice.
 
+If the provider still rejects a request immediately after an image tool result,
+Tau retries with those images omitted and the API error included in the affected
+tool responses. The model can then try a smaller image or another approach,
+without rerunning the original tools. Recovery stops on the third consecutive
+provider failure; a successful response resets that counter. Provider-level
+network retries remain separate. Partial streamed responses and cancellation
+are not retried this way. The original image and API error remain in session
+history, but rejected attachments are omitted from subsequent model context.
+
 When the active model does not accept images, `read` returns an explicit
 text-only notice that says the image contents are unavailable and recommends
 switching to a vision-capable model. It does not attach or process the image.

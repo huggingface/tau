@@ -94,7 +94,10 @@ class TuiEventAdapter:
                 if start is not None:
                     del self.state.items[start:]
                 if message.stop_reason in {"error", "aborted"}:
-                    if is_context_overflow_error(message):
+                    if message.is_tool_result_recovery:
+                        self._pending_overflow_error = None
+                        self.state.add_assistant_error(message)
+                    elif is_context_overflow_error(message):
                         # Keep the provider failure provisional while session-level
                         # overflow compaction and retry are still in progress.
                         self._pending_overflow_error = message
