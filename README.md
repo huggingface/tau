@@ -176,6 +176,8 @@ no code changes required.
 - Interactive Textual TUI and non-interactive print mode.
 - Built-in coding tools: `read`, `write`, `edit`, and `bash`.
 - Durable JSONL sessions under `~/.tau/sessions/` with resume and branching.
+- Cross-session learning: `/learn` saves durable memory entries and lessons
+  that future sessions carry in their prompts.
 - Slash commands for login, model selection, sessions, compaction, export, theme,
   and more.
 - Project instructions from `AGENTS.md`, `.tau/`, and `.agents/` resources.
