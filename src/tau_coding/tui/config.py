@@ -55,6 +55,7 @@ class TuiKeybindings:
     session_picker: str = "ctrl+r"
     queue_follow_up: str = "alt+enter"
     insert_newline: str = "shift+enter"
+    external_editor: str = "ctrl+g"
     accept_completion: str = "tab"
     completion_next: str = "down"
     completion_previous: str = "up"
@@ -74,6 +75,7 @@ class TuiKeybindings:
             "session_picker": self.session_picker,
             "queue_follow_up": self.queue_follow_up,
             "insert_newline": self.insert_newline,
+            "external_editor": self.external_editor,
             "accept_completion": self.accept_completion,
             "completion_next": self.completion_next,
             "completion_previous": self.completion_previous,
