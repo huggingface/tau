@@ -164,8 +164,8 @@ async def run_agent_loop(
                 return
 
             tool_results: list[ToolResultMessage] = []
+            final_tool_results: list[AgentToolResult] = []
             calls = list(assistant.tool_calls)
-            has_more_tools = bool(calls)
             for call in calls:
                 cancelled_before = signal is not None and signal.is_cancelled()
                 async for event in _execute_tool_call(
@@ -176,7 +176,9 @@ async def run_agent_loop(
                     after_tool_call,
                 ):
                     yield event
-                    if isinstance(event, MessageEndEvent) and isinstance(
+                    if isinstance(event, ToolExecutionEndEvent):
+                        final_tool_results.append(event.result)
+                    elif isinstance(event, MessageEndEvent) and isinstance(
                         event.message, ToolResultMessage
                     ):
                         tool_results.append(event.message)
@@ -191,6 +193,9 @@ async def run_agent_loop(
                         ):
                             stop_note = event.message.text or None
 
+            has_more_tools = bool(final_tool_results) and not all(
+                result.terminate is True for result in final_tool_results
+            )
             yield TurnEndEvent(message=assistant, tool_results=tool_results)
             turn += 1
             pending = tuple(get_steering_messages() if get_steering_messages else ())
