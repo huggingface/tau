@@ -6880,3 +6880,52 @@ input = ["text", "image"]
 
 [providers.model_metadata."mai-code-1-flash-picker"]
 input = ["text"]
+
+[[providers]]
+name = "cheaperinference"
+display_name = "Cheaper Inference"
+kind = "openai-compatible"
+base_url = "https://api.cheaperinference.com/v1"
+api_key_env = "CHEAPER_INFERENCE_API_KEY"
+credential_name = "cheaperinference"
+models = ["gpt-5.4-mini", "gpt-5.4", "claude-sonnet-5", "gemini-3.1-pro", "deepseek-v4-flash"]
+default_model = "gpt-5.4-mini"
+docs_url = "https://cheaperinference.com/docs"
+api = "openai-completions"
+
+[providers.context_windows]
+"gpt-5.4-mini" = 400000
+"gpt-5.4" = 1000000
+"claude-sonnet-5" = 1000000
+"gemini-3.1-pro" = 1048576
+"deepseek-v4-flash" = 1000000
+
+[providers.model_metadata."gpt-5.4-mini"]
+name = "GPT-5.4 mini"
+input = ["text", "image"]
+context_window = 400000
+max_tokens = 128000
+
+[providers.model_metadata."gpt-5.4"]
+name = "GPT-5.4"
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 128000
+
+[providers.model_metadata."claude-sonnet-5"]
+name = "Claude Sonnet 5"
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 128000
+
+[providers.model_metadata."gemini-3.1-pro"]
+name = "Gemini 3.1 Pro"
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 65536
+
+[providers.model_metadata."deepseek-v4-flash"]
+name = "DeepSeek V4 Flash"
+input = ["text"]
+context_window = 1000000
+max_tokens = 384000
