@@ -1347,7 +1347,6 @@ class LlamaCppService:
                 timeout_seconds=self.timeout_seconds,
                 max_retries=0,
                 omit_authorization_header=auth.omit_authorization_header,
-                infer_api_from_model=False,
             ),
             client=client,
         )
@@ -1402,7 +1401,6 @@ class LlamaCppService:
                 timeout_seconds=self.timeout_seconds,
                 max_retries=0,
                 omit_authorization_header=auth.omit_authorization_header,
-                infer_api_from_model=False,
             ),
             client=client,
         )

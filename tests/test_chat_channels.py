@@ -12,7 +12,8 @@ from tau_ai.events import AssistantDoneEvent, TextDeltaEvent
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("same_chunk", [False, True])
-async def test_interleaved_reasoning_keeps_stable_blocks(same_chunk: bool) -> None:
+@pytest.mark.parametrize("model", ["deepseek-ai/DeepSeek-V4-Flash", "gpt-5.5-proxy"])
+async def test_interleaved_reasoning_keeps_stable_blocks(same_chunk: bool, model: str) -> None:
     deltas = [
         {"reasoning_content": "Done. C"},
         {"content": "Done. Pr"},
@@ -37,7 +38,7 @@ async def test_interleaved_reasoning_keeps_stable_blocks(same_chunk: bool) -> No
         events = [
             event
             async for event in provider.stream_response(
-                model="deepseek-ai/DeepSeek-V4-Flash", system="", messages=[], tools=[]
+                model=model, system="", messages=[], tools=[]
             )
         ]
     assert isinstance(events[-1], AssistantDoneEvent)

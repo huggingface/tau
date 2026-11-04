@@ -19,6 +19,7 @@ from tau_coding.provider_config import (
     anthropic_config_from_provider,
     load_provider_settings,
     openai_compatible_config_from_provider,
+    provider_api,
     provider_default_thinking_level,
     provider_has_usable_credentials,
     provider_model_max_tokens,
@@ -34,6 +35,22 @@ from tau_coding.provider_config import (
     upsert_openai_compatible_provider,
 )
 from tau_coding.thinking import ThinkingLevel
+
+
+def test_provider_api_prefers_model_metadata() -> None:
+    provider = OpenAICompatibleProviderConfig(
+        name="local",
+        api="openai-completions",
+        models=("chat", "reasoning"),
+        default_model="chat",
+        model_metadata={
+            "reasoning": ProviderModelMetadata(api="openai-responses"),
+        },
+    )
+
+    assert provider_api(provider, "chat") == "openai-completions"
+    assert provider_api(provider, "reasoning") == "openai-responses"
+    assert provider_api(OpenAICodexProviderConfig()) == "openai-codex-responses"
 
 
 def test_stale_preferences_cannot_restore_removed_codex_alias(tmp_path: Path) -> None:
