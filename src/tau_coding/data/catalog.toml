@@ -6880,3 +6880,18 @@ input = ["text", "image"]
 
 [providers.model_metadata."mai-code-1-flash-picker"]
 input = ["text"]
+
+# Yolo-Auto (https://yolo-auto.com) serves OpenAI-compatible chat completions on
+# flat-rate plans. "yolo" and "yolo-small" are its stable public aliases; the
+# models available to a key are listed at GET https://yolo-auto.com/v1/models.
+[[providers]]
+name = "yolo-auto"
+display_name = "Yolo-Auto"
+kind = "openai-compatible"
+base_url = "https://yolo-auto.com/v1"
+api_key_env = "YOLO_AUTO_API_KEY"
+credential_name = "yolo-auto"
+models = ["yolo", "yolo-small"]
+default_model = "yolo"
+docs_url = "https://yolo-auto.com/docs"
+api = "openai-completions"
