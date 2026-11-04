@@ -18,6 +18,18 @@ thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
 
+[[providers]]
+name = "yourmodel"
+display_name = "Your Model"
+kind = "openai-compatible"
+base_url = "https://y-models.com/v1"
+api_key_env = "YOURMODEL_API_KEY"
+credential_name = "yourmodel"
+models = ["gpt-5.4-mini"]
+default_model = "gpt-5.4-mini"
+docs_url = "https://docs.y-models.com/quick-start"
+api = "openai-responses"
+
 [providers.context_windows]
 gpt-4 = 8192
 gpt-4-turbo = 128000
