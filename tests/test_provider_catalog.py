@@ -81,6 +81,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "opencode-go",
         "opencode",
         "github-copilot",
+        "ollama-cloud",
     ]
 
 
@@ -160,6 +161,21 @@ def test_builtin_catalog_separates_openai_api_and_codex_context_limits() -> None
     assert codex.context_windows["gpt-5.6-terra"] == 272_000
     assert codex.context_windows["gpt-5.6-luna"] == 272_000
     assert codex.model_metadata["gpt-5.6-sol"].context_window == 272_000
+
+
+def test_builtin_catalog_golden_ollama_cloud_entry() -> None:
+    entry = builtin_provider_entry("ollama-cloud")
+    assert entry is not None
+    assert entry.display_name == "Ollama Cloud"
+    assert entry.kind == "openai-compatible"
+    assert entry.base_url == "https://ollama.com/v1"
+    assert entry.api_key_env == "OLLAMA_API_KEY"
+    assert entry.credential_name == "ollama-cloud"
+    assert entry.api == "openai-completions"
+    assert "qwen3.5:397b" in entry.models
+    assert entry.default_model == "qwen3.5:397b"
+    assert entry.docs_url == "https://docs.ollama.com/cloud"
+    assert entry.auth_methods == ("api_key",)
 
 
 @pytest.mark.parametrize(
@@ -303,18 +319,17 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
     assert entry.credential_name == "nvidia"
     assert {
         "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-        "nvidia/nvidia-nemotron-nano-9b-v2",
-        "meta/llama-3.3-70b-instruct",
-        "meta/llama-3.1-8b-instruct",
         "mistralai/mistral-large-2-instruct",
-        "openai/gpt-oss-120b",
+        "moonshotai/kimi-k3",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "openai/gpt-oss-20b",
     } <= set(entry.models)
     assert entry.default_model == "nvidia/llama-3.3-nemotron-super-49b-v1.5"
     assert entry.docs_url == "https://docs.api.nvidia.com/nim"
     assert entry.api == "openai-completions"
     assert entry.context_windows is not None
     assert entry.context_windows["nvidia/llama-3.3-nemotron-super-49b-v1.5"] == 131_072
-    assert entry.context_windows["openai/gpt-oss-120b"] == 131_072
+    assert entry.context_windows["openai/gpt-oss-20b"] == 131_072
     assert set(entry.context_windows) == set(entry.models)
     assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high")
     assert entry.thinking_models == ()
@@ -322,17 +337,17 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
     assert entry.thinking_parameter == "reasoning_effort"
 
     default_metadata = entry.model_metadata[entry.default_model]
-    assert default_metadata.name == "Llama 3.3 Nemotron Super 49B v1.5"
+    assert default_metadata.name == "NVIDIA: Llama 3.3 Nemotron Super 49B V1.5"
     assert default_metadata.reasoning is True
     assert default_metadata.input == ("text",)
     assert default_metadata.context_window == 131_072
-    assert default_metadata.max_tokens == 65_536
+    assert default_metadata.max_tokens == 16_384
     assert default_metadata.cost == {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
 
-    gpt_oss_metadata = entry.model_metadata["openai/gpt-oss-120b"]
+    gpt_oss_metadata = entry.model_metadata["openai/gpt-oss-20b"]
     assert gpt_oss_metadata.reasoning is True
-    assert gpt_oss_metadata.context_window == 128_000
-    assert gpt_oss_metadata.max_tokens == 8_192
+    assert gpt_oss_metadata.context_window == 131_072
+    assert gpt_oss_metadata.max_tokens == 32_768
 
 
 def test_builtin_catalog_huggingface_model_expansion() -> None:
@@ -370,7 +385,7 @@ def test_builtin_catalog_huggingface_model_expansion() -> None:
         "zai-org/GLM-5.2",
     }
 
-    assert len(entry.models) >= 47
+    assert len(entry.models) >= 70
     assert added_models <= set(entry.models)
     assert set(entry.context_windows or {}) == set(entry.models)
     assert set(entry.model_metadata) == set(entry.models)
@@ -379,7 +394,7 @@ def test_builtin_catalog_huggingface_model_expansion() -> None:
     minimax_m3 = entry.model_metadata["MiniMaxAI/MiniMax-M3"]
     assert minimax_m3.input == ("text", "image")
     assert minimax_m3.context_window == 524_288
-    assert minimax_m3.max_tokens == 128_000
+    assert minimax_m3.max_tokens == 512_000
 
     llama = entry.model_metadata["meta-llama/Llama-3.3-70B-Instruct"]
     assert llama.reasoning is False
