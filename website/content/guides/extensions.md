@@ -203,6 +203,8 @@ def setup(tau):
     await tau.context.ui.confirm("Title", "message")   # -> bool
     await tau.context.ui.input("Title", "placeholder") # -> str | None
     tau.context.ui.notify("message", "info")           # same as tau.notify
+    with tau.context.ui.suspend():                     # pause the TUI for an editor/pager
+        ...        
 ```
 
 `context.available_providers` and `context.available_model_choices` expose the
@@ -453,6 +455,19 @@ Without an interactive frontend (print mode, `-p`, tests) every dialog
 returns its cancel default immediately, so extensions can call them
 unconditionally. Check `tau.context.ui.has_ui` (or `tau.context.has_ui`) if
 you want to branch on whether a real UI is attached.
+
+**Handing the terminal to another program.** `tau.context.ui.suspend()` is a
+context manager that pauses the TUI so an external program (an editor, a
+pager) can use the terminal, then restores the TUI when the block ends. It is
+synchronous, so use a plain `with`, not `async with`. Without an interactive
+frontend (print mode, `-p`, tests) it does nothing and the block simply runs.
+
+```python
+import subprocess
+
+with tau.context.ui.suspend():
+    subprocess.run(["nano", "notes.txt"])
+```
 
 **Driving a dialog from a slash command.** Command handlers are synchronous,
 so they cannot `await` a dialog directly. Instead, spawn a task on the
