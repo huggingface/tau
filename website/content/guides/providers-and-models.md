@@ -204,14 +204,14 @@ refreshes catalogs in the background and caches them in
 New models and capability changes can therefore arrive without upgrading Tau.
 Set `TAU_OFFLINE=1` to use cached/bundled data without catalog network access.
 
-For a new session without an explicit preference, Hugging Face initially routes
-the model automatically. After the first successful response, Tau reads Hugging
-Face's `x-inference-provider` response header and keeps that backing provider as
-a sticky automatic route. If that route later exhausts its normal retries with a
-retryable HTTP failure before producing output, Tau retries the interrupted turn
-once through unsuffixed automatic routing and makes the successful replacement
-the new sticky route. To choose a fixed provider instead, add a per-model
-`inference_providers` preference to `~/.tau/providers.json`:
+New Hugging Face sessions default to **OpenRouter**, sending `model-id:openrouter`
+through Hugging Face's router even when its model API does not advertise that
+route. This still uses your Hugging Face credentials and billing; it is not Tau's
+separate `openrouter` provider. Tau keeps the logical model ID unsuffixed.
+
+Set `default_inference_provider` in `~/.tau/providers.json` to choose another
+provider-wide default, or set it to `null` to restore Hugging Face automatic
+routing. Per-model `inference_providers` entries override that default:
 
 ```json
 {
@@ -220,6 +220,7 @@ the new sticky route. To choose a fixed provider instead, add a per-model
   "provider_preferences": {
     "huggingface": {
       "default_model": "zai-org/GLM-5.2",
+      "default_inference_provider": "openrouter",
       "inference_providers": { "zai-org/GLM-5.2": "deepinfra" }
     }
   },
@@ -227,10 +228,15 @@ the new sticky route. To choose a fixed provider instead, add a per-model
 }
 ```
 
-Use the exact provider suffix advertised for that model by Hugging Face. Tau
-sends `zai-org/GLM-5.2:deepinfra` on the wire and continues to display and store
-the logical `zai-org/GLM-5.2` model. The pin survives resume; changing the
-preference does not rewrite existing sessions. `/session` shows the active pin.
+Use an explicit provider suffix, not `fastest`, `cheapest`, or `preferred`.
+The route need not appear in discovery metadata; Hugging Face determines whether
+it is supported when called. In this example, GLM uses `:deepinfra` and other
+models use `:openrouter`. Defaults and per-model pins are **fixed routes**: an
+unsupported route reports an error instead of silently selecting another provider.
+
+Resumed sessions retain their saved route and mode, including explicit automatic
+routing. Changing a preference does not rewrite existing sessions. `/session`
+shows the active pin.
 Route selection is available through the external
 [`alejandro-ao/tau-huggingface`](https://github.com/alejandro-ao/tau-huggingface)
 extension rather than a built-in command. It requires Tau 0.3.10 or newer. Clone
@@ -243,16 +249,22 @@ tau -e ./tau-huggingface
 
 Then use `/hf route` to pick from the model's currently live routes,
 `/hf route <provider>` to select a fixed route, or `/hf route automatic` to
-return to recoverable automatic routing. Switching models uses that model's
-configured fixed route or starts automatic resolution again. `/session` reports
+return to recoverable automatic routing, overriding the default for the active
+model even after reload or resume. Switching models resolves that model's
+per-model preference, then the provider-wide default, then automatic routing if
+the default is `null`. `/session` reports
 `automatic (currently <provider>)` for a sticky automatic route and
 `<provider> (fixed)` for an explicit route.
 
 Transient failures first retry on the same wire model, and stream failures are
 not retried or rerouted after model output has started. After those retries are
-exhausted, only sticky routes selected in automatic mode fail over; routes chosen
-through `/hf route <provider>` or the `inference_providers` preference remain
-fixed so Tau never overrides explicit user intent. Automatic failover emits
+exhausted, only sticky routes selected in automatic mode fail over; defaults and
+routes chosen through `/hf route <provider>` or `inference_providers` remain fixed.
+In automatic mode, Tau initially sends the unsuffixed model ID and lets Hugging
+Face select the provider; Tau does not send `:cheapest` or `:fastest`. The first
+successful response's `x-inference-provider` header becomes the sticky route.
+If it exhausts retryable pre-output HTTP failures, Tau retries the turn once
+through unsuffixed routing and stores the successful replacement. Automatic failover emits
 visible retry progress and durable provider diagnostics. Pinning can reduce cold
 prefix-cache misses caused by cross-provider routing, but cannot prevent eviction,
 TTL expiry, or load balancing among workers within the chosen provider. A reroute

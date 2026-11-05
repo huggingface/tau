@@ -105,11 +105,11 @@ from tau_coding.prompt_templates import (
 )
 from tau_coding.provider_config import (
     OpenAICodexProviderConfig,
-    OpenAICompatibleProviderConfig,
     ProviderConfig,
     ProviderConfigError,
     ProviderModelMetadata,
     ProviderSettings,
+    configured_huggingface_inference_provider,
     load_provider_settings,
     provider_default_thinking_level,
     provider_has_usable_credentials,
@@ -4700,14 +4700,16 @@ def _session_inference_provider(
     """Preserve HF routing only for the same logical provider/model."""
     if provider_name != "huggingface":
         return None
-    if state.provider == provider_name and state.model == model:
+    if (
+        state.provider == provider_name
+        and state.model == model
+        and (config.inference_provider is not None or config.inference_provider_mode is not None)
+    ):
         return config.inference_provider
     provider = (
         config.provider_settings.get_provider(provider_name) if config.provider_settings else None
     )
-    if isinstance(provider, OpenAICompatibleProviderConfig):
-        return provider.inference_providers.get(model)
-    return None
+    return configured_huggingface_inference_provider(provider, model)
 
 
 def _session_inference_provider_mode(
@@ -4872,9 +4874,7 @@ def _configured_inference_provider(
     provider: ProviderConfig | None,
     model: str,
 ) -> str | None:
-    if not isinstance(provider, OpenAICompatibleProviderConfig) or provider.name != "huggingface":
-        return None
-    return provider.inference_providers.get(model)
+    return configured_huggingface_inference_provider(provider, model)
 
 
 def _configured_inference_provider_mode(

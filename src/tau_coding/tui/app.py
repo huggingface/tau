@@ -122,6 +122,7 @@ from tau_coding.provider_config import (
     ProviderConfig,
     ProviderConfigError,
     ProviderSelection,
+    configured_huggingface_inference_provider,
     load_provider_settings,
     provider_config_from_catalog_entry,
     provider_has_usable_credentials,
@@ -8907,16 +8908,24 @@ def _startup_inference_provider(
     provider = selection.provider
     if not isinstance(provider, OpenAICompatibleProviderConfig) or provider.name != "huggingface":
         return None
-    if record is not None and record.model == selection.model:
+    if (
+        record is not None
+        and record.provider_name == provider.name
+        and record.model == selection.model
+    ):
         return record.inference_provider
-    return provider.inference_providers.get(selection.model)
+    return configured_huggingface_inference_provider(provider, selection.model)
 
 
 def _startup_inference_provider_mode(
     selection: ProviderSelection,
     record: CodingSessionRecord | None,
 ) -> Literal["automatic", "fixed"]:
-    if record is not None and record.model == selection.model:
+    if (
+        record is not None
+        and record.provider_name == selection.provider.name
+        and record.model == selection.model
+    ):
         return record.inference_provider_mode
     return "fixed" if _startup_inference_provider(selection, None) is not None else "automatic"
 
