@@ -338,6 +338,55 @@ async def test_jsonl_storage_appends_and_reads_entries(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("batch", [False, True], ids=["append", "append_batch"])
+@pytest.mark.parametrize("ending", [b"", b"\n", b"\r\n"], ids=["no-newline", "lf", "crlf"])
+@pytest.mark.parametrize("cached", [False, True], ids=["uncached", "cached"])
+async def test_jsonl_storage_preserves_record_boundary_on_append(
+    tmp_path: Path, batch: bool, ending: bytes, cached: bool
+) -> None:
+    path = tmp_path / "session.jsonl"
+    first = MessageEntry(id="one", message=UserMessage(content="Hi"))
+    second = MessageEntry(id="two", parent_id="one", message=UserMessage(content="Again"))
+    previous = entry_to_json_line(first).rstrip("\n").encode("utf-8") + ending
+    path.write_bytes(previous)
+    storage = JsonlSessionStorage(path)
+    if cached:
+        assert await storage.read_all() == [first]
+
+    if batch:
+        await storage.append_batch([second])
+    else:
+        await storage.append(second)
+
+    # Reopen as well: the parsed cache can hide concatenated records on disk.
+    assert await JsonlSessionStorage(path).read_all() == [first, second]
+    assert await storage.read_all() == [first, second]
+    separator = b"" if ending else b"\n"
+    assert path.read_bytes() == previous + separator + entry_to_json_line(second).encode("utf-8")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("batch", [False, True], ids=["append", "append_batch"])
+@pytest.mark.parametrize("existing", [False, True], ids=["missing-file", "empty-file"])
+async def test_jsonl_storage_first_append_has_no_leading_newline(
+    tmp_path: Path, batch: bool, existing: bool
+) -> None:
+    path = tmp_path / "session.jsonl"
+    if existing:
+        path.touch()
+    storage = JsonlSessionStorage(path)
+    entry = MessageEntry(id="one", message=UserMessage(content="Hi"))
+
+    if batch:
+        await storage.append_batch([entry])
+    else:
+        await storage.append(entry)
+
+    assert path.read_bytes() == entry_to_json_line(entry).encode("utf-8")
+    assert await JsonlSessionStorage(path).read_all() == [entry]
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"])
 async def test_jsonl_storage_round_trips_unicode_line_separators(
     tmp_path: Path, separator: str

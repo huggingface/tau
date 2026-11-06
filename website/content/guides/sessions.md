@@ -7,6 +7,10 @@ Every Tau conversation is a **session**, saved to disk so you can come back to
 it. Sessions are stored as append-only JSONL under `~/.tau/sessions/`, organized
 per working directory, so resume flows focus on the project you're in.
 
+A transcript's final JSON entry does not need a trailing newline. When adding
+entries to such a file, Tau inserts the missing line separator so the session
+remains readable after restarting.
+
 ## Listing sessions
 
 ```bash
