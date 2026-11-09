@@ -20,6 +20,7 @@ from tau_agent.messages import (
 )
 from tau_agent.provider import ModelProvider
 from tau_agent.tools import AgentTool
+from tau_agent.turns import FinishTurn
 
 EventListener = Callable[[AgentEvent], Awaitable[None] | None]
 QueueMode = Literal["one_at_a_time", "all"]
@@ -46,6 +47,7 @@ class AgentHarnessConfig:
     session_id: str | None = None
     before_tool_call: BeforeToolCall | None = None
     after_tool_call: AfterToolCall | None = None
+    finish_turn: FinishTurn | None = None
 
 
 class SimpleCancellationToken:
@@ -186,6 +188,7 @@ class AgentHarness:
                 get_follow_up_messages=self._drain_follow_up_messages,
                 before_tool_call=self._config.before_tool_call,
                 after_tool_call=self._config.after_tool_call,
+                finish_turn=self._config.finish_turn,
             ):
                 await self._notify(event)
                 yield event
