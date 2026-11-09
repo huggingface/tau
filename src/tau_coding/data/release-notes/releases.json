@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.4.10",
+    "date": "2026-11-09",
+    "sections": {
+      "New": [
+        "Add sync or async `finish_turn` callbacks to the portable harness so hosts can end successfully before queue polling or request one more turn without duplicating scheduled work.",
+        "Add a validated structured-output example extension that submits a final answer through a tool and preserves its structured result across session resume."
+      ],
+      "Fixed": [
+        "Honor `AgentToolResult.terminate=True` when every final result in a nonempty tool batch opts in, skipping the automatic follow-up model call while preserving sibling tools, result history, and queued input."
+      ]
+    }
+  },
+  {
     "version": "0.4.9",
     "date": "2026-11-03",
     "sections": {
