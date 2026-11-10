@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from rich.text import Text
 from typer.testing import CliRunner
 
 from tau_coding import cli
@@ -33,9 +34,10 @@ def test_command_help_never_starts_tui(monkeypatch: pytest.MonkeyPatch, command:
     monkeypatch.setattr(cli, "_cached_startup_update_notice", unexpected)
     result = CliRunner().invoke(cli.app, [command, "--help"])
 
+    output = Text.from_ansi(result.output).plain
     assert result.exit_code == 0
-    assert "Usage:" in result.output
-    assert "Tau coding-agent harness" in result.output
+    assert "Usage:" in output
+    assert "Tau coding-agent harness" in output
 
 
 @pytest.mark.parametrize(
@@ -146,9 +148,10 @@ def test_headless_tui_fails_before_preparation(
     monkeypatch.setattr(cli, "_cached_startup_update_notice", lambda: None)
     result = CliRunner().invoke(cli.app, args)
 
+    output = Text.from_ansi(result.output).plain
     assert result.exit_code == 2
-    assert "requires a terminal" in result.output
-    assert "--print" in result.output
+    assert "requires a terminal" in output
+    assert "--print" in output
     assert not (tmp_path / ".tau" / "sessions").exists()
 
 
@@ -182,11 +185,13 @@ def test_headless_subprocess_exits_without_creating_a_session(
         check=False,
     )
 
+    stdout = Text.from_ansi(result.stdout).plain
+    stderr = Text.from_ansi(result.stderr).plain
     if args:
-        assert result.returncode == 0, result.stderr
-        assert "Usage:" in result.stdout
+        assert result.returncode == 0, stderr
+        assert "Usage:" in stdout
     else:
-        assert result.returncode == 2, result.stderr
-        assert "requires a terminal" in result.stderr
-        assert "--print" in result.stderr
+        assert result.returncode == 2, stderr
+        assert "requires a terminal" in stderr
+        assert "--print" in stderr
     assert not (home / ".tau" / "sessions").exists()
