@@ -130,9 +130,14 @@ fallback. The model cache contains only parsed account/model metadata (no OAuth
 tokens), is scoped to the saved Codex account ID, and is never written to
 `catalog.toml`, `providers.json`, or the models.dev cache.
 
-Starting or resuming a live-only Codex model discovers the account inventory
-before validating the selection. This requires successful discovery; offline
-startup remains available for static models. If a later refresh omits the active
+Selecting a live-only Codex model through `/model` or Ctrl+P/Shift+Ctrl+P and
+sending a message saves its provider/model ID as the default in `providers.json`.
+This saves only the preference, not the account-specific inventory or metadata.
+Starting, resuming, or restoring that default validates it against an
+account-matched cache or authenticated discovery. Offline startup works for
+static models and live-only models in the matching account's cache. If the saved
+model is unavailable, Tau reports an error rather than silently starting a
+different model. If a later refresh omits the active
 model, Tau preserves its runtime metadata without adding it back to the picker.
 Resume restores the transcript's saved model selection. If an older session
 restores a stale selection, resume it and explicitly choose the intended model

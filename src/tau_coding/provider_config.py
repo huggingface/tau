@@ -538,10 +538,13 @@ def save_default_provider_model(
     model: str,
     paths: TauPaths | None = None,
     fallback_settings: ProviderSettings | None = None,
+    runtime_provider: ProviderConfig | None = None,
 ) -> ProviderSettings:
-    """Reload settings, persist one default provider/model change, and return them."""
+    """Save a model reference, validating live Codex choices without saving their inventory."""
     settings = _load_provider_settings_for_write(paths, fallback_settings=fallback_settings)
-    updated = set_default_provider_model(settings, provider_name=provider_name, model=model)
+    updated = set_default_provider_model(
+        settings, provider_name=provider_name, model=model, runtime_provider=runtime_provider
+    )
     if updated == settings:
         # Compare with fresh on-disk preferences, not a session's cached defaults.
         return settings
@@ -651,10 +654,18 @@ def set_default_provider_model(
     *,
     provider_name: str,
     model: str,
+    runtime_provider: ProviderConfig | None = None,
 ) -> ProviderSettings:
-    """Return settings with the default provider/model preference updated."""
+    """Update a default reference, optionally validating against a live Codex inventory."""
     provider = settings.get_provider(provider_name)
-    validate_provider_model(provider, model)
+    validation_provider = provider
+    if (
+        isinstance(provider, OpenAICodexProviderConfig)
+        and isinstance(runtime_provider, OpenAICodexProviderConfig)
+        and runtime_provider.name == provider.name
+    ):
+        validation_provider = runtime_provider
+    validate_provider_model(validation_provider, model)
     updated_provider = replace(provider, default_model=model)
     providers = tuple(
         updated_provider if item.name == provider_name else item for item in settings.providers
@@ -892,11 +903,8 @@ def _merge_provider_config(existing: ProviderConfig, incoming: ProviderConfig) -
     ):
         return replace(
             incoming,
-            default_model=(
-                existing.default_model
-                if existing.default_model in incoming.models
-                else incoming.default_model
-            ),
+            # A saved Codex default can reference an account-discovered model.
+            default_model=existing.default_model,
             headers={**incoming.headers, **existing.headers},
             timeout_seconds=existing.timeout_seconds,
             max_retries=existing.max_retries,
@@ -1263,6 +1271,7 @@ def _providers_with_preferences(
     if not isinstance(value, dict):
         raise ProviderConfigError("Provider settings field must be an object: provider_preferences")
     catalog_configs = {provider.name: provider for provider in _effective_provider_configs(paths)}
+    catalog_entries = {entry.name: entry for entry in effective_catalog(paths)}
     providers = []
     seen: set[str] = set()
     for name, preference_data in value.items():
@@ -1281,6 +1290,7 @@ def _providers_with_preferences(
             _apply_provider_preference(
                 catalog_configs[provider_name],
                 preference_data,
+                removed_models=catalog_entries[provider_name].removed_models,
             )
         )
         seen.add(provider_name)
@@ -1290,6 +1300,8 @@ def _providers_with_preferences(
 def _apply_provider_preference(
     provider: ProviderConfig,
     value: object,
+    *,
+    removed_models: tuple[str, ...] = (),
 ) -> ProviderConfig:
     if not isinstance(value, dict):
         raise ProviderConfigError("Provider preference entries must be objects")
@@ -1301,7 +1313,9 @@ def _apply_provider_preference(
         if "default_model" in value
         else provider.default_model
     )
-    if default_model not in provider.models:
+    if default_model not in provider.models and (
+        not isinstance(provider, OpenAICodexProviderConfig) or default_model in removed_models
+    ):
         default_model = provider.default_model
     headers = (
         _string_dict(value.get("headers"), f"provider_preferences.{provider.name}.headers")
@@ -1450,12 +1464,15 @@ def resolve_provider_selection(
     provider_name: str | None = None,
     model: str | None = None,
 ) -> ProviderSelection:
-    """Resolve the provider and model for a run."""
+    """Resolve a selection; saved live Codex defaults await staged validation."""
     provider = settings.get_provider(provider_name)
     selected_model = model or provider.default_model
     if not selected_model:
         raise ProviderConfigError(f"Provider {provider.name} does not define a default model")
-    validate_provider_model(provider, selected_model)
+    # A saved Codex default is a reference, not static inventory. The staged
+    # loader resolves it through account-matched cache/discovery before runtime creation.
+    if model is not None or not isinstance(provider, OpenAICodexProviderConfig):
+        validate_provider_model(provider, selected_model)
     return ProviderSelection(provider=provider, model=selected_model)
 
 

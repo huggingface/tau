@@ -1015,12 +1015,17 @@ async def run_openai_rpc_mode(
     )
     provider = create_model_provider(
         selection.provider,
-        model=selection.model,
+        # The staged loader resolves saved live Codex defaults before activation.
+        model=selection.model if selection.model in selection.provider.models else None,
         inference_provider=inference_provider,
-        thinking_level=resolve_startup_thinking_level(
-            selection.provider,
-            selection.model,
-            cli_override=thinking_level_override,
+        thinking_level=(
+            resolve_startup_thinking_level(
+                selection.provider,
+                selection.model,
+                cli_override=thinking_level_override,
+            )
+            if selection.model in selection.provider.models
+            else None
         ),
     )
     session = await CodingSession.load(
@@ -1157,12 +1162,21 @@ async def run_openai_print_mode(
         )
         initial_provider = create_model_provider(
             static_selection.provider,
-            model=static_selection.model,
+            # Saved live Codex references require staged account discovery.
+            model=(
+                static_selection.model
+                if static_selection.model in static_selection.provider.models
+                else None
+            ),
             inference_provider=runtime_inference,
-            thinking_level=resolve_startup_thinking_level(
-                static_selection.provider,
-                static_selection.model,
-                cli_override=thinking_level_override,
+            thinking_level=(
+                resolve_startup_thinking_level(
+                    static_selection.provider,
+                    static_selection.model,
+                    cli_override=thinking_level_override,
+                )
+                if static_selection.model in static_selection.provider.models
+                else None
             ),
         )
         selected_provider = static_selection.provider.name

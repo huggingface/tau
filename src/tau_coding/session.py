@@ -2153,14 +2153,16 @@ class CodingSession:
         if self._durable_provider_settings is None:
             return
         durable_provider = self._durable_provider_settings.get_provider(self.provider_name)
-        if self.model not in durable_provider.models:
-            # Account-specific inventory is deliberately not written into catalog.toml.
+        if self.model not in durable_provider.models and not isinstance(
+            durable_provider, OpenAICodexProviderConfig
+        ):
             return
         self._durable_provider_settings = save_default_provider_model(
             provider_name=self.provider_name,
             model=self.model,
             paths=self._resource_paths.paths,
             fallback_settings=self._durable_provider_settings,
+            runtime_provider=self._active_provider_config(),
         )
         self._apply_runtime_model_catalogs()
         self._sync_thinking_level_to_active_model()
@@ -4622,13 +4624,15 @@ async def _prepare_provider_selection(
         )
     selected_model = requested_model or (state.model if state.provider == provider_name else None)
     selected_provider = settings.get_provider(provider_name or settings.default_provider)
+    selected_model = selected_model or selected_provider.default_model
     if (
         isinstance(selected_provider, OpenAICodexProviderConfig)
         and selected_model is not None
         and selected_model not in selected_provider.models
         and environ.get("TAU_OFFLINE") is None
     ):
-        # Live-only explicit/resumed models need discovery before static validation.
+        # Live-only explicit, resumed, and saved-default models need discovery
+        # before static validation. Never silently substitute a different model.
         discovery_provider = None
         try:
             discovery_provider = create_model_provider(
@@ -4793,7 +4797,10 @@ def _initial_thinking_level_for_config(
 ) -> ThinkingLevel:
     provider = _provider_config_for_name(config, config.provider_name)
     if config.thinking_level_override is not None:
-        if provider is None:
+        if provider is None or (
+            isinstance(provider, OpenAICodexProviderConfig) and model not in provider.models
+        ):
+            # Live-only capabilities are validated after staged catalog discovery.
             return config.thinking_level_override
         resolved = resolve_startup_thinking_level(
             provider,
