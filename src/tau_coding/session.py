@@ -1905,7 +1905,9 @@ class CodingSession:
         self._preview_thinking = None
         try:
             if choice is not None:
-                await self.select_provider_model(choice, persist_default=False)
+                # A committed interactive selection is an explicit user choice,
+                # so it also becomes the durable default provider model.
+                await self.select_provider_model(choice, persist_default=True)
             if thinking is not None and thinking != self._state.thinking_level:
                 if thinking == "off" and not self.available_thinking_levels:
                     # A non-reasoning model has no effort control to rebuild.
@@ -2149,6 +2151,9 @@ class CodingSession:
         durable_provider = self._durable_provider_settings.get_provider(self.provider_name)
         if self.model not in durable_provider.models:
             # Account-specific inventory is deliberately not written into catalog.toml.
+            return
+        if durable_provider.default_model == self.model:
+            # The durable default already matches; avoid rewriting settings.
             return
         self._durable_provider_settings = save_default_provider_model(
             provider_name=self.provider_name,

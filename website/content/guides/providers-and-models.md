@@ -377,6 +377,14 @@ to reload. A background refresh that omits the active model leaves its existing
 runtime working, but does not offer that model as a new selection. Even an empty
 catalog does not prevent the picker from opening when the active model is stale.
 
+A `/model` (or Ctrl+P/Shift+Ctrl+P) selection applies immediately to the session
+and is previewed in the status bar until your next message, when Tau commits it.
+Committed selections are also saved as the provider's **default model** in
+`~/.tau/providers.json`, so brand-new sessions start with the model you last
+chose. Launching with `tau -m <model>` overrides the default for that run only;
+it does not change the saved default. To edit defaults by hand, see
+[configuration](/reference/configuration/).
+
 Tau validates the selected model against the active provider's configured model
 list before creating or refreshing a runtime provider. This prevents accidental
 provider/model mismatches, such as trying to send an API-only OpenAI model to the

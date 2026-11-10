@@ -5927,6 +5927,61 @@ async def test_cross_provider_preview_uses_previewed_models_and_thinking_capabil
 
 
 @pytest.mark.anyio
+async def test_preview_selection_commit_persists_durable_default_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("qwen", "llama"),
+                default_model="qwen",
+            ),
+        ),
+    )
+    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    storage = JsonlSessionStorage(tmp_path / "persist-default.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="qwen",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="local",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    def create_provider(*args: object, **kwargs: object) -> FakeProvider:
+        del args, kwargs
+        return FakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session.preview_model_choice(ModelChoice("local", "llama"))
+    assert not (tau_paths.home / "providers.json").exists()
+
+    await _collect_session_events(session.prompt("hello"))
+
+    saved = json.loads((tau_paths.home / "providers.json").read_text(encoding="utf-8"))
+    assert saved["default_provider"] == "local"
+    assert saved["provider_preferences"]["local"]["default_model"] == "llama"
+
+    # Committing the already-durable, already-active model must not rewrite settings.
+    before_commit = (tau_paths.home / "providers.json").stat().st_mtime_ns
+    session.preview_model_choice(ModelChoice("local", "llama"))
+    await _collect_session_events(session.prompt("again"))
+    saved_again = json.loads((tau_paths.home / "providers.json").read_text(encoding="utf-8"))
+    assert saved_again["provider_preferences"]["local"]["default_model"] == "llama"
+    assert (tau_paths.home / "providers.json").stat().st_mtime_ns == before_commit
+
+
+@pytest.mark.anyio
 async def test_preview_selection_commits_only_at_next_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

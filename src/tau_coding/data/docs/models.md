@@ -93,10 +93,14 @@ it does not silently replace the model.
 
 Provider/model selection precedence is explicit CLI selection, the resumed
 transcript's provider-aware model entry, the session record for legacy sessions,
-a durable default, and then a usable durable provider. Dynamic local providers
-are selected only by explicit startup, a resumed local session, or an in-session
-`/model`/`/local` action. The old `llama-cpp` catalog provider is not migrated;
-configure the built-in `llama.cpp` layer separately through `/local`.
+a durable default, and then a usable durable provider. A model chosen in the
+interactive `/model` picker is previewed until the next message, then committed
+and saved as the durable default provider model in `~/.tau/providers.json`;
+explicit CLI `--model` startup remains per-invocation and does not update the
+durable default. Dynamic local providers are selected only by explicit startup, a
+resumed local session, or an in-session `/model`/`/local` action. The old
+`llama-cpp` catalog provider is not migrated; configure the built-in `llama.cpp`
+layer separately through `/local`.
 
 ## Hugging Face routing
 
