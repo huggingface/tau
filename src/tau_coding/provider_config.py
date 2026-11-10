@@ -134,6 +134,7 @@ class OpenAICompatibleProviderConfig:
     thinking_parameter: ThinkingParameter | None = None
     thinking_defaults: dict[str, ThinkingLevel] = field(default_factory=dict)
     inference_providers: dict[str, str] = field(default_factory=dict)
+    default_inference_provider: str | None = None
 
     def __post_init__(self) -> None:
         _validate_provider_numbers(
@@ -152,6 +153,8 @@ class OpenAICompatibleProviderConfig:
         )
         _validate_thinking_defaults(self.thinking_defaults)
         _validate_inference_providers(self.name, self.models, self.inference_providers)
+        if self.default_inference_provider is not None:
+            _default_inference_provider(self.default_inference_provider, self.name)
 
     def to_json(self) -> dict[str, Any]:
         """Serialize this provider config to JSON-compatible data."""
@@ -181,6 +184,11 @@ class OpenAICompatibleProviderConfig:
             "thinking_parameter": self.thinking_parameter,
             "thinking_defaults": dict(self.thinking_defaults),
             "inference_providers": dict(self.inference_providers),
+            **(
+                {"default_inference_provider": self.default_inference_provider}
+                if self.name == "huggingface"
+                else {}
+            ),
         }
 
 
@@ -455,6 +463,7 @@ def provider_config_from_entry(entry: ProviderCatalogEntry) -> ProviderConfig:
         thinking_default=entry.thinking_default,
         thinking_parameter=entry.thinking_parameter,
         thinking_defaults={},
+        default_inference_provider=entry.default_inference_provider,
     )
 
 
@@ -982,6 +991,7 @@ def _merge_openai_compatible_provider(
         ),
         thinking_defaults=existing.thinking_defaults,
         inference_providers=existing.inference_providers,
+        default_inference_provider=existing.default_inference_provider,
     )
 
 
@@ -1096,8 +1106,12 @@ def _provider_preference_to_json(provider: ProviderConfig) -> dict[str, Any]:
         "max_retry_delay_seconds": provider.max_retry_delay_seconds,
         "thinking_defaults": dict(provider.thinking_defaults),
     }
-    if isinstance(provider, OpenAICompatibleProviderConfig) and provider.inference_providers:
-        preference["inference_providers"] = dict(provider.inference_providers)
+    if isinstance(provider, OpenAICompatibleProviderConfig):
+        if provider.inference_providers:
+            preference["inference_providers"] = dict(provider.inference_providers)
+        if provider.name == "huggingface":
+            # Persist null too: omitting it would restore the bundled default.
+            preference["default_inference_provider"] = provider.default_inference_provider
     return preference
 
 
@@ -1180,6 +1194,11 @@ def _catalog_entry_from_provider(
         thinking_models=provider.thinking_models,
         thinking_default=provider.thinking_default,
         thinking_parameter=provider.thinking_parameter,
+        default_inference_provider=(
+            existing.default_inference_provider
+            if existing is not None
+            else getattr(provider, "default_inference_provider", None)
+        ),
     )
 
 
@@ -1241,7 +1260,7 @@ def provider_settings_from_json(
         raise ProviderConfigError(
             "Provider settings must include provider_preferences or legacy providers"
         )
-    providers = tuple(_provider_from_json(item) for item in providers_data)
+    providers = tuple(_provider_from_json(item, paths=paths) for item in providers_data)
     names = [provider.name for provider in providers]
     if len(set(names)) != len(names):
         raise ProviderConfigError("Provider names must be unique")
@@ -1340,6 +1359,11 @@ def _apply_provider_preference(
         if "thinking_defaults" in value
         else provider.thinking_defaults
     )
+    default_inference_provider = (
+        _default_inference_provider(value["default_inference_provider"], provider.name)
+        if "default_inference_provider" in value
+        else getattr(provider, "default_inference_provider", None)
+    )
     if isinstance(provider, OpenAICompatibleProviderConfig):
         inference_providers = (
             _inference_providers_dict(
@@ -1359,6 +1383,7 @@ def _apply_provider_preference(
             max_retry_delay_seconds=max_retry_delay_seconds,
             thinking_defaults=thinking_defaults,
             inference_providers=inference_providers,
+            default_inference_provider=default_inference_provider,
         )
     return replace(
         provider,
@@ -1369,6 +1394,27 @@ def _apply_provider_preference(
         max_retry_delay_seconds=max_retry_delay_seconds,
         thinking_defaults=thinking_defaults,
     )
+
+
+def _default_inference_provider(value: object, provider_name: str) -> str | None:
+    if provider_name != "huggingface":
+        raise ProviderConfigError(
+            "default_inference_provider preferences are only supported for the huggingface provider"
+        )
+    if value is None:
+        return None
+    return validate_huggingface_inference_provider(_string(value, "default_inference_provider"))
+
+
+def configured_huggingface_inference_provider(
+    provider: ProviderConfig | None,
+    model: str,
+) -> str | None:
+    """Resolve a model override before the provider-wide Hugging Face default."""
+    if not isinstance(provider, OpenAICompatibleProviderConfig) or provider.name != "huggingface":
+        return None
+    route = provider.inference_providers.get(model, provider.default_inference_provider)
+    return validate_huggingface_inference_provider(route) if route is not None else None
 
 
 def _inference_providers_dict(
@@ -1990,7 +2036,7 @@ def anthropic_cache_settings(
     return retention, compat.get("supportsCacheControlOnTools") is not False
 
 
-def _provider_from_json(data: object) -> ProviderConfig:
+def _provider_from_json(data: object, *, paths: TauPaths | None = None) -> ProviderConfig:
     if not isinstance(data, dict):
         raise ProviderConfigError("Provider entries must be JSON objects")
     provider_type = _string(data.get("type"), "providers[].type")
@@ -2053,6 +2099,18 @@ def _provider_from_json(data: object) -> ProviderConfig:
     )
     if default_model not in models:
         models = (*models, default_model)
+    default_inference_provider = (
+        _default_inference_provider(data["default_inference_provider"], name)
+        if "default_inference_provider" in data
+        else next(
+            (
+                entry.default_inference_provider
+                for entry in effective_catalog(paths)
+                if entry.name == name
+            ),
+            None,
+        )
+    )
     if provider_type == "anthropic":
         return AnthropicProviderConfig(
             name=name,
@@ -2116,6 +2174,7 @@ def _provider_from_json(data: object) -> ProviderConfig:
         thinking_default=thinking_default,
         thinking_parameter=thinking_parameter,
         thinking_defaults=thinking_defaults,
+        default_inference_provider=default_inference_provider,
     )
 
 

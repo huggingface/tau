@@ -41,6 +41,7 @@ from tau_coding.provider_config import (
     ProviderConfig,
     ProviderConfigError,
     ProviderSettings,
+    configured_huggingface_inference_provider,
     load_provider_settings,
     provider_kind,
     resolve_provider_selection,
@@ -998,10 +999,7 @@ async def run_openai_rpc_mode(
         and record.provider_name == "huggingface"
         and selection.provider.name == "huggingface"
         and record.model == selection.model
-        else selection.provider.inference_providers.get(selection.model)
-        if isinstance(selection.provider, OpenAICompatibleProviderConfig)
-        and selection.provider.name == "huggingface"
-        else None
+        else configured_huggingface_inference_provider(selection.provider, selection.model)
     )
     inference_provider_mode = (
         record.inference_provider_mode
@@ -1137,10 +1135,9 @@ async def run_openai_print_mode(
                 and record.model == static_selection.model
             )
             else (
-                static_selection.provider.inference_providers.get(static_selection.model)
-                if isinstance(static_selection.provider, OpenAICompatibleProviderConfig)
-                and static_selection.provider.name == "huggingface"
-                else None
+                configured_huggingface_inference_provider(
+                    static_selection.provider, static_selection.model
+                )
             )
         )
         runtime_inference_mode = (
@@ -1234,11 +1231,8 @@ def _print_session_record(
             provider_name=provider_name,
             session_id=session_id,
         )
-    inference_provider = (
-        selection.provider.inference_providers.get(selection.model)
-        if isinstance(selection.provider, OpenAICompatibleProviderConfig)
-        and selection.provider.name == "huggingface"
-        else None
+    inference_provider = configured_huggingface_inference_provider(
+        selection.provider, selection.model
     )
     return _create_print_session(
         manager,

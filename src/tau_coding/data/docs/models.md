@@ -100,12 +100,26 @@ configure the built-in `llama.cpp` layer separately through `/local`.
 
 ## Hugging Face routing
 
+New Hugging Face sessions default to the fixed `openrouter` route, sending
+`model-id:openrouter` even when discovery does not advertise it. This uses
+Hugging Face credentials and billing, not Tau's separate OpenRouter provider.
+Logical model IDs remain unsuffixed. Unsupported fixed routes report an error;
+Tau does not silently fall back.
+
+Set `provider_preferences.huggingface.default_inference_provider` in
+`~/.tau/providers.json` to another explicit provider or `null` for unsuffixed
+Hugging Face automatic routing. Per-model `inference_providers` entries override
+the provider-wide default. New sessions and model switches resolve these
+preferences; resumed sessions retain their saved route and mode.
+
 Hugging Face routing has two session modes. Automatic mode keeps the provider
 from the first successful response as a sticky route, but retries once through
 unsuffixed routing after that route exhausts retryable pre-output HTTP failures.
-A configured or extension-selected provider is fixed and never silently
-overridden. The external Hugging Face extension controls these modes with
-`/hf route`; core owns safe continuation, persistence, and reroute diagnostics.
+Tau does not send `:cheapest` or `:fastest` in automatic mode. A default,
+configured, or extension-selected provider is fixed and never silently overridden.
+The external Hugging Face extension controls these modes with `/hf route`;
+`/hf route automatic` overrides the default for the active model and survives
+reload and resume. Core owns continuation, persistence, and reroute diagnostics.
 
 ## Changing the built-in catalog
 

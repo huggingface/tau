@@ -198,7 +198,9 @@ Catalog entries support `kind` values of `openai-compatible`, `anthropic`, and
 User catalog overlays can be partial when they use the same `name` as a built-in
 provider. Scalar fields replace built-in values, `models` are merged with user
 models first, and `context_windows` are merged. Provider-level `compat` is merged
-key by key. Model metadata is merged by model;
+key by key. The Hugging Face entry also accepts `default_inference_provider`
+to declare its default route; use the JSON preference below for a personal
+string override or explicit `null`. Model metadata is merged by model;
 its `headers`, `compat`, and `thinking_level_map` mappings are merged, while other
 metadata fields—including the complete `cost_tiers` array—replace the built-in
 value. A model's `compat` wins over the provider's, so a built-in per-model value
@@ -315,14 +317,22 @@ Provider preferences live in `~/.tau/providers.json`:
   the `huggingface` provider preference. `thinking_defaults` remembers the
   preferred thinking level per model for new sessions; resumed sessions still use
   their session history. The built-in `huggingface` preference also accepts
-  `"inference_providers": { "zai-org/GLM-5.2": "deepinfra" }`. Each key must be
-  a configured model and each value an explicit provider suffix advertised by
-  Hugging Face—not the `fastest`, `cheapest`, or `preferred` routing policies.
+  `"default_inference_provider": "openrouter"` (the bundled default) and
+  `"inference_providers": { "zai-org/GLM-5.2": "deepinfra" }`. Set
+  `default_inference_provider` to `null` to restore unsuffixed automatic routing
+  for models without an override. Each `inference_providers` key must be a
+  configured model. Route values must be explicit provider suffixes, not
+  `fastest`, `cheapest`, or `preferred`; they need not be advertised by Hugging
+  Face's discovery API. These fields are supported only for `huggingface`.
+  Per-model preferences take precedence over the provider-wide default.
   Tau snapshots the selected suffix into new session metadata as a fixed route,
   retains it on resume, and sends only the suffixed wire model; ordinary model
-  identity and catalog metadata remain unsuffixed. Without a preference, Tau
-  starts in automatic mode and records the `x-inference-provider` reported by
-  the first successful response as a sticky but recoverable route. After a
+  identity and catalog metadata remain unsuffixed. Unsupported fixed routes
+  report an error without falling back. Existing sessions retain their saved
+  route and mode even when defaults change. With a `null` default or an explicit
+  `/hf route automatic`, Tau starts in automatic mode and records the
+  `x-inference-provider` reported by the first successful response as a sticky
+  but recoverable route. After a
   retryable pre-output HTTP failure exhausts provider-level retries, Tau clears
   that automatic pin, retries the interrupted turn once through Hugging Face
   automatic routing, and stores the successful replacement. Explicitly configured
@@ -367,6 +377,24 @@ Provider preferences live in `~/.tau/providers.json`:
   `thinking_levels`, `thinking_default`, `thinking_models`, and
   `thinking_parameter` (`"reasoning_effort"`, `"reasoning.effort"`, or
   `"anthropic.thinking"`).
+
+For example, to opt out of the OpenRouter default for new Hugging Face sessions:
+
+```json
+{
+  "schema_version": 2,
+  "default_provider": "huggingface",
+  "provider_preferences": {
+    "huggingface": { "default_inference_provider": null }
+  },
+  "scoped_models": []
+}
+```
+
+Removing that field restores the bundled default; explicit `null` is retained
+when saving unrelated preferences. Switching models resolves the new model's
+per-model route, then the provider-wide default. `/hf route automatic` remains
+an active-session override and survives reload and resume.
 
 Writes after `/login`, `/model`, or scoped-model changes reload the file first,
 apply only the requested change, write atomically, and keep a `.bak` backup.
