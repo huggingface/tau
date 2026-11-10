@@ -1624,7 +1624,8 @@ class CodingSession:
                 "Tau is still working. Press Escape to interrupt before switching models."
             )
         if choice.provider_name == self.provider_name and choice.model == self.model:
-            if persist_default and self._active_dynamic_provider is None:
+            if persist_default and self._config.dynamic_provider is None:
+                # Runtime provenance survives removal of a dynamic registry layer.
                 # An explicit preference can change even when the runtime does not.
                 self._persist_default_model_choice()
             return ModelSelectionResult(choice, changed=False)
@@ -2154,12 +2155,6 @@ class CodingSession:
         durable_provider = self._durable_provider_settings.get_provider(self.provider_name)
         if self.model not in durable_provider.models:
             # Account-specific inventory is deliberately not written into catalog.toml.
-            return
-        if (
-            self._durable_provider_settings.default_provider == self.provider_name
-            and durable_provider.default_model == self.model
-        ):
-            # Both durable defaults already match; avoid rewriting settings.
             return
         self._durable_provider_settings = save_default_provider_model(
             provider_name=self.provider_name,

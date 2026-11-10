@@ -542,6 +542,9 @@ def save_default_provider_model(
     """Reload settings, persist one default provider/model change, and return them."""
     settings = _load_provider_settings_for_write(paths, fallback_settings=fallback_settings)
     updated = set_default_provider_model(settings, provider_name=provider_name, model=model)
+    if updated == settings:
+        # Compare with fresh on-disk preferences, not a session's cached defaults.
+        return settings
     save_provider_settings(updated, paths)
     return updated
 

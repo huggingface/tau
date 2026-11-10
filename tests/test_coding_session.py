@@ -68,6 +68,7 @@ from tau_coding import (
     load_provider_settings,
     save_provider_settings,
 )
+from tau_coding import provider_config as provider_config_module
 from tau_coding import session as coding_session_module
 from tau_coding.codex_model_store import cached_codex_model_catalog, save_codex_model_catalog
 from tau_coding.events import AgentSettledEvent, QueueUpdateEvent, SessionAgentEndEvent
@@ -157,6 +158,11 @@ class SwitchableFakeProvider:
     async def aclose(self) -> None:
         self.closed = True
         self.close_calls += 1
+
+
+class ClosableFakeProvider(FakeProvider):
+    async def aclose(self) -> None:
+        pass
 
 
 class HeaderObservingFakeProvider(FakeProvider):
@@ -5976,7 +5982,7 @@ async def test_preview_selection_commit_persists_durable_default_model(
     def unexpected_save(*args: object, **kwargs: object) -> None:
         pytest.fail("An unchanged durable default must not be rewritten")
 
-    monkeypatch.setattr(coding_session_module, "save_default_provider_model", unexpected_save)
+    monkeypatch.setattr(provider_config_module, "save_provider_settings", unexpected_save)
     await session.select_provider_model(ModelChoice("local", "qwen"), persist_default=False)
     session.preview_model_choice(ModelChoice("local", "llama"))
     await _collect_session_events(session.prompt("back to the durable model"))
@@ -6070,6 +6076,73 @@ async def test_preview_selection_persists_full_default_choice(
         assert [entry for entry in entries if entry.type == "model_change"] == [
             entry for entry in before if entry.type == "model_change"
         ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "other_choice", [ModelChoice("provider-a", "other"), ModelChoice("provider-b", "beta")]
+)
+async def test_preview_selection_reloads_default_changed_by_another_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, other_choice: ModelChoice
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    settings = ProviderSettings(
+        default_provider="provider-a",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="provider-a",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("alpha", "other"),
+                default_model="alpha",
+            ),
+            OpenAICompatibleProviderConfig(
+                name="provider-b",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("beta",),
+                default_model="beta",
+            ),
+        ),
+    )
+    paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    save_provider_settings(settings, paths)
+    sessions = [
+        await CodingSession.load(
+            CodingSessionConfig(
+                provider=FakeProvider([]),
+                model="alpha",
+                system="You are Tau.",
+                storage=JsonlSessionStorage(tmp_path / f"session-{index}.jsonl"),
+                cwd=tmp_path,
+                provider_name="provider-a",
+                provider_settings=settings,
+                resource_paths=TauResourcePaths(root=paths.home, paths=paths),
+            )
+        )
+        for index in range(2)
+    ]
+
+    def create_provider(*args: object, **kwargs: object) -> ClosableFakeProvider:
+        return ClosableFakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    first, second = sessions
+    try:
+        await second.select_provider_model(other_choice)
+        changed = load_provider_settings(paths)
+        assert changed.default_provider == other_choice.provider_name
+        assert changed.get_provider(other_choice.provider_name).default_model == other_choice.model
+
+        first.preview_model_choice(ModelChoice("provider-a", "alpha"))
+        await _collect_session_events(first.prompt("restore my explicit preference"))
+
+        saved = load_provider_settings(paths)
+        assert saved.default_provider == "provider-a"
+        assert saved.get_provider("provider-a").default_model == "alpha"
+    finally:
+        for session in sessions:
+            await session.aclose()
 
 
 @pytest.mark.anyio
@@ -7341,6 +7414,41 @@ async def test_reselect_active_dynamic_model_does_not_persist_defaults(
     try:
         result = await session.select_provider_model(ModelChoice("local", "reasoner"))
         assert not result.changed
+        assert not (tmp_path / ".tau" / "providers.json").exists()
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_pending_dynamic_reselection_does_not_persist_after_provider_removal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def create_provider(*args: object, **kwargs: object) -> ClosableFakeProvider:
+        return ClosableFakeProvider([])
+
+    def unexpected_save(*args: object, **kwargs: object) -> None:
+        pytest.fail("Removed dynamic providers must not be saved as durable defaults")
+
+    monkeypatch.setattr(coding_session_module, "create_dynamic_model_provider", create_provider)
+    monkeypatch.setattr(coding_session_module, "save_default_provider_model", unexpected_save)
+    session = await CodingSession.load(
+        _dynamic_thinking_override_config(tmp_path, thinking_level_override=None)
+    )
+    try:
+        original_provider = session.provider
+        session.preview_model_choice(ModelChoice("local", "reasoner"))
+        (tmp_path / "dynamic_provider.py").write_text(
+            "def setup(tau):\n    pass\n", encoding="utf-8"
+        )
+        await session.reload()
+        assert session.has_pending_selection
+        assert session._active_dynamic_provider is None
+
+        await _collect_session_events(session.prompt("keep using the active runtime"))
+
+        assert session.provider is original_provider
+        assert session.model == "reasoner"
+        assert not session.has_pending_selection
         assert not (tmp_path / ".tau" / "providers.json").exists()
     finally:
         await session.aclose()
