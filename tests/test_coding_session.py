@@ -5972,6 +5972,15 @@ async def test_preview_selection_commit_persists_durable_default_model(
     assert saved["default_provider"] == "local"
     assert saved["provider_preferences"]["local"]["default_model"] == "llama"
 
+    # Exercise the write guard both with and without a runtime model change.
+    def unexpected_save(*args: object, **kwargs: object) -> None:
+        pytest.fail("An unchanged durable default must not be rewritten")
+
+    monkeypatch.setattr(coding_session_module, "save_default_provider_model", unexpected_save)
+    await session.select_provider_model(ModelChoice("local", "qwen"), persist_default=False)
+    session.preview_model_choice(ModelChoice("local", "llama"))
+    await _collect_session_events(session.prompt("back to the durable model"))
+
     # Committing the already-durable, already-active model must not rewrite settings.
     before_commit = (tau_paths.home / "providers.json").stat().st_mtime_ns
     session.preview_model_choice(ModelChoice("local", "llama"))
@@ -5979,6 +5988,88 @@ async def test_preview_selection_commit_persists_durable_default_model(
     saved_again = json.loads((tau_paths.home / "providers.json").read_text(encoding="utf-8"))
     assert saved_again["provider_preferences"]["local"]["default_model"] == "llama"
     assert (tau_paths.home / "providers.json").stat().st_mtime_ns == before_commit
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("active_model", "target_provider", "target_model"),
+    [
+        ("alpha", "provider-b", "beta"),
+        ("other", "provider-a", "other"),
+    ],
+    ids=["cross-provider-existing-default", "reselect-active-startup-model"],
+)
+async def test_preview_selection_persists_full_default_choice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    active_model: str,
+    target_provider: str,
+    target_model: str,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    settings = ProviderSettings(
+        default_provider="provider-a",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="provider-a",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("alpha", "other"),
+                default_model="alpha",
+            ),
+            OpenAICompatibleProviderConfig(
+                name="provider-b",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("beta",),
+                default_model="beta",
+            ),
+        ),
+    )
+    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    save_provider_settings(settings, tau_paths)
+    storage = JsonlSessionStorage(tmp_path / "persist-choice.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model=active_model,
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="provider-a",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    def create_provider(*args: object, **kwargs: object) -> FakeProvider:
+        return FakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    # Merely using a different startup model must remain per-invocation.
+    await _collect_session_events(session.prompt("use the startup model"))
+    await session.select_provider_model(
+        ModelChoice("provider-a", active_model), persist_default=False
+    )
+    assert load_provider_settings(tau_paths).get_provider("provider-a").default_model == "alpha"
+    before = await storage.read_all()
+    session.preview_model_choice(ModelChoice(target_provider, target_model))
+    assert load_provider_settings(tau_paths).default_provider == "provider-a"
+    assert await storage.read_all() == before
+
+    await _collect_session_events(session.prompt("commit this choice"))
+
+    saved = load_provider_settings(tau_paths)
+    assert saved.default_provider == target_provider
+    assert saved.get_provider(target_provider).default_model == target_model
+    assert session.provider_name == target_provider
+    assert session.model == target_model
+    if active_model == target_model:
+        # Saving an explicit preference does not require a duplicate history entry.
+        entries = await storage.read_all()
+        assert [entry for entry in entries if entry.type == "model_change"] == [
+            entry for entry in before if entry.type == "model_change"
+        ]
 
 
 @pytest.mark.anyio
@@ -7233,6 +7324,26 @@ async def test_dynamic_provider_accepts_supported_thinking_override(
     assert session.thinking_level == "high"
     assert session.available_thinking_levels == ("off", "high")
     await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_reselect_active_dynamic_model_does_not_persist_defaults(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    session = await CodingSession.load(
+        _dynamic_thinking_override_config(tmp_path, thinking_level_override=None)
+    )
+
+    def unexpected_save(*args: object, **kwargs: object) -> None:
+        pytest.fail("Dynamic model choices must not be saved as durable defaults")
+
+    monkeypatch.setattr(coding_session_module, "save_default_provider_model", unexpected_save)
+    try:
+        result = await session.select_provider_model(ModelChoice("local", "reasoner"))
+        assert not result.changed
+        assert not (tmp_path / ".tau" / "providers.json").exists()
+    finally:
+        await session.aclose()
 
 
 @pytest.mark.anyio
