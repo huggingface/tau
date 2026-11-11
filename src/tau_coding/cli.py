@@ -8,10 +8,11 @@ from collections.abc import Callable, Sequence
 from functools import partial
 from os import environ
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import anyio
 import typer
+from typer.core import TyperGroup
 
 from tau_agent.provider import ModelProvider
 from tau_agent.session import JsonlSessionStorage, SessionEntry, SessionStorage
@@ -102,8 +103,26 @@ def _force_utf8_streams() -> None:
 
 _force_utf8_streams()
 
+
+class _TauGroup(TyperGroup):
+    def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
+        # Commands share the positional-prompt argument. Recognize the narrow
+        # command-discovery form before Click stops parsing at the first word.
+        # Do not extract help tokens from literal prompts or after an explicit --.
+        if (
+            len(args) == 2
+            and args[0]
+            and not args[0].startswith("-")
+            and not any(char.isspace() for char in args[0])
+            and args[1] == "--help"
+        ):
+            args = ["--help"]
+        return super().parse_args(ctx, args)
+
+
 app = typer.Typer(
     name="tau",
+    cls=_TauGroup,
     help="Tau coding-agent harness.",
     epilog="""Commands:
 
@@ -631,6 +650,22 @@ def main(
         raise typer.Exit(1)
 
 
+def _require_interactive_terminal() -> None:
+    """Reject headless TUI startup before Textual can poll an EOF descriptor."""
+    try:
+        interactive = all(
+            stream is not None and stream.isatty() for stream in (sys.stdin, sys.stdout)
+        )
+    except (AttributeError, OSError, ValueError):
+        interactive = False
+    if not interactive:
+        raise RuntimeError(
+            "Interactive mode requires a terminal on stdin and stdout. "
+            "Use --print or --mode text|json|transcript for headless execution, "
+            "or --mode rpc for JSONL RPC."
+        )
+
+
 async def run_openai_tui(
     model: str | None,
     cwd: Path,
@@ -650,6 +685,7 @@ async def run_openai_tui(
     thinking_level_override: ThinkingLevel | None = None,
 ) -> str | None:
     """Run the Textual TUI and return its resumable session id, if any."""
+    _require_interactive_terminal()
     release_notes_notice = startup_release_notes_notice(_current_version())
     startup_notices = (release_notes_notice.message,) if release_notes_notice is not None else ()
     deferred_update_notice = _deferred_startup_update_notice() if update_notice is None else None

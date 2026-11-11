@@ -5,7 +5,8 @@ description: Run Tau non-interactively for a single prompt — ideal for scripts
 
 Print mode runs a single prompt without the interactive UI and writes the result
 to the terminal. It's the right choice for scripts, pipelines, and one-off
-questions.
+questions. Interactive startup requires terminal stdin and stdout; when either
+is redirected, Tau asks you to select a headless mode instead of opening the TUI.
 
 ## Basic use
 
