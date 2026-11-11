@@ -9007,12 +9007,17 @@ async def run_tui_app(
         try:
             initial_provider = create_model_provider(
                 selection.provider,
-                model=selection.model,
+                # A live Codex default is validated by the staged session loader.
+                model=selection.model if selection.model in selection.provider.models else None,
                 inference_provider=inference_provider,
-                thinking_level=resolve_startup_thinking_level(
-                    selection.provider,
-                    selection.model,
-                    cli_override=thinking_level_override,
+                thinking_level=(
+                    resolve_startup_thinking_level(
+                        selection.provider,
+                        selection.model,
+                        cli_override=thinking_level_override,
+                    )
+                    if selection.model in selection.provider.models
+                    else None
                 ),
             )
         except RuntimeError as exc:

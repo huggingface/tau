@@ -93,10 +93,14 @@ it does not silently replace the model.
 
 Provider/model selection precedence is explicit CLI selection, the resumed
 transcript's provider-aware model entry, the session record for legacy sessions,
-a durable default, and then a usable durable provider. Dynamic local providers
-are selected only by explicit startup, a resumed local session, or an in-session
-`/model`/`/local` action. The old `llama-cpp` catalog provider is not migrated;
-configure the built-in `llama.cpp` layer separately through `/local`.
+a durable default, and then a usable durable provider. A model chosen in the
+interactive `/model` picker is previewed until the next message, then committed
+and saved as the durable default provider model in `~/.tau/providers.json`;
+explicit CLI `--model` startup remains per-invocation and does not update the
+durable default. Dynamic local providers are selected only by explicit startup, a
+resumed local session, or an in-session `/model`/`/local` action. The old
+`llama-cpp` catalog provider is not migrated; configure the built-in `llama.cpp`
+layer separately through `/local`.
 
 ## Hugging Face routing
 
@@ -164,9 +168,14 @@ retain the account-matched snapshot or static Codex fallback.
 `TAU_OFFLINE=1` disables catalog network access and permits only the cached or
 bundled data.
 
-Explicit startup and resume of a Codex model absent from the static catalog
-perform authenticated discovery before model validation. Such live-only selections
-require successful discovery; offline startup still supports static models.
+Committed `/model` and Ctrl+P/Shift+Ctrl+P selections also save live-only Codex
+models as default provider/model ID references in `providers.json`, without
+copying account-specific inventory or metadata into the durable catalog.
+Startup, resume, and saved defaults for a Codex model absent from the static
+catalog are validated against an account-matched cache or authenticated discovery.
+Offline startup supports static models and live-only models present in the
+matching account's cache. An unavailable saved model produces an error rather
+than silently starting a different model.
 If a refreshed inventory omits the active model, its existing runtime metadata
 remains usable without restoring that model to the picker. Resume restores the
 transcript's model selection, not the model from the session being left. If an

@@ -28,12 +28,63 @@ from tau_coding.provider_config import (
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
     resolve_startup_thinking_level,
+    save_default_provider_model,
     save_provider_settings,
     set_default_provider_model,
     set_provider_thinking_level,
     upsert_openai_compatible_provider,
 )
 from tau_coding.thinking import ThinkingLevel
+
+
+def test_live_codex_default_round_trips_as_reference_without_catalog_inventory(
+    tmp_path: Path,
+) -> None:
+    paths = TauPaths(home=tmp_path / ".tau")
+    settings = load_provider_settings(paths)
+    original = settings.get_provider("openai-codex")
+    save_provider_settings(settings, paths)
+    live = OpenAICodexProviderConfig(models=("live-model",), default_model="live-model")
+
+    save_default_provider_model(
+        provider_name="openai-codex", model="live-model", paths=paths, runtime_provider=live
+    )
+
+    reloaded = load_provider_settings(paths)
+    durable = reloaded.get_provider("openai-codex")
+    assert reloaded.default_provider == "openai-codex"
+    assert durable.default_model == "live-model"
+    assert durable.models == original.models
+    assert durable.model_metadata == original.model_metadata
+    assert not (paths.home / "catalog.toml").exists()
+    # Default resolution may carry an unresolved reference to the staged loader,
+    # but explicit runtime validation must still require discovered inventory.
+    assert resolve_provider_selection(reloaded).model == "live-model"
+    with pytest.raises(ProviderConfigError, match="live-model"):
+        resolve_provider_selection(reloaded, model="live-model")
+
+
+def test_live_codex_default_requires_matching_validated_runtime_inventory(tmp_path: Path) -> None:
+    paths = TauPaths(home=tmp_path / ".tau")
+    settings = load_provider_settings(paths)
+    save_provider_settings(settings, paths)
+    before = (paths.home / "providers.json").read_bytes()
+    for runtime_provider in (
+        None,
+        OpenAICodexProviderConfig(),
+        OpenAICodexProviderConfig(name="other", models=("live-model",), default_model="live-model"),
+        OpenAICompatibleProviderConfig(
+            name="openai-codex", models=("live-model",), default_model="live-model"
+        ),
+    ):
+        with pytest.raises(ProviderConfigError, match="live-model"):
+            save_default_provider_model(
+                provider_name="openai-codex",
+                model="live-model",
+                paths=paths,
+                runtime_provider=runtime_provider,
+            )
+    assert (paths.home / "providers.json").read_bytes() == before
 
 
 def test_stale_preferences_cannot_restore_removed_codex_alias(tmp_path: Path) -> None:
