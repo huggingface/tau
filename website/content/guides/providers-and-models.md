@@ -47,6 +47,10 @@ GitHub Copilot asks for a GitHub Enterprise Server URL/domain. Leave it blank
 for `github.com`. Device login also works in SSH/headless sessions: open the
 shown verification URL on any device and enter the displayed code.
 
+For Copilot models using the Responses API, an empty final argument field
+preserves the tool arguments already received in the stream, so tool calls
+and their history retain the complete parameters.
+
 Anthropic uses distinct direct-login aliases so the authentication method is
 unambiguous: `/login anthropic-subscription` starts OAuth, while
 `/login anthropic-api` saves an API key. The top-level `/login` picker still
