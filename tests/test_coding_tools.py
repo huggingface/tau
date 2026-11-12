@@ -320,6 +320,20 @@ async def test_edit_tool_applies_multiple_exact_replacements(tmp_path: Path) -> 
 
 
 @pytest.mark.anyio
+async def test_edit_tool_preserves_crlf_line_endings(tmp_path: Path) -> None:
+    path = tmp_path / "file.txt"
+    path.write_bytes(b"alpha\r\nbeta\r\ngamma\r\n")
+    tool = create_edit_tool(cwd=tmp_path)
+
+    await tool.execute(
+        "test-call",
+        {"path": "file.txt", "edits": [{"oldText": "alpha\nbeta", "newText": "one\ntwo"}]},
+    )
+
+    assert path.read_bytes() == b"one\r\ntwo\r\ngamma\r\n"
+
+
+@pytest.mark.anyio
 async def test_edit_tool_rolls_back_when_any_edit_fails(tmp_path: Path) -> None:
     path = tmp_path / "file.txt"
     original = "alpha\nbeta\ngamma\n"
