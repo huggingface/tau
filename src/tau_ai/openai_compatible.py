@@ -1259,7 +1259,8 @@ def _parse_sse_line(line: str) -> str | None:
     line = line.strip()
     if not line or not line.startswith("data:"):
         return None
-    return line.removeprefix("data:").strip()
+    data = line.removeprefix("data:").strip()
+    return data or None
 
 
 def _loads_object(value: str) -> dict[str, JSONValue] | None:
