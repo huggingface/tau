@@ -81,6 +81,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "opencode-go",
         "opencode",
         "github-copilot",
+        "tsubasa",
     ]
 
 
