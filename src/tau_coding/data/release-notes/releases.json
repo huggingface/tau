@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.4.11",
+    "date": "2026-11-13",
+    "sections": {
+      "Fixed": [
+        "Persist committed /model selections as the default for future sessions, including live Codex models, while preserving per-invocation CLI overrides and process-local dynamic selections.",
+        "Reject interactive TUI startup without terminal stdin to prevent CPU spinning on EOF, and show command help without launching the TUI."
+      ]
+    }
+  },
+  {
     "version": "0.4.10",
     "date": "2026-11-09",
     "sections": {
