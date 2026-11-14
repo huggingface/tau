@@ -4252,6 +4252,174 @@ async def test_session_uses_live_provider_limits_for_compaction_threshold(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("provider_name", ["openai-codex", "local-runtime"])
+async def test_session_uses_live_limits_after_discovering_uncached_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_name: str
+) -> None:
+    monkeypatch.delenv("TAU_OFFLINE", raising=False)
+    first_limits = RuntimeModelLimits(context_window=400_000, auto_compact_token_limit=350_000)
+    second_limits = RuntimeModelLimits(context_window=240_000, auto_compact_token_limit=200_000)
+    provider = ModelCatalogFakeProvider(
+        [
+            [
+                assistant_start(model=model),
+                assistant_done(message=AssistantMessage(content="Ready.")),
+            ]
+            for model in ("first-model", "second-model")
+        ],
+        catalog=RuntimeModelCatalog(
+            (
+                RuntimeModel(id="first-model", limits=first_limits),
+                RuntimeModel(id="second-model", limits=second_limits),
+            )
+        ),
+        limits=first_limits,
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="first-model",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name=provider_name,
+        )
+    )
+
+    assert provider.catalog_calls == 1
+    assert provider.discovery_calls == ["first-model"]
+    assert session.context_window_tokens == 400_000
+    assert session.auto_compact_token_threshold == 350_000
+    assert session.context_window_source == "provider live catalog"
+
+    await _collect_session_events(session.prompt("Hello."))
+    assert provider.catalog_calls == 1
+    assert provider.discovery_calls == ["first-model"]
+
+    session.set_model("second-model")
+    provider.limits = second_limits
+    await _collect_session_events(session.prompt("Continue."))
+    assert session.context_window_tokens == 240_000
+    assert session.auto_compact_token_threshold == 200_000
+    assert session.context_window_source == "provider live catalog"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("abandon_by", ["model switch", "cancellation"])
+async def test_session_recovers_when_live_limit_discovery_is_abandoned(
+    tmp_path: Path, abandon_by: str
+) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class PausingProvider(ModelCatalogFakeProvider):
+        async def discover_models(self) -> RuntimeModelCatalog:
+            if abandon_by == "model switch" and self.catalog_calls == 1:
+                entered.set()
+                await release.wait()
+            return await super().discover_models()
+
+        async def discover_model_limits(self, model: str) -> RuntimeModelLimits | None:
+            self.discovery_calls.append(model)
+            if abandon_by == "cancellation" and model == "first-model" and not entered.is_set():
+                entered.set()
+                await release.wait()
+            entry = self.catalog.model(model)
+            return entry.limits if entry is not None else None
+
+    provider = PausingProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Ready.")),
+            ]
+            for _ in range(2)
+        ],
+        catalog=RuntimeModelCatalog(
+            tuple(
+                RuntimeModel(id=model, limits=RuntimeModelLimits(context_window=window))
+                for model, window in (
+                    ("initial", 70_000),
+                    ("first-model", 400_000),
+                    ("second-model", 240_000),
+                )
+            )
+        ),
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="initial",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local-runtime",
+        )
+    )
+    session.set_model("first-model")
+    pending = asyncio.create_task(_collect_session_events(session.prompt("Hello.")))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        if abandon_by == "model switch":
+            session.set_model("second-model")
+            release.set()
+            await pending
+        else:
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+    finally:
+        release.set()
+        if not pending.done():
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+
+    session.set_model("first-model")
+    await _collect_session_events(session.prompt("Continue."))
+    assert session.context_window_tokens == 400_000
+    assert session.context_window_source == "provider live catalog"
+    assert provider.discovery_calls == (
+        ["initial", "first-model"]
+        if abandon_by == "model switch"
+        else ["initial", "first-model", "first-model"]
+    )
+
+
+@pytest.mark.anyio
+async def test_session_retries_limit_failure_after_catalog_discovery(tmp_path: Path) -> None:
+    limits = RuntimeModelLimits(context_window=400_000)
+    provider = ModelCatalogFakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Ready.")),
+            ]
+        ],
+        catalog=RuntimeModelCatalog((RuntimeModel(id="fake", limits=limits),)),
+        limits=limits,
+    )
+    provider.error = RuntimeError("temporarily unavailable")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local-runtime",
+        )
+    )
+
+    assert session.context_window_source == "configured catalog"
+    assert session.model_limits_discovery_error == "RuntimeError: temporarily unavailable"
+    provider.error = None
+    await _collect_session_events(session.prompt("Hello."))
+    assert session.context_window_tokens == 400_000
+    assert session.context_window_source == "provider live catalog"
+    assert session.model_limits_discovery_error is None
+    assert provider.discovery_calls == ["fake", "fake"]
+
+
+@pytest.mark.anyio
 async def test_session_uses_cached_codex_model_inventory_before_live_refresh(
     tmp_path: Path,
 ) -> None:

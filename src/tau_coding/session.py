@@ -2386,7 +2386,8 @@ class CodingSession:
         self._model_limits_discovery_error = None
 
     async def _refresh_runtime_model_limits(self) -> None:
-        key = (self.provider_name, self.model)
+        provider_name, model_id = self.provider_name, self.model
+        key = (provider_name, model_id)
         if self._runtime_model_limits_key == key:
             return
         self._runtime_model_limits = None
@@ -2394,29 +2395,58 @@ class CodingSession:
         self._model_limits_discovery_error = None
         provider = self._harness.config.provider
         if (
-            self.provider_name == "openai-codex"
+            provider_name == "openai-codex"
             and isinstance(provider, ModelCatalogProvider)
             and environ.get("TAU_OFFLINE") is not None
         ):
             return
+
+        def keep_refresh_key() -> bool:
+            # Identity distinguishes this refresh from a newer one for the same model.
+            if self._runtime_model_limits_key is not key:
+                return False
+            if (
+                key == (self.provider_name, self.model)
+                and self._harness.config.provider is provider
+            ):
+                return True
+            self._invalidate_runtime_model_limits()
+            return False
+
+        catalog_published = False
         try:
-            cached_catalog = self._runtime_model_catalogs.get(self.provider_name)
-            if self.provider_name == "openai-codex" and cached_catalog is not None:
-                model = cached_catalog.model(self.model)
+            cached_catalog = self._runtime_model_catalogs.get(provider_name)
+            if provider_name == "openai-codex" and cached_catalog is not None:
+                model = cached_catalog.model(model_id)
                 self._runtime_model_limits = model.limits if model is not None else None
                 return
             if isinstance(provider, ModelCatalogProvider):
                 catalog = await provider.discover_models()
-                self._publish_runtime_model_catalog(self.provider_name, catalog)
-                if self.provider_name == "openai-codex":
+                if not keep_refresh_key():
+                    return
+                # This refresh already reset the limits and owns their in-flight key.
+                self._publish_runtime_model_catalog(provider_name, catalog, invalidate_limits=False)
+                catalog_published = True
+                if provider_name == "openai-codex":
                     self._persist_codex_model_catalog(provider, catalog)
             if isinstance(provider, ModelLimitsProvider):
-                self._runtime_model_limits = await provider.discover_model_limits(self.model)
+                limits = await provider.discover_model_limits(model_id)
+                if keep_refresh_key():
+                    self._runtime_model_limits = limits
+        except asyncio.CancelledError:
+            if self._runtime_model_limits_key is key:
+                self._invalidate_runtime_model_limits()
+            raise
         except Exception as exc:  # noqa: BLE001 - static catalog remains the safe fallback
+            if not keep_refresh_key():
+                return
             error = f"{type(exc).__name__}: {exc}"
             self._model_limits_discovery_error = error
+            if catalog_published:
+                # A later turn can retry live limits after a transient provider error.
+                self._runtime_model_limits_key = None
             if isinstance(provider, ModelCatalogProvider):
-                self._model_catalog_discovery_errors[self.provider_name] = error
+                self._model_catalog_discovery_errors[provider_name] = error
 
     async def reload(self) -> CodingReloadSummary:
         """Stage and atomically publish a complete replacement snapshot."""
@@ -2722,12 +2752,15 @@ class CodingSession:
         self,
         provider_name: str,
         catalog: RuntimeModelCatalog,
+        *,
+        invalidate_limits: bool = True,
     ) -> None:
         if not catalog.models:
             raise ValueError("provider returned an empty model catalog")
         self._runtime_model_catalogs[provider_name] = catalog
         self._model_catalog_discovery_errors.pop(provider_name, None)
-        self._invalidate_runtime_model_limits()
+        if invalidate_limits:
+            self._invalidate_runtime_model_limits()
         self._apply_runtime_model_catalogs()
 
     def _apply_runtime_model_catalogs(self) -> None:
