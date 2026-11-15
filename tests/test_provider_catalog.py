@@ -349,7 +349,7 @@ def test_builtin_catalog_golden_requesty_entry() -> None:
     assert {
         "openai/gpt-4o-mini",
         "openai/gpt-5-mini",
-        "anthropic/claude-sonnet-4-5",
+        "anthropic/claude-sonnet-4-6",
         "anthropic/claude-haiku-4-5",
         "google/gemini-2.5-flash",
         "deepseek/deepseek-chat",

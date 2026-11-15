@@ -3363,7 +3363,7 @@ kind = "openai-compatible"
 base_url = "https://router.requesty.ai/v1"
 api_key_env = "REQUESTY_API_KEY"
 credential_name = "requesty"
-models = ["anthropic/claude-haiku-4-5", "anthropic/claude-opus-4-6", "anthropic/claude-opus-4-7", "anthropic/claude-sonnet-4-5", "anthropic/claude-sonnet-4-6", "deepseek/deepseek-chat", "deepseek/deepseek-reasoner", "google/gemini-2.5-flash", "google/gemini-2.5-pro", "google/gemini-3.5-flash", "openai/gpt-4.1", "openai/gpt-4.1-mini", "openai/gpt-4o-mini", "openai/gpt-5", "openai/gpt-5-mini", "openai/gpt-5.4", "openai/gpt-5.4-mini", "openai/gpt-5.5", "claude-haiku-4-5", "claude-opus-4-7", "claude-sonnet-4-6", "deepseek-v4-flash", "gemini-3.5-flash", "gpt-5.4", "gpt-5.4-mini", "kimi-k3"]
+models = ["anthropic/claude-haiku-4-5", "anthropic/claude-opus-4-6", "anthropic/claude-opus-4-7", "anthropic/claude-sonnet-4-6", "deepseek/deepseek-chat", "deepseek/deepseek-reasoner", "google/gemini-2.5-flash", "google/gemini-2.5-pro", "google/gemini-3.5-flash", "openai/gpt-4.1", "openai/gpt-4.1-mini", "openai/gpt-4o-mini", "openai/gpt-5", "openai/gpt-5-mini", "openai/gpt-5.4", "openai/gpt-5.4-mini", "openai/gpt-5.5", "claude-haiku-4-5", "claude-opus-4-7", "claude-sonnet-4-6", "deepseek-v4-flash", "gemini-3.5-flash", "gpt-5.4", "gpt-5.4-mini", "kimi-k3"]
 default_model = "openai/gpt-4o-mini"
 docs_url = "https://docs.requesty.ai"
 api = "openai-completions"
@@ -3375,7 +3375,6 @@ thinking_parameter = "reasoning_effort"
 "anthropic/claude-haiku-4-5" = 200000
 "anthropic/claude-opus-4-6" = 1000000
 "anthropic/claude-opus-4-7" = 1000000
-"anthropic/claude-sonnet-4-5" = 1000000
 "anthropic/claude-sonnet-4-6" = 1000000
 "deepseek/deepseek-chat" = 1000000
 "deepseek/deepseek-reasoner" = 1000000
@@ -3422,14 +3421,6 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 128000
 cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
-
-[providers.model_metadata."anthropic/claude-sonnet-4-5"]
-name = "Anthropic: Claude Sonnet 4.5"
-reasoning = true
-input = ["text", "image"]
-context_window = 1000000
-max_tokens = 64000
-cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
 
 [providers.model_metadata."anthropic/claude-sonnet-4-6"]
 name = "Anthropic: Claude Sonnet 4.6"
