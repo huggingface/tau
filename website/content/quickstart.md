@@ -85,7 +85,7 @@ Then run one of these inside Tau:
 ```
 
 Tau ships with built-in entries for OpenAI, Anthropic, OpenAI Codex,
-OpenRouter, and Hugging Face. See [Providers & models](/guides/providers-and-models/)
+OpenRouter, Requesty, and Hugging Face. See [Providers & models](/guides/providers-and-models/)
 for switching models or adding a custom/local OpenAI-compatible endpoint.
 
 ## 3. Start a session
