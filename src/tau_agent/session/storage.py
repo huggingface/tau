@@ -76,12 +76,19 @@ class JsonlSessionStorage:
         """Append one entry under the session's exclusive cross-process lock."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         line = entry_to_json_line(entry)
+        encoded = line.encode("utf-8")
         with self._locked(exclusive=True):
             self._remove_incomplete_temp()
             previous_stamp = self._file_stamp()
             try:
-                with self.path.open("ab") as file:
-                    file.write(line.encode("utf-8"))
+                with self.path.open("a+b") as file:
+                    # A readable JSONL transcript may have no final newline.
+                    file.seek(0, os.SEEK_END)
+                    if file.tell():
+                        file.seek(-1, os.SEEK_END)
+                        if file.read(1) != b"\n":
+                            encoded = b"\n" + encoded
+                    file.write(encoded)
                     file.flush()
                     os.fsync(file.fileno())
             except BaseException:
@@ -101,6 +108,8 @@ class JsonlSessionStorage:
             self._remove_incomplete_temp()
             previous_stamp = self._file_stamp()
             previous = self.path.read_bytes() if previous_stamp is not None else b""
+            if previous and not previous.endswith(b"\n"):
+                encoded = b"\n" + encoded
             data = previous + encoded
             try:
                 self._atomic_replace(data)
