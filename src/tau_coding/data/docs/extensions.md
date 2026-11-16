@@ -5,7 +5,13 @@ and process-local provider definitions; observe lifecycle events; intercept tool
 calls and results; show UI dialogs and sidebar sections; and customize message
 rendering.
 
-For Hugging Face-specific routing extensions, `set_inference_provider(<provider>)` selects a fixed route while `set_inference_provider(None)` restores recoverable automatic routing. Read both `context.inference_provider` (current route) and `context.inference_provider_mode` (`automatic` or `fixed`) when presenting route status.
+For Hugging Face-specific routing extensions, `set_inference_provider(<provider>)`
+selects a fixed route while `set_inference_provider(None)` restores recoverable
+automatic routing, overriding the configured default for the active model.
+New sessions default to fixed `openrouter` routing even when discovery does not
+advertise it; extensions need not reapply that default. Read both
+`context.inference_provider` (current route) and `context.inference_provider_mode`
+(`automatic` or `fixed`) when presenting route status.
 
 Once a session is bound, `context.available_providers` returns the provider IDs
 Tau can currently call, and `context.available_model_choices` returns frozen

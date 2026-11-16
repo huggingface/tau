@@ -66,7 +66,8 @@ def test_direct_openai_runtime_enables_responses_cache_affinity(tmp_path) -> Non
     assert provider._config.compat["sessionAffinityFormat"] == "openai"
 
 
-def test_huggingface_runtime_pins_backing_provider_with_model_alias(tmp_path) -> None:
+@pytest.mark.parametrize("route", ["deepinfra", "openrouter"])
+def test_huggingface_runtime_pins_backing_provider_with_model_alias(tmp_path, route: str) -> None:
     store = FileCredentialStore(tmp_path / "credentials.json")
     store.set_api_key("huggingface", "hf-test")
     config = provider_config_from_catalog_entry("huggingface")
@@ -75,11 +76,11 @@ def test_huggingface_runtime_pins_backing_provider_with_model_alias(tmp_path) ->
         config,
         credential_store=store,
         model="zai-org/GLM-5.2",
-        inference_provider="deepinfra",
+        inference_provider=route,
     )
 
     assert isinstance(provider, OpenAICompatibleProvider)
-    assert provider._config.model_aliases == {"zai-org/GLM-5.2": "zai-org/GLM-5.2:deepinfra"}
+    assert provider._config.model_aliases == {"zai-org/GLM-5.2": f"zai-org/GLM-5.2:{route}"}
 
 
 def test_huggingface_runtime_rejects_policy_suffix(tmp_path) -> None:

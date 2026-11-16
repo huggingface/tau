@@ -214,11 +214,14 @@ filter the returned IDs without accessing provider credentials or mutable
 session internals.
 
 `set_inference_provider(route)` lets provider-specific extensions select a
-Hugging Face inference-provider route for the active session. A provider name
+Hugging Face inference-provider route for the active session. New sessions use
+the configured default (bundled as `openrouter`) without requiring discovery to
+advertise the route. Extensions do not need to reapply that default. A provider name
 sets `context.inference_provider_mode` to `"fixed"`, so Tau honors the explicit
 selection and does not automatically fail over. Passing `None` selects
-`"automatic"` mode: the next successful response becomes a sticky route that
-Tau may replace after an exhausted retryable pre-output failure. Other providers
+`"automatic"` mode, overriding the default for this model even after reload or
+resume: the next successful response becomes a sticky route that Tau may replace
+after an exhausted retryable pre-output failure. Other providers
 reject the operation. The current resolved route is available as
 `context.inference_provider`.
 

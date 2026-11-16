@@ -91,6 +91,7 @@ class ProviderCatalogEntry:
     thinking_parameter: ThinkingParameter | None = None
     removed_models: tuple[str, ...] = ()
     auth_methods: tuple[AuthMethod, ...] = ("api_key",)
+    default_inference_provider: str | None = None
 
 
 def _load_builtin_catalog() -> tuple[ProviderCatalogEntry, ...]:
