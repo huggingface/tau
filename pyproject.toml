@@ -33,6 +33,7 @@ tau = "tau_coding.cli:app"
 
 [dependency-groups]
 dev = [
+    "mcp==1.26.0",
     "mypy>=1.10",
     "pytest>=8.0",
     "ruff>=0.5",
