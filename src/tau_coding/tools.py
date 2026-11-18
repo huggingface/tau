@@ -1141,6 +1141,8 @@ def _validate_non_overlapping(spans: list[tuple[int, int, str]]) -> None:
 
 
 def _count_occurrences(content: str, text: str) -> int:
+    # Overlapping matches count too: "  }\n  }" occurs twice in three closing braces,
+    # and an edit that cannot say which one it means is not unique.
     count = 0
     start = 0
     while True:
@@ -1148,7 +1150,7 @@ def _count_occurrences(content: str, text: str) -> int:
         if index == -1:
             return count
         count += 1
-        start = index + len(text)
+        start = index + 1
 
 
 def _strip_bom(content: str) -> tuple[str, str]:
