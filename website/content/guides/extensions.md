@@ -866,6 +866,10 @@ See [`examples/extensions/`](https://github.com/huggingface/tau/tree/main/exampl
   `tool_call` hook.
 - **`sidebar_status.py`** — adds and updates a host-framed sidebar section.
 - **`prompt_section.py`** — appends a labeled multi-line system-prompt section.
+- **`keenable_search.py`** — opt-in `web_search` tool backed by
+  [Keenable](https://docs.keenable.ai): works without an API key
+  (rate limited per IP), uses `KEENABLE_API_KEY` when set, and returns
+  titles, URLs and snippets for citation. Only the query is sent.
 
 A larger, real-world extension lives in its own repository:
 [rian-dolphin/tau-subagents](https://github.com/rian-dolphin/tau-subagents)
