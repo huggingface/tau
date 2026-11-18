@@ -358,6 +358,27 @@ async def test_edit_tool_requires_unique_matches(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_edit_tool_counts_overlapping_matches(tmp_path: Path) -> None:
+    # "  }\n  }" matches at line 1 and at line 2 of three closing braces; the two
+    # matches overlap, so a non-overlapping count saw one and edited the first silently.
+    path = tmp_path / "file.txt"
+    original = "  }\n  }\n  }\n"
+    path.write_text(original)
+    tool = create_edit_tool(cwd=tmp_path)
+
+    with pytest.raises(ValueError, match="Found 2 occurrences"):
+        await tool.execute(
+            "test-call",
+            {
+                "path": "file.txt",
+                "edits": [{"oldText": "  }\n  }", "newText": "  }"}],
+            },
+        )
+
+    assert path.read_text() == original
+
+
+@pytest.mark.anyio
 async def test_bash_tool_tolerates_missing_required_display_description(tmp_path: Path) -> None:
     tool = create_bash_tool(cwd=tmp_path)
 
