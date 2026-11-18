@@ -14,7 +14,20 @@ tau [OPTIONS] [PROMPT] [COMMAND] [ARGS]
 - A positional `PROMPT` opens the TUI and submits it as the first turn.
 - `/local` is available in the TUI for registered local backends; print mode reports that setup is interactive-only.
 - `-p/--print` (or `--mode`) runs that same positional prompt in [print mode](/guides/print-mode/) instead of the TUI.
-- Put flags before the prompt — Tau treats everything after the last recognized flag as prompt text, including tokens that look like flags.
+- Put flags before the prompt — Tau treats everything after the last recognized flag as prompt text, including tokens that look like flags. The exact two-argument form `tau WORD --help` is a help-discovery exception, described below.
+
+Interactive startup requires both stdin and stdout to be terminals. Redirected
+input or output, including `/dev/null` and exhausted pipes, produces an actionable
+error before Tau prepares a session or starts the TUI. Use `--print` or
+`--mode text|json|transcript` for scripts and pipelines, or `--mode rpc` for JSONL
+RPC. Help and utility commands do not require a terminal.
+
+`tau --help` displays CLI help. The exact two-argument form `tau WORD --help`
+(such as `tau sessions --help` or `tau skills --help`) displays the same general
+help, not command-specific help. Unsupported words do not create subcommands:
+there is no `tau skills` CLI command. To submit those tokens as a literal prompt,
+quote them (`tau "skills --help"`) or use `tau -- skills --help`. Longer prompts
+and prompts following print-mode flags keep their literal help tokens.
 
 On TUI and text print-mode startup, Tau may show a non-blocking notice when a
 newer `tau-ai` release is available on PyPI. In the TUI, a cached result is the

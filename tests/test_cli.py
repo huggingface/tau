@@ -578,6 +578,7 @@ async def test_run_openai_tui_defers_due_update_check_to_the_app(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     deferred_checks: list[object] = []
+    monkeypatch.setattr(cli, "_require_interactive_terminal", lambda: None)
 
     async def fake_run_tui_app(**kwargs: object) -> None:
         deferred_checks.append(kwargs["deferred_startup_update_notice"])
@@ -676,6 +677,7 @@ async def test_run_openai_tui_combines_release_notes_and_update_notice(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls: list[tuple[str | None, tuple[str, ...], str | None, str | None]] = []
+    monkeypatch.setattr(cli, "_require_interactive_terminal", lambda: None)
 
     async def fake_run_tui_app(**kwargs: object) -> None:
         calls.append(  # type: ignore[arg-type]
@@ -1684,6 +1686,7 @@ def test_tui_surfaces_bad_model_as_clean_error(
     monkeypatch.setattr(cli, "load_provider_settings", lambda *args, **kwargs: settings)
     monkeypatch.setattr(tui_app, "load_provider_settings", lambda *args, **kwargs: settings)
 
+    monkeypatch.setattr(cli, "_require_interactive_terminal", lambda: None)
     result = CliRunner().invoke(app, ["--model", "llama", "--provider", "local"])
 
     # A clean BadParameter exits 2 (Typer's convention) and includes the

@@ -65,6 +65,7 @@ from tau_agent.tools import (
     ToolExecutor,
     ToolUpdateCallback,
 )
+from tau_agent.turns import AgentTurnContext, AgentTurnDecision, FinishTurn
 from tau_agent.types import JSONObject, JSONPrimitive, JSONValue
 
 __all__ = [name for name in globals() if not name.startswith("_")]

@@ -57,4 +57,19 @@ contract. Refresh cancellation is bounded and generation-safe, and a late
 operation cannot publish after retirement. Router mutations remain a later
 phase.
 
+The portable loop supports successful completion without cancellation. A
+nonempty tool batch whose final results all set `terminate=True` skips its
+automatic follow-up model call while preserving queued input. For host policy,
+`AgentHarnessConfig.finish_turn` (also `run_agent_loop(finish_turn=...)`) accepts a
+sync or async `(AgentTurnContext, CancellationToken | None)` callback. It runs
+after results are appended and before `turn_end`. Return `None` for normal
+scheduling, `AgentTurnDecision(action="end")` to end after `turn_end` before any
+further queue poll, or `AgentTurnDecision(action="continue")` to ensure one next
+request without duplicating a naturally scheduled request. Error/aborted and
+turn-limit exits remain terminal regardless of the decision. Callback failures
+propagate. `AgentTurnContext` exposes `message`, `tool_results`, `messages`, and
+`new_messages`; its transcript tuples are shallow snapshots, not mutable-list
+access or deep copies. See `website/content/internals/agent-loop.md` and
+`dev-notes/tool-turn-finalization.md` for examples and tests.
+
 In a Tau checkout, read `AGENTS.md`, `website/content/internals/architecture.md`, and relevant `dev-notes/architecture/` documents before broad architectural changes.

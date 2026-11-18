@@ -24,6 +24,7 @@ class AgentToolResult(WireModel):
     content: list[TextContent | ImageContent] = Field(default_factory=list)
     details: JSONValue = None
     added_tool_names: list[str] | None = None
+    # Runtime-only: skip automatic follow-up when every final batch result opts in.
     terminate: bool | None = None
 
     @model_validator(mode="before")

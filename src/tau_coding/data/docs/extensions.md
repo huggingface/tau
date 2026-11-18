@@ -204,6 +204,26 @@ or reloading a generation cancels its backend operations and discards late
 results. The built-in `/local` command opens the generic TUI host; print mode
 reports that the command is interactive-only.
 
+## Final submissions
+
+A custom tool may return `AgentToolResult(..., details=structured_result,
+terminate=True)` after successfully accepting a final submission. As in Pi, this
+skips the automatic follow-up model call only when every final result in the
+nonempty batch explicitly terminates. All sibling tools finish; mixed batches
+continue. Queued steering/follow-ups still receive responses. Progress flags do
+not count; final post-hook results do. `terminate` is runtime-only metadata, not
+part of the transcript's `ToolResultMessage`, and is not cancellation.
+
+There is no special built-in terminate tool. See the complete
+`examples/extensions/structured_output.py` example and
+`website/content/guides/extensions.md`. Invalid submissions raise a tool error
+rather than terminate. The example retains validated data in result `details`
+and writes no external file.
+
+Hosts needing a strict stop before queue polling can configure the portable
+harness's `finish_turn` callback instead; see `architecture.md` and
+`website/content/internals/agent-loop.md`. This is not an extension hook.
+
 ## Development checklist
 
 1. Read this document and the closest installed example under `examples/extensions/` completely before implementing.
