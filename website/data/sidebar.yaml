@@ -16,6 +16,8 @@
       path: /guides/sessions/
     - label: Providers & models
       path: /guides/providers-and-models/
+    - label: Local inference
+      path: /guides/local-inference/
     - label: Skills & prompt templates
       path: /guides/skills-and-prompts/
     - label: Project instructions
