@@ -637,7 +637,13 @@ def test_unrelated_prompts_do_not_resolve_file_entries(tmp_path: Path) -> None:
     def fail_source() -> tuple[FileReferenceEntry, ...]:
         raise AssertionError("unrelated prompt triggered a workspace scan")
 
-    for text in ("hello", "!cat README", "/model fak", "read @../shared/no"):
+    for text in (
+        "hello",
+        "!cat README",
+        "/model fak",
+        "read @../shared/no",
+        "read @~/Doc",
+    ):
         build_completion_state(
             text,
             command_registry=create_default_command_registry(),
@@ -646,6 +652,43 @@ def test_unrelated_prompts_do_not_resolve_file_entries(tmp_path: Path) -> None:
             cwd=tmp_path,
             file_entries=fail_source,
         )
+
+
+def test_file_reference_completion_expands_home_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    (home / "Documents").mkdir(parents=True)
+    (home / "Documents" / "notes.md").write_text("", encoding="utf-8")
+    (home / "Downloads").mkdir()
+    (home / ".ssh").mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+    root_state = build_completion_state(
+        "read @~",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+    directory_state = build_completion_state(
+        "read @~/Doc",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+    file_state = build_completion_state(
+        "read @~/Documents/no",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in root_state.items] == ["@~/"]
+    assert [item.display for item in directory_state.items] == ["@~/Documents/"]
+    assert [item.display for item in file_state.items] == ["@~/Documents/notes.md"]
 
 
 def test_file_reference_entries_preserve_symlink_aliases(tmp_path: Path) -> None:
@@ -681,6 +724,7 @@ def test_active_workspace_file_reference_detection() -> None:
     assert active_workspace_file_reference("read @app", len("read @app"))
     assert not active_workspace_file_reference("!cat @app", len("!cat @app"))
     assert not active_workspace_file_reference("read @../shared/no", len("read @../shared/no"))
+    assert not active_workspace_file_reference("read @~/Doc", len("read @~/Doc"))
     assert not active_workspace_file_reference("hello", len("hello"))
 
 

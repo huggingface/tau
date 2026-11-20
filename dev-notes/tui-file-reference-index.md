@@ -27,11 +27,11 @@ The new flow has two layers:
 `build_completion_state()` accepts an optional `file_entries` sequence or a
 callable that produces one. The TUI passes the index's `snapshot` method, so a
 workspace scan only happens when an active workspace `@` token actually needs
-entries; shell paths, `/model` arguments, and external `../` references never
-resolve it. Tests and other callers keep the pure on-demand walk. Completion
-semantics are unchanged: substring matching, the 50-item cap, directory
-ordering, ignored directories, and external `../` completion all behave as
-before.
+entries; shell paths, `/model` arguments, and external `../` or `~/` references
+never resolve it. Tests and other callers keep the pure on-demand walk.
+Completion semantics are unchanged: substring matching, the 50-item cap,
+directory ordering, ignored directories, external `../` completion, and
+home-relative `~/` completion all behave as before.
 
 ## Why it exists
 

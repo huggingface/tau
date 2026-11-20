@@ -284,30 +284,76 @@ def _external_file_reference_completions(
         target = cwd / prefix
         if not target.is_dir():
             return ()
-        display = f"@{prefix}/"
-        if display == existing:
+        return _prefix_completion(prefix=prefix, existing=existing, start=start, end=end)
+
+    if prefix == "~":
+        if not Path.home().is_dir():
             return ()
-        return (
-            CompletionItem(
-                display=display,
-                replacement=display,
-                start=start,
-                end=end,
-                kind=CompletionKind.FILE_REFERENCE,
-                description="File reference",
-            ),
+        return _prefix_completion(prefix=prefix, existing=existing, start=start, end=end)
+
+    if prefix.startswith("../"):
+        parent_text, name_prefix = prefix.rsplit("/", 1)
+        if any(part in IGNORED_FILE_COMPLETION_DIRS for part in Path(parent_text).parts):
+            return ()
+        parent_dir = cwd / parent_text
+        if not parent_dir.is_dir():
+            return ()
+        return _directory_file_reference_completions(
+            parent_dir=parent_dir,
+            parent_text=parent_text,
+            name_prefix=name_prefix,
+            existing=existing,
+            start=start,
+            end=end,
         )
 
-    if not prefix.startswith("../"):
-        return None
+    if prefix.startswith("~/"):
+        parent_text, name_prefix = prefix.rsplit("/", 1)
+        relative_parent = parent_text[2:] if parent_text.startswith("~/") else ""
+        if any(part in IGNORED_FILE_COMPLETION_DIRS for part in Path(relative_parent).parts):
+            return ()
+        parent_dir = Path.home() / relative_parent
+        if not parent_dir.is_dir():
+            return ()
+        return _directory_file_reference_completions(
+            parent_dir=parent_dir,
+            parent_text=parent_text,
+            name_prefix=name_prefix,
+            existing=existing,
+            start=start,
+            end=end,
+        )
 
-    parent_text, name_prefix = prefix.rsplit("/", 1)
-    if any(part in IGNORED_FILE_COMPLETION_DIRS for part in Path(parent_text).parts):
-        return ()
-    parent_dir = cwd / parent_text
-    if not parent_dir.is_dir():
-        return ()
+    return None
 
+
+def _prefix_completion(
+    *, prefix: str, existing: str, start: int, end: int
+) -> tuple[CompletionItem, ...]:
+    display = f"@{prefix}/"
+    if display == existing:
+        return ()
+    return (
+        CompletionItem(
+            display=display,
+            replacement=display,
+            start=start,
+            end=end,
+            kind=CompletionKind.FILE_REFERENCE,
+            description="File reference",
+        ),
+    )
+
+
+def _directory_file_reference_completions(
+    *,
+    parent_dir: Path,
+    parent_text: str,
+    name_prefix: str,
+    existing: str,
+    start: int,
+    end: int,
+) -> tuple[CompletionItem, ...]:
     try:
         children = sorted(parent_dir.iterdir(), key=lambda path: path.name.lower())
     except OSError:
@@ -360,6 +406,8 @@ def active_workspace_file_reference(text: str, cursor: int) -> bool:
     if token is None:
         return False
     prefix = text[token[0] + 1 : cursor]
+    if prefix == "~" or prefix.startswith("~/"):
+        return False
     return prefix != ".." and not prefix.startswith("../")
 
 
