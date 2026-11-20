@@ -183,7 +183,7 @@ def provider_context_tokens(message: AssistantMessage) -> int:
     return usage.total_tokens or (usage.input + usage.output + usage.cache_read + usage.cache_write)
 
 
-def _last_applicable_provider_usage(
+def last_applicable_provider_usage(
     messages: tuple[AgentMessage, ...],
 ) -> tuple[int, int] | None:
     """Find the latest valid usage block that still describes the active prefix.
@@ -220,7 +220,7 @@ def estimate_context_usage(
     are estimated. Without applicable usage, the whole request uses the character-based
     fallback.
     """
-    usage_info = _last_applicable_provider_usage(messages)
+    usage_info = last_applicable_provider_usage(messages)
     if usage_info is not None:
         usage_index, provider_tokens = usage_info
         trailing_messages = messages[usage_index + 1 :]

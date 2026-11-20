@@ -10,7 +10,7 @@ from inspect import isawaitable
 from typing import Literal
 
 from tau_agent.events import AgentEvent, MessageEndEvent, MessageStartEvent
-from tau_agent.loop import AfterToolCall, BeforeToolCall, run_agent_loop
+from tau_agent.loop import AfterToolCall, BeforeToolCall, TransformContext, run_agent_loop
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -48,6 +48,7 @@ class AgentHarnessConfig:
     before_tool_call: BeforeToolCall | None = None
     after_tool_call: AfterToolCall | None = None
     finish_turn: FinishTurn | None = None
+    transform_context: TransformContext | None = None
 
 
 class SimpleCancellationToken:
@@ -187,6 +188,7 @@ class AgentHarness:
                 get_steering_messages=self._drain_steering_messages,
                 get_follow_up_messages=self._drain_follow_up_messages,
                 before_tool_call=self._config.before_tool_call,
+                transform_context=self._config.transform_context,
                 after_tool_call=self._config.after_tool_call,
                 finish_turn=self._config.finish_turn,
             ):
