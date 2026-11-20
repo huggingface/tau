@@ -1,11 +1,17 @@
 from pathlib import Path
 
+import pytest
 from rich.console import Console
 
 from tau_coding.commands import create_default_command_registry
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.skills import Skill
-from tau_coding.tui.autocomplete import CompletionOption, build_completion_state
+from tau_coding.tui.autocomplete import (
+    CompletionOption,
+    FileReferenceEntry,
+    build_completion_state,
+    iter_file_reference_entries,
+)
 from tau_coding.tui.widgets import render_completion_suggestions
 
 
@@ -548,6 +554,56 @@ def test_external_file_reference_completion_skips_generated_directories(
     )
 
     assert [item.display for item in state.items] == ["@../notes.md"]
+
+
+def test_file_reference_entries_use_relative_scandir_paths(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("hello", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("pass", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "ignored.js").write_text("", encoding="utf-8")
+
+    entries = iter_file_reference_entries(tmp_path)
+
+    assert [(entry.relative, entry.is_dir) for entry in entries] == [
+        ("README.md", False),
+        ("src", True),
+        ("src/app.py", False),
+    ]
+
+
+def test_file_reference_entries_handle_symlink_loops(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    try:
+        (tmp_path / "src" / "loop").symlink_to(tmp_path, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable on this platform")
+
+    entries = iter_file_reference_entries(tmp_path)
+    relatives = [entry.relative for entry in entries]
+
+    assert relatives.count("src/loop") == 1
+    assert all(not relative.startswith("src/loop/") for relative in relatives)
+
+
+def test_file_reference_completion_uses_cached_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_walk(cwd: Path) -> tuple[FileReferenceEntry, ...]:
+        raise AssertionError("cached completions should not walk the filesystem")
+
+    monkeypatch.setattr("tau_coding.tui.autocomplete.iter_file_reference_entries", fail_walk)
+
+    state = build_completion_state(
+        "read @app",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+        file_entries=(FileReferenceEntry("src/app.py", "src/app.py", False),),
+    )
+
+    assert [item.display for item in state.items] == ["@src/app.py"]
 
 
 def test_file_reference_completion_works_in_custom_prompt_arguments(tmp_path: Path) -> None:
