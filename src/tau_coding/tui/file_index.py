@@ -8,7 +8,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
-from tau_coding.tui.autocomplete import FileReferenceEntry, iter_file_reference_entries
+from tau_coding.tui.autocomplete import FileReferenceEntry, scan_file_reference_entries
 
 DEFAULT_FILE_INDEX_TTL_SECONDS = 2.0
 
@@ -116,7 +116,10 @@ class FileReferenceIndex:
             self._refresh_finished.set()
 
     def _default_refresh(self) -> tuple[FileReferenceEntry, ...]:
-        return iter_file_reference_entries(self._cwd)
+        entries, complete = scan_file_reference_entries(self._cwd)
+        if not complete:
+            raise OSError("file-reference scan was incomplete")
+        return entries
 
     def _refresh(self, *, notify: bool = True) -> None:
         callback: Callable[[], None] | None = None

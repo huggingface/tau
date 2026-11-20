@@ -17,6 +17,7 @@ from tau_coding.tui.autocomplete import (
     build_completion_state,
     iter_file_reference_entries,
     preserve_completion_selection,
+    scan_file_reference_entries,
 )
 from tau_coding.tui.widgets import render_completion_suggestions
 
@@ -691,6 +692,135 @@ def test_file_reference_completion_expands_home_directory(
     assert [item.display for item in file_state.items] == ["@~/Documents/notes.md"]
 
 
+def test_file_reference_completion_escapes_workspace_spaces(tmp_path: Path) -> None:
+    (tmp_path / "src dir").mkdir()
+    (tmp_path / "src dir" / "my file.py").write_text("", encoding="utf-8")
+
+    state = build_completion_state(
+        "read @src",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert state.items[0].display == r"@src\ dir/"
+    applied = state.items[0].apply("read @src")
+    assert applied == r"read @src\ dir/"
+
+    child_state = build_completion_state(
+        applied,
+        cursor=state.items[0].cursor_after_apply(),
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in child_state.items] == [r"@src\ dir/my\ file.py"]
+
+
+def test_home_completion_escapes_spaces_and_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    spaced = home / "Application Support"
+    spaced.mkdir(parents=True)
+    (spaced / "settings.json").write_text("", encoding="utf-8")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+    state = build_completion_state(
+        "read @~/Application",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == [r"@~/Application\ Support/"]
+    applied = state.items[0].apply("read @~/Application")
+    assert applied == r"read @~/Application\ Support/"
+
+    child_state = build_completion_state(
+        applied,
+        cursor=state.items[0].cursor_after_apply(),
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in child_state.items] == [
+        r"@~/Application\ Support/settings.json"
+    ]
+
+
+def test_home_completion_normalizes_parent_and_duplicate_slashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home.parent / "sibling").mkdir()
+    (home / "usr" / "bin").mkdir(parents=True)
+    (home / "usr" / "bin" / "py.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+    parent_state = build_completion_state(
+        "read @~/..",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+    sibling_state = build_completion_state(
+        "read @~/../sib",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+    duplicate_slash_state = build_completion_state(
+        "read @~//usr/bin/py",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in parent_state.items] == ["@~/../"]
+    assert [item.display for item in sibling_state.items] == ["@~/../sibling/"]
+    assert [item.display for item in duplicate_slash_state.items] == ["@~/usr/bin/py.py"]
+
+
+def test_scan_reports_incomplete_when_subdirectory_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("", encoding="utf-8")
+    real_scandir = os.scandir
+
+    def fail_nested(path: str | os.PathLike[str]):
+        if Path(path) == tmp_path / "src":
+            raise PermissionError("denied")
+        return real_scandir(path)
+
+    monkeypatch.setattr("tau_coding.tui.autocomplete.os.scandir", fail_nested)
+
+    entries, complete = scan_file_reference_entries(tmp_path)
+    relatives = [entry.relative for entry in entries]
+
+    assert complete is False
+    assert "src" in relatives
+    assert "src/app.py" not in relatives
+
+
+def test_scan_reports_incomplete_for_missing_root(tmp_path: Path) -> None:
+    entries, complete = scan_file_reference_entries(tmp_path / "missing")
+
+    assert entries == ()
+    assert complete is False
+
+
 def test_file_reference_entries_preserve_symlink_aliases(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("", encoding="utf-8")
@@ -725,6 +855,9 @@ def test_active_workspace_file_reference_detection() -> None:
     assert not active_workspace_file_reference("!cat @app", len("!cat @app"))
     assert not active_workspace_file_reference("read @../shared/no", len("read @../shared/no"))
     assert not active_workspace_file_reference("read @~/Doc", len("read @~/Doc"))
+    assert not active_workspace_file_reference(
+        r"read @~/Application\ Support/", len(r"read @~/Application\ Support/")
+    )
     assert not active_workspace_file_reference("hello", len("hello"))
 
 

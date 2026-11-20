@@ -136,9 +136,12 @@ working directory. Dot-prefixed paths such as `.env` and `.agents/` are included
 
 Type `@` in the prompt to open file suggestions from the project tree, and insert
 a path like `@src/app.py`. Use an explicit parent-relative path such as `@../` to
-complete files and directories outside the project root. External completion
-follows only the path you type instead of scanning the surrounding filesystem.
-Dot-prefixed content such as `.env` and `.agents/` is included. Tau still skips
+complete files and directories outside the project root, or `@~/` to complete
+paths relative to your home directory. External completion follows only the path
+you type instead of scanning the surrounding filesystem. Paths containing spaces
+are inserted with backslash escapes, for example `@~/Application\ Support/`, so
+completion can continue inside them. Dot-prefixed content such as `.env` and
+`.agents/` is included. Tau still skips
 known metadata and generated directories such as `.git`, `.venv`, `node_modules`,
 `__pycache__`, `build`, and `dist`. Press **Tab** to insert the highlighted file;
 press **Enter** to submit exactly what you typed without inserting it. The same

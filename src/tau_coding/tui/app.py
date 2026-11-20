@@ -8003,10 +8003,12 @@ class TauTuiApp(App[None]):
             self.call_from_thread(self._rebuild_completions_after_file_index_refresh)
 
     def _rebuild_completions_after_file_index_refresh(self) -> None:
-        if not self.is_running or not self._completion_state.items:
+        if not self.is_running:
             return
         with suppress(NoMatches):
             prompt = self.query_one("#prompt", PromptInput)
+            if not active_workspace_file_reference(prompt.text, prompt.cursor_position):
+                return
             next_state = self._build_completion_state(prompt.text, cursor=prompt.cursor_position)
             self._completion_state = preserve_completion_selection(
                 self._completion_state, next_state

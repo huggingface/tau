@@ -2,6 +2,8 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from tau_coding.tui.autocomplete import FileReferenceEntry
 from tau_coding.tui.file_index import FileReferenceIndex
 
@@ -171,6 +173,33 @@ def test_file_index_preserves_last_snapshot_on_refresh_failure(tmp_path: Path) -
     # The failed refresh leaves the cache stale so the next request retries.
     assert index.snapshot() == (_entry("good.py"),)
     assert calls == 5
+    index.close()
+
+
+def test_file_index_preserves_snapshot_on_incomplete_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = [0.0]
+    calls = 0
+
+    def fake_scan(root: Path) -> tuple[tuple[FileReferenceEntry, ...], bool]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return (_entry("src/app.py"),), True
+        return (_entry("other.py"),), False
+
+    monkeypatch.setattr("tau_coding.tui.file_index.scan_file_reference_entries", fake_scan)
+    index = FileReferenceIndex(
+        tmp_path,
+        ttl=1.0,
+        start_thread=_run_inline,
+        clock=lambda: now[0],
+    )
+
+    assert index.snapshot() == (_entry("src/app.py"),)
+    now[0] = 2.0
+    assert index.snapshot() == (_entry("src/app.py"),)
     index.close()
 
 
