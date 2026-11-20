@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -43,6 +43,9 @@ class FileReferenceEntry:
     relative: str
     search: str
     is_dir: bool
+
+
+FileEntrySource = Sequence[FileReferenceEntry] | Callable[[], Sequence[FileReferenceEntry]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +121,19 @@ class CompletionState:
         )
 
 
+def preserve_completion_selection(
+    previous: CompletionState, current: CompletionState
+) -> CompletionState:
+    """Keep the previous selection when the rebuilt state still contains it."""
+    selected = previous.selected
+    if selected is None or not current.items:
+        return current
+    for index, item in enumerate(current.items):
+        if item.kind == selected.kind and item.display == selected.display:
+            return CompletionState(items=current.items, selected_index=index)
+    return current
+
+
 def build_completion_state(
     text: str,
     *,
@@ -132,12 +148,13 @@ def build_completion_state(
     session_ids: Sequence[str] = (),
     session_options: Sequence[CompletionOption] = (),
     cwd: Path | None = None,
-    file_entries: Sequence[FileReferenceEntry] | None = None,
+    file_entries: FileEntrySource | None = None,
 ) -> CompletionState:
     """Build autocomplete suggestions for the current prompt text.
 
-    ``file_entries`` lets the TUI pass a cached file-reference snapshot. When
-    omitted, workspace paths are walked on demand.
+    ``file_entries`` may be a cached snapshot or a callable that produces one.
+    Callables are only invoked when a workspace file reference needs them, so
+    unrelated prompt text never triggers a workspace scan.
     """
     cursor = len(text) if cursor is None else max(0, min(cursor, len(text)))
     if not text.startswith("/") or text.startswith("//"):
@@ -219,7 +236,7 @@ def _file_reference_completions(
     text: str,
     cursor: int,
     cwd: Path,
-    file_entries: Sequence[FileReferenceEntry] | None = None,
+    file_entries: FileEntrySource | None = None,
 ) -> tuple[CompletionItem, ...]:
     token = _active_file_reference_token(text, cursor)
     if token is None:
@@ -238,9 +255,8 @@ def _file_reference_completions(
         return external_completions
 
     needle = prefix.lower()
-    entries = file_entries if file_entries is not None else iter_file_reference_entries(cwd)
     suggestions: list[CompletionItem] = []
-    for entry in entries:
+    for entry in _resolve_file_entries(cwd, file_entries):
         if needle not in entry.search:
             continue
         display = f"@{entry.relative}{'/' if entry.is_dir else ''}"
@@ -332,32 +348,61 @@ def _active_file_reference_token(text: str, cursor: int) -> tuple[int, int] | No
     return at_index, end
 
 
+def active_workspace_file_reference(text: str, cursor: int) -> bool:
+    """Return whether the caret is in an @ token that needs the workspace index.
+
+    Shell command path completion and external ``../`` references read their
+    own directories, so they do not need a workspace snapshot.
+    """
+    if _shell_command_prefix_span(text) is not None:
+        return False
+    token = _active_file_reference_token(text, cursor)
+    if token is None:
+        return False
+    prefix = text[token[0] + 1 : cursor]
+    return prefix != ".." and not prefix.startswith("../")
+
+
+def _resolve_file_entries(
+    cwd: Path, file_entries: FileEntrySource | None
+) -> Sequence[FileReferenceEntry]:
+    if file_entries is None:
+        return iter_file_reference_entries(cwd)
+    if isinstance(file_entries, Sequence):
+        return file_entries
+    return file_entries()
+
+
 def iter_file_reference_entries(cwd: Path) -> tuple[FileReferenceEntry, ...]:
     """Walk ``cwd`` once and return relative file-reference entries.
 
     Uses ``os.scandir`` and tracks relative paths directly so the walker does
     not create a ``Path`` or call ``relative_to`` for every child. Symlinked
-    directories are followed, but inode cycle detection prevents loops.
+    directories are followed, and ancestor inodes are tracked per traversal
+    branch so cycles stop without hiding a real directory reachable through an
+    alias.
     """
     if not cwd.is_dir():
         return ()
 
     entries: list[FileReferenceEntry] = []
-    seen_dirs: set[tuple[int, int]] = set()
+    ancestors: tuple[tuple[int, int], ...] = ()
     try:
         root_stat = cwd.stat()
     except OSError:
         pass
     else:
-        seen_dirs.add((root_stat.st_dev, root_stat.st_ino))
+        ancestors = ((root_stat.st_dev, root_stat.st_ino),)
 
-    stack: list[tuple[str, str]] = [(str(cwd), "")]
+    stack: list[tuple[str, str, tuple[tuple[int, int], ...]]] = [(str(cwd), "", ancestors)]
     while stack:
-        directory, relative_dir = stack.pop()
+        directory, relative_dir, ancestors = stack.pop()
         try:
             with os.scandir(directory) as iterator:
                 children = sorted(iterator, key=lambda child: child.name.lower())
         except OSError:
+            if not relative_dir:
+                raise
             continue
         for child in children:
             if child.name in IGNORED_FILE_COMPLETION_DIRS:
@@ -381,10 +426,9 @@ def iter_file_reference_entries(cwd: Path) -> tuple[FileReferenceEntry, ...]:
             except OSError:
                 continue
             key = (child_stat.st_dev, child_stat.st_ino)
-            if key in seen_dirs:
+            if key in ancestors:
                 continue
-            seen_dirs.add(key)
-            stack.append((child.path, relative))
+            stack.append((child.path, relative, (*ancestors, key)))
     return tuple(entries)
 
 

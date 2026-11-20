@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -7,10 +8,15 @@ from tau_coding.commands import create_default_command_registry
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.skills import Skill
 from tau_coding.tui.autocomplete import (
+    CompletionItem,
+    CompletionKind,
     CompletionOption,
+    CompletionState,
     FileReferenceEntry,
+    active_workspace_file_reference,
     build_completion_state,
     iter_file_reference_entries,
+    preserve_completion_selection,
 )
 from tau_coding.tui.widgets import render_completion_suggestions
 
@@ -604,6 +610,100 @@ def test_file_reference_completion_uses_cached_entries(
     )
 
     assert [item.display for item in state.items] == ["@src/app.py"]
+
+
+def test_file_reference_completion_resolves_a_lazy_entry_source(tmp_path: Path) -> None:
+    calls = 0
+
+    def source() -> tuple[FileReferenceEntry, ...]:
+        nonlocal calls
+        calls += 1
+        return (FileReferenceEntry("src/app.py", "src/app.py", False),)
+
+    state = build_completion_state(
+        "read @app",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+        file_entries=source,
+    )
+
+    assert calls == 1
+    assert [item.display for item in state.items] == ["@src/app.py"]
+
+
+def test_unrelated_prompts_do_not_resolve_file_entries(tmp_path: Path) -> None:
+    def fail_source() -> tuple[FileReferenceEntry, ...]:
+        raise AssertionError("unrelated prompt triggered a workspace scan")
+
+    for text in ("hello", "!cat README", "/model fak", "read @../shared/no"):
+        build_completion_state(
+            text,
+            command_registry=create_default_command_registry(),
+            skills=(),
+            prompt_templates=(),
+            cwd=tmp_path,
+            file_entries=fail_source,
+        )
+
+
+def test_file_reference_entries_preserve_symlink_aliases(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("", encoding="utf-8")
+    try:
+        (tmp_path / "alias").symlink_to(tmp_path / "src", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable on this platform")
+
+    relatives = {entry.relative for entry in iter_file_reference_entries(tmp_path)}
+
+    assert {"src/app.py", "alias/app.py"} <= relatives
+
+
+def test_file_reference_entries_propagate_root_scan_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_scandir = os.scandir
+
+    def fail_root(path: str | os.PathLike[str]):
+        if Path(path) == tmp_path:
+            raise PermissionError("denied")
+        return real_scandir(path)
+
+    monkeypatch.setattr("tau_coding.tui.autocomplete.os.scandir", fail_root)
+
+    with pytest.raises(PermissionError):
+        iter_file_reference_entries(tmp_path)
+
+
+def test_active_workspace_file_reference_detection() -> None:
+    assert active_workspace_file_reference("read @app", len("read @app"))
+    assert not active_workspace_file_reference("!cat @app", len("!cat @app"))
+    assert not active_workspace_file_reference("read @../shared/no", len("read @../shared/no"))
+    assert not active_workspace_file_reference("hello", len("hello"))
+
+
+def test_preserve_completion_selection_keeps_matching_item() -> None:
+    first = CompletionItem("@app1.py", "@app1.py", 0, 3, CompletionKind.FILE_REFERENCE)
+    second = CompletionItem("@app2.py", "@app2.py", 0, 3, CompletionKind.FILE_REFERENCE)
+    previous = CompletionState(items=(first, second), selected_index=1)
+
+    preserved = preserve_completion_selection(previous, CompletionState(items=(second, first)))
+
+    assert preserved.selected == second
+
+
+def test_preserve_completion_selection_falls_back_when_item_is_missing() -> None:
+    previous = CompletionState(
+        items=(CompletionItem("@app2.py", "@app2.py", 0, 3, CompletionKind.FILE_REFERENCE),),
+        selected_index=0,
+    )
+    current = CompletionState(
+        items=(CompletionItem("@app1.py", "@app1.py", 0, 3, CompletionKind.FILE_REFERENCE),)
+    )
+
+    assert preserve_completion_selection(previous, current) is current
 
 
 def test_file_reference_completion_works_in_custom_prompt_arguments(tmp_path: Path) -> None:

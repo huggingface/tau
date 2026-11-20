@@ -121,6 +121,88 @@ def test_file_index_does_not_block_on_stale_refresh(tmp_path: Path) -> None:
     index.close()
 
 
+def test_file_index_refresh_forces_scan(tmp_path: Path) -> None:
+    calls = 0
+
+    def refresh() -> tuple[FileReferenceEntry, ...]:
+        nonlocal calls
+        calls += 1
+        return (_entry(f"file{calls}.py"),)
+
+    index = FileReferenceIndex(
+        tmp_path,
+        ttl=100.0,
+        refresh=refresh,
+        start_thread=_run_inline,
+    )
+    assert index.snapshot() == (_entry("file1.py"),)
+
+    index.refresh()
+
+    assert index.snapshot() == (_entry("file2.py"),)
+    assert calls == 2
+    index.close()
+
+
+def test_file_index_preserves_last_snapshot_on_refresh_failure(tmp_path: Path) -> None:
+    now = [0.0]
+    calls = 0
+
+    def refresh() -> tuple[FileReferenceEntry, ...]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return (_entry("good.py"),)
+        raise OSError("transient")
+
+    index = FileReferenceIndex(
+        tmp_path,
+        ttl=1.0,
+        refresh=refresh,
+        start_thread=_run_inline,
+        clock=lambda: now[0],
+    )
+
+    assert index.snapshot() == (_entry("good.py"),)
+    now[0] = 2.0
+    assert index.snapshot() == (_entry("good.py"),)
+    assert calls == 3
+
+    # The failed refresh leaves the cache stale so the next request retries.
+    assert index.snapshot() == (_entry("good.py"),)
+    assert calls == 5
+    index.close()
+
+
+def test_file_index_retries_scan_invalidated_mid_flight(tmp_path: Path) -> None:
+    now = [0.0]
+    calls = 0
+
+    def refresh() -> tuple[FileReferenceEntry, ...]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return (_entry("first.py"),)
+        if calls == 2:
+            index.invalidate()
+            return (_entry("discarded.py"),)
+        return (_entry("final.py"),)
+
+    index = FileReferenceIndex(
+        tmp_path,
+        ttl=1.0,
+        refresh=refresh,
+        start_thread=_run_inline,
+        clock=lambda: now[0],
+    )
+
+    assert index.snapshot() == (_entry("first.py"),)
+    now[0] = 2.0
+    assert index.snapshot() == (_entry("final.py"),)
+    assert calls == 3
+    index.close()
+
+
 def test_file_index_close_suppresses_callbacks(tmp_path: Path) -> None:
     refreshed = threading.Event()
 

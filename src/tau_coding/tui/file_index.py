@@ -91,6 +91,15 @@ class FileReferenceIndex:
         with self._lock:
             return self._entries
 
+    def refresh(self) -> None:
+        """Schedule a background refresh if one is not already running."""
+        with self._lock:
+            if self._closed or self._refreshing:
+                return
+            self._refreshing = True
+            self._refresh_finished.clear()
+        self._start_thread(self._refresh)
+
     def invalidate(self) -> None:
         """Mark the cached snapshot stale so the next request rebuilds it."""
         with self._lock:
@@ -110,31 +119,56 @@ class FileReferenceIndex:
         return iter_file_reference_entries(self._cwd)
 
     def _refresh(self, *, notify: bool = True) -> None:
-        with self._lock:
-            generation = self._generation
-            closed = self._closed
-        if closed:
+        callback: Callable[[], None] | None = None
+        for _attempt in range(2):
+            with self._lock:
+                generation = self._generation
+                if self._closed:
+                    self._refreshing = False
+                    self._refresh_finished.set()
+                    return
+
+            entries: tuple[FileReferenceEntry, ...] | None = None
+            for retry in range(2):
+                try:
+                    entries = self._refresh_entries()
+                except Exception:  # noqa: BLE001 - retry transient filesystem errors
+                    if retry == 0:
+                        time.sleep(0.05)
+                        continue
+                break
+
+            with self._lock:
+                if self._closed:
+                    self._refreshing = False
+                    self._refresh_finished.set()
+                    return
+                if generation != self._generation:
+                    # The workspace changed while scanning; retry with the
+                    # new generation instead of publishing stale results.
+                    continue
+                if entries is None:
+                    # Keep the last good snapshot and stay stale so the next
+                    # request retries instead of publishing an empty result.
+                    self._built_once = True
+                    self._built_at = None
+                    self._refreshing = False
+                    self._refresh_finished.set()
+                    return
+                self._entries = entries
+                self._built_at = self._clock()
+                self._built_once = True
+                self._refreshing = False
+                callback = self._on_refresh if notify else None
+                self._refresh_finished.set()
+                break
+        else:
+            # Repeated invalidation kept discarding scans. Release the slot so
+            # a later request can retry, and let the UI rebuild.
             with self._lock:
                 self._refreshing = False
+                callback = self._on_refresh if notify else None
                 self._refresh_finished.set()
-            return
-
-        try:
-            entries = self._refresh_entries()
-        except Exception:  # noqa: BLE001 - completion must never crash the worker
-            entries = ()
-
-        with self._lock:
-            if self._closed or generation != self._generation:
-                self._refreshing = False
-                self._refresh_finished.set()
-                return
-            self._entries = entries
-            self._built_at = self._clock()
-            self._built_once = True
-            self._refreshing = False
-            callback = self._on_refresh if notify else None
-            self._refresh_finished.set()
 
         if callback is not None:
             with suppress(Exception):

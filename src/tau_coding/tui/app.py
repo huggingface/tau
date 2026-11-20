@@ -157,7 +157,9 @@ from tau_coding.tui.autocomplete import (
     CompletionOption,
     CompletionState,
     FileReferenceEntry,
+    active_workspace_file_reference,
     build_completion_state,
+    preserve_completion_selection,
 )
 from tau_coding.tui.config import (
     TAU_DARK_THEME,
@@ -6237,6 +6239,8 @@ class TauTuiApp(App[None]):
                 theme=self.tui_settings.resolved_theme,
                 show_tool_results=True,
             )
+            self._file_index.invalidate()
+            self._refresh_file_index_for_active_reference()
             self._refresh_chrome()
             return
 
@@ -6255,6 +6259,8 @@ class TauTuiApp(App[None]):
             theme=self.tui_settings.resolved_theme,
             show_tool_results=True,
         )
+        self._file_index.invalidate()
+        self._refresh_file_index_for_active_reference()
         self._refresh_chrome()
 
     def _replace_tui_settings(self, *, theme: TuiThemeName) -> None:
@@ -6508,6 +6514,7 @@ class TauTuiApp(App[None]):
             return
         if isinstance(event, ToolExecutionEndEvent):
             self._file_index.invalidate()
+            self._refresh_file_index_for_active_reference()
             updated_item = self.state.find_tool_item(event.tool_call_id)
             if updated_item is not None:
                 expanded = self.state.show_tool_results or updated_item.always_show_tool_result
@@ -7954,7 +7961,6 @@ class TauTuiApp(App[None]):
 
     def _build_completion_state(self, text: str, *, cursor: int | None = None) -> CompletionState:
         registry = _session_command_registry(self.session)
-        file_entries = self._completion_file_entries() if "@" in text else None
         return build_completion_state(
             text,
             cursor=cursor,
@@ -7970,7 +7976,7 @@ class TauTuiApp(App[None]):
             theme_names=available_tui_theme_names(),
             session_options=(_session_options(self.session) if text.startswith("/resume ") else ()),
             cwd=self.session.cwd,
-            file_entries=file_entries,
+            file_entries=self._completion_file_entries,
         )
 
     def _completion_file_entries(self) -> tuple[FileReferenceEntry, ...]:
@@ -7983,6 +7989,13 @@ class TauTuiApp(App[None]):
             )
         return self._file_index.snapshot()
 
+    def _refresh_file_index_for_active_reference(self) -> None:
+        """Refresh the index when the prompt has an open workspace file search."""
+        with suppress(NoMatches):
+            prompt = self.query_one("#prompt", PromptInput)
+            if active_workspace_file_reference(prompt.text, prompt.cursor_position):
+                self._file_index.refresh()
+
     def _on_file_index_refresh(self) -> None:
         """Rebuild completions after a background file-index refresh."""
         # The app may be shutting down while a daemon refresh finishes.
@@ -7990,12 +8003,13 @@ class TauTuiApp(App[None]):
             self.call_from_thread(self._rebuild_completions_after_file_index_refresh)
 
     def _rebuild_completions_after_file_index_refresh(self) -> None:
-        if not self.is_running:
+        if not self.is_running or not self._completion_state.items:
             return
         with suppress(NoMatches):
             prompt = self.query_one("#prompt", PromptInput)
-            self._completion_state = self._build_completion_state(
-                prompt.text, cursor=prompt.cursor_position
+            next_state = self._build_completion_state(prompt.text, cursor=prompt.cursor_position)
+            self._completion_state = preserve_completion_selection(
+                self._completion_state, next_state
             )
             self._refresh_completions()
 
