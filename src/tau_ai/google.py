@@ -14,6 +14,7 @@ from tau_agent.messages import (
     TextContent,
     ThinkingContent,
     ToolResultMessage,
+    Usage,
     UserMessage,
     assistant_content,
     message_to_user,
@@ -230,6 +231,7 @@ class _GoogleStreamParser:
         self._thinking_parts: list[str] = []
         self._tool_calls: list[ToolCall] = []
         self._finish_reason: str | None = None
+        self._usage: Usage | None = None
 
     @property
     def has_finish_reason(self) -> bool:
@@ -241,6 +243,9 @@ class _GoogleStreamParser:
             self.fatal = True
             return [ProviderErrorEvent(message="Google returned an invalid JSON stream chunk")]
         events: list[ProviderEvent] = []
+        usage = _usage_from_google(chunk.get("usageMetadata"))
+        if usage is not None:
+            self._usage = usage
         candidates = chunk.get("candidates")
         if not isinstance(candidates, list) or not candidates:
             return []
@@ -293,12 +298,35 @@ class _GoogleStreamParser:
             content.insert(0, ThinkingContent(thinking="".join(self._thinking_parts)))
         return [
             ProviderResponseEndEvent(
-                message=AssistantMessage(content=content),
+                message=AssistantMessage(content=content, usage=self._usage or Usage()),
                 finish_reason=_normalize_finish_reason(
                     self._finish_reason, has_tool_calls=bool(self._tool_calls)
                 ),
             )
         ]
+
+
+def _usage_from_google(raw: object) -> Usage | None:
+    """Map Gemini ``usageMetadata`` onto Usage (cached tokens are part of the prompt count)."""
+    if not isinstance(raw, Mapping):
+        return None
+
+    def count(key: str) -> int:
+        value = raw.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+    prompt = count("promptTokenCount")
+    cached = min(count("cachedContentTokenCount"), prompt)
+    thoughts = count("thoughtsTokenCount")
+    usage = Usage(
+        input=prompt - cached,
+        # Gemini reports thinking tokens separately from candidatesTokenCount.
+        output=count("candidatesTokenCount") + thoughts,
+        cache_read=cached,
+        reasoning=thoughts or None,
+    )
+    usage.total_tokens = count("totalTokenCount") or (usage.input + usage.output + cached)
+    return usage
 
 
 def _build_google_payload(
