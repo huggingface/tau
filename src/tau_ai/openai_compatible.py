@@ -711,7 +711,7 @@ class _ToolCallBuilder:
 
     def add_delta(self, delta: Mapping[str, Any]) -> None:
         call_id = delta.get("id")
-        if isinstance(call_id, str):
+        if isinstance(call_id, str) and call_id:
             self.id = call_id
 
         function = delta.get("function")
@@ -719,7 +719,7 @@ class _ToolCallBuilder:
             return
 
         name = function.get("name")
-        if isinstance(name, str):
+        if isinstance(name, str) and name:
             self.name = name
 
         arguments = function.get("arguments")
