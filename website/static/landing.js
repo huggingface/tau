@@ -1,4 +1,38 @@
 (function(){
+  // ---- theme-aware canvas palette ----
+  // Colours live in main.css so the drawings follow the page theme.
+  var paletteTheme = null;
+  var COLORS = {};
+  var redrawers = [];
+  function readPalette(){
+    var theme = document.documentElement.getAttribute("data-theme") || "light";
+    if(theme === paletteTheme) return;
+    paletteTheme = theme;
+    var css = getComputedStyle(document.documentElement);
+    function color(name, fallback){
+      return (css.getPropertyValue(name) || "").trim() || fallback;
+    }
+    COLORS = {
+      ink: color("--canvas-ink", "#111111"),
+      ground: color("--canvas-ground", "#FDFCF8"),
+      blue: color("--canvas-blue", "#111111"),
+      red: color("--canvas-red", "#C2402A"),
+      soft: color("--canvas-soft", "#9A9A9A"),
+      grid: color("--canvas-grid", "#E2E2E2"),
+      guide: color("--canvas-guide", "rgba(0,0,0,.45)"),
+      wedge: color("--canvas-wedge", "rgba(0,0,0,.05)"),
+      redSoft: color("--canvas-red-soft", "rgba(194,64,42,.6)"),
+      glow: color("--canvas-glow", "rgba(0,0,0,0)"),
+      glowRed: color("--canvas-glow-red", "rgba(0,0,0,0)")
+    };
+    for(var i=0; i<redrawers.length; i++) redrawers[i]();
+  }
+  readPalette();
+  document.addEventListener("tau:themechange", readPalette);
+  if(window.matchMedia){
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readPalette);
+  }
+
   // ---- copy buttons ----
   function bindCopy(id){
     var b = document.getElementById(id);
@@ -16,11 +50,6 @@
   var canvas = document.getElementById("tauCanvas");
   if(!canvas) return;
   var ctx = canvas.getContext("2d");
-  var INK   = "#111111";
-  var BLUE  = "#111111";
-  var RED   = "#C2402A";
-  var SOFT  = "#9A9A9A";
-  var GRID  = "#E2E2E2";
   var TAU   = Math.PI * 2;
 
   var W = canvas.width, H = canvas.height, DPR = 1;
@@ -65,15 +94,15 @@
     var ey = cy - Math.sin(theta) * R;
 
     // --- baseline axis with arrow ---
-    ctx.strokeStyle = SOFT; ctx.lineWidth = 1;
+    ctx.strokeStyle = COLORS.soft; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(pad - 4, cy); ctx.lineTo(w - pad + 2, cy); ctx.stroke();
-    ctx.fillStyle = SOFT;
+    ctx.fillStyle = COLORS.soft;
     ctx.beginPath();
     ctx.moveTo(w - pad + 6, cy); ctx.lineTo(w - pad - 2, cy - 3.5);
     ctx.lineTo(w - pad - 2, cy + 3.5); ctx.closePath(); ctx.fill();
 
     // --- ghost of the full sine wave (the target) ---
-    ctx.strokeStyle = GRID; ctx.lineWidth = 1; ctx.setLineDash([2,4]);
+    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1; ctx.setLineDash([2,4]);
     ctx.beginPath();
     for(var g=0; g<=TAU; g+=0.05){
       var gx = waveX0 + (g/TAU) * waveW, gy = cy - Math.sin(g) * R;
@@ -88,30 +117,30 @@
       var tk = TICKS[k];
       var tx = waveX0 + (tk.t/TAU) * waveW;
       var passed = theta >= tk.t - 0.001;
-      ctx.strokeStyle = passed ? BLUE : GRID; ctx.lineWidth = 1;
+      ctx.strokeStyle = passed ? COLORS.blue : COLORS.grid; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(tx, cy-4); ctx.lineTo(tx, cy+4); ctx.stroke();
-      ctx.fillStyle = passed ? BLUE : SOFT;
+      ctx.fillStyle = passed ? COLORS.blue : COLORS.soft;
       ctx.fillText(tk.label, tx, cy + 8);
     }
 
     // --- unit circle ---
-    ctx.strokeStyle = GRID; ctx.lineWidth = 1.4;
+    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.stroke();
     // vertical diameter guide
-    ctx.strokeStyle = "rgba(0,0,0,.45)"; ctx.lineWidth = 1; ctx.setLineDash([2,3]);
+    ctx.strokeStyle = COLORS.guide; ctx.lineWidth = 1; ctx.setLineDash([2,3]);
     ctx.beginPath(); ctx.moveTo(cx, cy-R); ctx.lineTo(cx, cy+R); ctx.stroke(); ctx.setLineDash([]);
 
     // --- swept angle wedge + arc ---
-    ctx.fillStyle = "rgba(0,0,0,.05)";
+    ctx.fillStyle = COLORS.wedge;
     ctx.beginPath(); ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, R*0.42, 0, -theta, true); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = BLUE; ctx.lineWidth = 1.4;
+    ctx.strokeStyle = COLORS.blue; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.arc(cx, cy, R*0.42, 0, -theta, true); ctx.stroke();
 
     // --- traced sine wave so far (with soft glow) ---
     ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0)"; ctx.shadowBlur = 6;
-    ctx.strokeStyle = BLUE; ctx.lineWidth = 2.2; ctx.lineJoin = "round";
+    ctx.shadowColor = COLORS.glow; ctx.shadowBlur = 6;
+    ctx.strokeStyle = COLORS.blue; ctx.lineWidth = 2.2; ctx.lineJoin = "round";
     ctx.beginPath();
     for(var i=0; i<=theta; i+=0.02){
       var x = waveX0 + (i/TAU) * waveW;
@@ -122,32 +151,32 @@
     ctx.restore();
 
     // --- sweeping radius ---
-    ctx.strokeStyle = INK; ctx.lineWidth = 1.8;
+    ctx.strokeStyle = COLORS.ink; ctx.lineWidth = 1.8;
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(px, py); ctx.stroke();
 
     // --- height (sin) bar on circle ---
-    ctx.strokeStyle = "rgba(194,64,42,.6)"; ctx.lineWidth = 1.4;
+    ctx.strokeStyle = COLORS.redSoft; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.moveTo(px, cy); ctx.lineTo(px, py); ctx.stroke();
 
     // --- projection line linking circle point to wave point ---
-    ctx.strokeStyle = RED; ctx.lineWidth = 1; ctx.setLineDash([3,4]);
+    ctx.strokeStyle = COLORS.red; ctx.lineWidth = 1; ctx.setLineDash([3,4]);
     ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(ex, ey); ctx.stroke();
     ctx.setLineDash([]);
 
     // --- moving points (glow) ---
     ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0)"; ctx.shadowBlur = 8;
-    ctx.fillStyle = RED;
+    ctx.shadowColor = COLORS.glow; ctx.shadowBlur = 8;
+    ctx.fillStyle = COLORS.red;
     ctx.beginPath(); ctx.arc(px, py, 4.2, 0, TAU); ctx.fill();
     ctx.beginPath(); ctx.arc(ex, ey, 4.2, 0, TAU); ctx.fill();
     ctx.restore();
     // white pips
-    ctx.fillStyle = "#fff";
+    ctx.fillStyle = COLORS.ground;
     ctx.beginPath(); ctx.arc(px, py, 1.5, 0, TAU); ctx.fill();
     ctx.beginPath(); ctx.arc(ex, ey, 1.5, 0, TAU); ctx.fill();
 
     // centre dot
-    ctx.fillStyle = INK;
+    ctx.fillStyle = COLORS.ink;
     ctx.beginPath(); ctx.arc(cx, cy, 2.4, 0, TAU); ctx.fill();
 
     ctx.restore();
@@ -156,6 +185,7 @@
   }
 
   if(reduce){
+    redrawers.push(function(){ draw(TAU * 0.78); });
     draw(TAU * 0.78);
   } else {
     var theta = 0;
@@ -200,7 +230,12 @@
 
   function loop(cv, drawAt, period){
     if(!cv) return;
-    if(reduce){ cv.frame(function(ctx,w,h){ drawAt(ctx, w, h, TAU * 0.7); }); return; }
+    if(reduce){
+      var paint = function(){ cv.frame(function(ctx,w,h){ drawAt(ctx, w, h, TAU * 0.7); }); };
+      redrawers.push(paint);
+      paint();
+      return;
+    }
     var t = 0, sp = TAU / period;
     (function go(){
       t += sp; if(t > TAU) t = 0;
@@ -227,48 +262,48 @@
     var cx = contactX, cy = baseY - R;
 
     // ground line
-    ctx.strokeStyle = SOFT; ctx.lineWidth = 1;
+    ctx.strokeStyle = COLORS.soft; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(startX, baseY); ctx.lineTo(w - pad, baseY); ctx.stroke();
 
     // full track to tau*r with end tick + label
     var endX = startX + R * TAU;
-    ctx.strokeStyle = GRID; ctx.setLineDash([2,4]); ctx.lineWidth = 1;
+    ctx.strokeStyle = COLORS.grid; ctx.setLineDash([2,4]); ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(startX, baseY + 14); ctx.lineTo(endX, baseY + 14); ctx.stroke();
     ctx.setLineDash([]);
     [[startX,"0"],[endX,"τ·r"]].forEach(function(m){
-      ctx.strokeStyle = m[1]==="0" ? GRID : BLUE; ctx.lineWidth = 1;
+      ctx.strokeStyle = m[1]==="0" ? COLORS.grid : COLORS.blue; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(m[0], baseY + 9); ctx.lineTo(m[0], baseY + 19); ctx.stroke();
-      ctx.fillStyle = m[1]==="0" ? SOFT : BLUE;
+      ctx.fillStyle = m[1]==="0" ? COLORS.soft : COLORS.blue;
       ctx.font = "12px 'JetBrains Mono', monospace";
       ctx.textAlign = m[1]==="0" ? "left" : "right"; ctx.textBaseline = "top";
       ctx.fillText(m[1], m[0] + (m[1]==="0"?0:0), baseY + 22);
     });
 
     // unrolled portion of the edge (thick, coloured)
-    ctx.strokeStyle = BLUE; ctx.lineWidth = 3.4; ctx.lineCap = "round";
+    ctx.strokeStyle = COLORS.blue; ctx.lineWidth = 3.4; ctx.lineCap = "round";
     ctx.beginPath(); ctx.moveTo(startX, baseY); ctx.lineTo(contactX, baseY); ctx.stroke();
     ctx.lineCap = "butt";
 
     // the rolling circle
-    ctx.strokeStyle = GRID; ctx.lineWidth = 1.6;
+    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1.6;
     ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.stroke();
 
     // marked rim point (started at the contact point)
     var mx = cx - R * Math.sin(theta);
     var my = cy + R * Math.cos(theta);
-    ctx.strokeStyle = INK; ctx.lineWidth = 1.6;
+    ctx.strokeStyle = COLORS.ink; ctx.lineWidth = 1.6;
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(mx, my); ctx.stroke();
     // "r" label on the radius
-    ctx.fillStyle = INK; ctx.font = "italic 13px 'STIX Two Text', serif";
+    ctx.fillStyle = COLORS.ink; ctx.font = "italic 13px 'STIX Two Text', serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText("r", (cx + mx)/2 + 8, (cy + my)/2 - 8);
 
-    dot(ctx, cx, cy, 2.4, INK);
-    dot(ctx, mx, my, 4, RED, "rgba(0,0,0,0)");
-    dot(ctx, contactX, baseY, 4, RED, "rgba(0,0,0,0)");
+    dot(ctx, cx, cy, 2.4, COLORS.ink);
+    dot(ctx, mx, my, 4, COLORS.red, COLORS.glowRed);
+    dot(ctx, contactX, baseY, 4, COLORS.red, COLORS.glowRed);
 
     // readout
-    ctx.fillStyle = BLUE;
+    ctx.fillStyle = COLORS.blue;
     ctx.font = "13px 'JetBrains Mono', monospace";
     ctx.textAlign = "left"; ctx.textBaseline = "top";
     ctx.fillText("turns: " + (theta/TAU).toFixed(2) + "  ·  edge ≈ " + (theta).toFixed(2) + " r", startX, 38);
@@ -279,14 +314,14 @@
     var cx = w * 0.5, cy = h * 0.52, R = Math.min(w, h) * 0.34;
 
     // circle
-    ctx.strokeStyle = GRID; ctx.lineWidth = 1.6;
+    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1.6;
     ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.stroke();
 
     // swept wedge
-    ctx.fillStyle = "rgba(0,0,0,.05)";
+    ctx.fillStyle = COLORS.wedge;
     ctx.beginPath(); ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, R, 0, -theta, true); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = BLUE; ctx.lineWidth = 2;
+    ctx.strokeStyle = COLORS.blue; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(cx, cy, R, 0, -theta, true); ctx.stroke();
 
     // quarter markers with tau labels
@@ -297,7 +332,7 @@
       var ox = cx + Math.cos(a)*R, oy = cy - Math.sin(a)*R;
       var lx = cx + Math.cos(a)*(R+18), ly = cy - Math.sin(a)*(R+18);
       var passed = theta >= a - 0.001;
-      ctx.fillStyle = passed ? BLUE : SOFT;
+      ctx.fillStyle = passed ? COLORS.blue : COLORS.soft;
       ctx.beginPath(); ctx.arc(ox, oy, 2.6, 0, TAU); ctx.fill();
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(marks[i][1], lx, ly);
@@ -305,13 +340,13 @@
 
     // radius
     var px = cx + Math.cos(theta)*R, py = cy - Math.sin(theta)*R;
-    ctx.strokeStyle = INK; ctx.lineWidth = 1.8;
+    ctx.strokeStyle = COLORS.ink; ctx.lineWidth = 1.8;
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(px, py); ctx.stroke();
-    dot(ctx, cx, cy, 2.4, INK);
-    dot(ctx, px, py, 4, RED, "rgba(0,0,0,0)");
+    dot(ctx, cx, cy, 2.4, COLORS.ink);
+    dot(ctx, px, py, 4, COLORS.red, COLORS.glowRed);
 
     // centre readout
-    ctx.fillStyle = BLUE; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = COLORS.blue; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.font = "600 18px 'STIX Two Text', serif";
     ctx.fillText((theta/TAU).toFixed(2) + " of a turn", cx, cy + R + 40);
   }, 320);
@@ -321,43 +356,43 @@
     var cx = w * 0.5, cy = h * 0.5, R = Math.min(w, h) * 0.34;
 
     // axes
-    ctx.strokeStyle = GRID; ctx.lineWidth = 1;
+    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(cx - R - 24, cy); ctx.lineTo(cx + R + 24, cy); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(cx, cy + R + 24); ctx.lineTo(cx, cy - R - 24); ctx.stroke();
-    ctx.fillStyle = SOFT; ctx.font = "11px 'JetBrains Mono', monospace";
+    ctx.fillStyle = COLORS.soft; ctx.font = "11px 'JetBrains Mono', monospace";
     ctx.textAlign = "left"; ctx.textBaseline = "middle";
     ctx.fillText("Re", cx + R + 8, cy + 10);
     ctx.textAlign = "center"; ctx.fillText("Im", cx + 12, cy - R - 16);
 
     // unit circle
-    ctx.strokeStyle = GRID; ctx.lineWidth = 1.4;
+    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.stroke();
 
     // the landing point "1"
     var near = Math.min(theta, TAU - theta) < 0.18;
-    ctx.fillStyle = near ? BLUE : SOFT;
-    dot(ctx, cx + R, cy, near ? 5 : 3.2, near ? BLUE : SOFT, near ? "rgba(0,0,0,0)" : null);
+    ctx.fillStyle = near ? COLORS.blue : COLORS.soft;
+    dot(ctx, cx + R, cy, near ? 5 : 3.2, near ? COLORS.blue : COLORS.soft, near ? COLORS.glow : null);
     ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.font = "12px 'JetBrains Mono', monospace";
     ctx.fillText("1", cx + R, cy + 8);
 
     // rotating phasor e^{i theta}
     var px = cx + Math.cos(theta)*R, py = cy - Math.sin(theta)*R;
     // projections
-    ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
+    ctx.strokeStyle = COLORS.guide; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
     ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, cy); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(cx, py); ctx.stroke();
     ctx.setLineDash([]);
     // arc swept
-    ctx.strokeStyle = BLUE; ctx.lineWidth = 1.4;
+    ctx.strokeStyle = COLORS.blue; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.arc(cx, cy, R*0.32, 0, -theta, true); ctx.stroke();
 
-    ctx.strokeStyle = INK; ctx.lineWidth = 1.8;
+    ctx.strokeStyle = COLORS.ink; ctx.lineWidth = 1.8;
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(px, py); ctx.stroke();
-    dot(ctx, cx, cy, 2.4, INK);
-    dot(ctx, px, py, 4.2, RED, "rgba(0,0,0,0)");
+    dot(ctx, cx, cy, 2.4, COLORS.ink);
+    dot(ctx, px, py, 4.2, COLORS.red, COLORS.glowRed);
 
     // label
-    ctx.fillStyle = near ? BLUE : INK;
+    ctx.fillStyle = near ? COLORS.blue : COLORS.ink;
     ctx.font = "italic 14px 'STIX Two Text', serif";
     ctx.textAlign = "left"; ctx.textBaseline = "bottom";
     var lbl = near ? "e^{iτ} = 1" : "e^{iθ}";

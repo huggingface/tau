@@ -97,6 +97,29 @@ test("docs retain callouts, highlighting, navigation, and edit links", async () 
   assert.ok(why.includes("MathJax"));
 });
 
+test("dark mode initializes before paint and exposes a toggle", async () => {
+  const home = await readFile(path.join(dist, "index.html"), "utf8");
+  assert.match(home, /<meta name="theme-color"/);
+  assert.match(home, /tau-theme/);
+  assert.match(home, /id="themeToggle"/);
+  assert.match(home, /aria-label="Switch to dark mode"/);
+
+  const built = await files(dist);
+  const css = (
+    await Promise.all(
+      built
+        .filter((file) => file.endsWith(".css"))
+        .map((file) => readFile(file, "utf8")),
+    )
+  ).join("\n");
+  assert.match(css, /data-theme=(?:"dark"|dark)/);
+  assert.match(css, /--ground:\s*#151412/i);
+  assert.match(css, /--shiki-dark/);
+
+  assert.match(home, /tau:themechange/);
+  assert.match(home, /localStorage/);
+});
+
 test("callout plugin preserves inline content and supports default titles", () => {
   const tree = {
     children: [

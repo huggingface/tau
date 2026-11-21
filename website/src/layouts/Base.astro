@@ -28,6 +28,24 @@ const ogImage = new URL(image, Astro.site);
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#FDFCF8" />
+    <script is:inline>
+      (function () {
+        var theme;
+        try {
+          theme = localStorage.getItem("tau-theme");
+        } catch (e) {}
+        if (theme !== "light" && theme !== "dark") {
+          theme = window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        }
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.content = theme === "dark" ? "#151412" : "#FDFCF8";
+      })();
+    </script>
     <title>{pageTitle}</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
@@ -93,6 +111,9 @@ const ogImage = new URL(image, Astro.site);
     <Navbar />
     <main data-pagefind-body><slot /></main>
     <Footer />
+    <script>
+      import "../../assets/js/theme-toggle.js";
+    </script>
     <script>
       import "../../assets/js/nav-toggle.js";
     </script>
