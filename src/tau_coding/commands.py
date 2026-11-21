@@ -24,7 +24,6 @@ from tau_coding.system_prompt import (
     SystemPromptSource,
     format_system_prompt_inspection,
 )
-from tau_coding.thinking import normalize_thinking_level
 
 LOGIN_PROVIDER_ALIASES = {
     "anthropic-api": ("anthropic", "api-key"),
@@ -702,43 +701,6 @@ def _scoped_models_command(context: CommandContext) -> CommandResult:
     if context.args:
         return CommandResult(handled=True, message="Usage: /scoped-models")
     return CommandResult(handled=True, scoped_models_picker_requested=True)
-
-
-def _thinking_command(context: CommandContext) -> CommandResult:
-    session = context.session
-    available = tuple(session.available_thinking_levels)
-    if not context.args:
-        lines = _thinking_status_lines(session)
-        if available:
-            lines.append(f"Available modes: {', '.join(available)}")
-        else:
-            lines.insert(1, f"Current model: {session.provider_name}:{session.model}")
-        return CommandResult(handled=True, message="\n".join(lines))
-
-    if not available:
-        message = f"Thinking controls are unavailable for {session.provider_name}:{session.model}"
-        reason = _thinking_unavailable_reason(session)
-        if reason:
-            message = f"{message}: {reason}"
-        return CommandResult(
-            handled=True,
-            message=message,
-        )
-    try:
-        level = normalize_thinking_level(context.args)
-    except ValueError as exc:
-        return CommandResult(handled=True, message=str(exc))
-    if level not in available:
-        modes = ", ".join(available)
-        return CommandResult(
-            handled=True,
-            message=(
-                f"Thinking mode {level} is not available for "
-                f"{session.provider_name}:{session.model}\n"
-                f"Available modes: {modes}"
-            ),
-        )
-    return CommandResult(handled=True, thinking_level=level)
 
 
 def _thinking_status_lines(session: CommandSession) -> list[str]:

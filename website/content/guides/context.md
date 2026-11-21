@@ -114,13 +114,11 @@ At startup Tau picks a valid level for the selected model automatically: a
 remembered per-model choice wins, then `medium`, then the provider's own
 default, then the first level the model supports. For example, `kimi-code:k3`
 supports `low`, `high`, and `xhigh`; because `medium` is unavailable, it opens
-at its `xhigh` catalog default instead of failing with "Thinking mode medium is
-not available". Picking an unsupported level explicitly (via `/think` or the
-thinking picker) still shows an error listing the available modes.
+at its `xhigh` catalog default.
 
 You can also set the startup level from the command line with `--thinking`
 (`-t`), for example `tau -t high` or `tau -t max -p "explain this"`. The flag
 takes precedence over remembered and catalog defaults for that run but is not
 saved as a new default; requesting a level the selected model does not support
-exits with an error listing the available modes. Levels chosen interactively
-afterwards (via `/think` or Shift+Tab) persist as usual.
+exits with an error listing the available modes. In the TUI, use **Shift+Tab**
+to cycle through the levels the current model supports.
