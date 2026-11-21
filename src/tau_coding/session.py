@@ -2414,6 +2414,7 @@ class CodingSession:
             return False
 
         catalog_published = False
+        limits: RuntimeModelLimits | None = None
         try:
             cached_catalog = self._runtime_model_catalogs.get(provider_name)
             if provider_name == "openai-codex" and cached_catalog is not None:
@@ -2429,10 +2430,14 @@ class CodingSession:
                 catalog_published = True
                 if provider_name == "openai-codex":
                     self._persist_codex_model_catalog(provider, catalog)
+                    model = catalog.model(model_id)
+                    limits = model.limits if model is not None else None
             if isinstance(provider, ModelLimitsProvider):
-                limits = await provider.discover_model_limits(model_id)
-                if keep_refresh_key():
-                    self._runtime_model_limits = limits
+                live_limits = await provider.discover_model_limits(model_id)
+                if live_limits is not None:
+                    limits = live_limits
+            if keep_refresh_key():
+                self._runtime_model_limits = limits
         except asyncio.CancelledError:
             if self._runtime_model_limits_key is key:
                 self._invalidate_runtime_model_limits()

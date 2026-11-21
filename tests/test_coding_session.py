@@ -4420,6 +4420,60 @@ async def test_session_retries_limit_failure_after_catalog_discovery(tmp_path: P
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("limit_capability", ["catalog only", "no live limits", "live limits"])
+async def test_session_preserves_codex_catalog_limits_without_direct_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limit_capability: str
+) -> None:
+    monkeypatch.delenv("TAU_OFFLINE", raising=False)
+    catalog_limits = RuntimeModelLimits(context_window=400_000, auto_compact_token_limit=200_000)
+    live_limits = RuntimeModelLimits(context_window=300_000, auto_compact_token_limit=150_000)
+    catalog = RuntimeModelCatalog((RuntimeModel(id="fake", limits=catalog_limits),))
+    scripts = [
+        [
+            assistant_start(model="fake"),
+            assistant_done(message=AssistantMessage(content="Ready.")),
+        ]
+    ]
+
+    class CatalogOnlyProvider(FakeProvider):
+        async def discover_models(self) -> RuntimeModelCatalog:
+            return catalog
+
+    provider = (
+        CatalogOnlyProvider(scripts)
+        if limit_capability == "catalog only"
+        else ModelCatalogFakeProvider(
+            scripts,
+            catalog=catalog,
+            limits=live_limits if limit_capability == "live limits" else None,
+        )
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+        )
+    )
+    expected = live_limits if limit_capability == "live limits" else catalog_limits
+    try:
+        assert session.context_window_tokens == expected.context_window
+        assert session.auto_compact_token_threshold == expected.auto_compact_token_limit
+        assert session.context_window_source == "provider live catalog"
+
+        await _collect_session_events(session.prompt("Hello."))
+
+        assert session.context_window_tokens == expected.context_window
+        assert session.auto_compact_token_threshold == expected.auto_compact_token_limit
+        assert session.context_window_source == "provider live catalog"
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.anyio
 async def test_session_uses_cached_codex_model_inventory_before_live_refresh(
     tmp_path: Path,
 ) -> None:
