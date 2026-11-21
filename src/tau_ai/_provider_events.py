@@ -50,6 +50,9 @@ class ProviderThinkingDeltaEvent(BaseModel):
 
     type: Literal["thinking_delta"] = "thinking_delta"
     delta: str
+    # Set when the fragment opens a new provider thinking block, so adjacent
+    # blocks (each with its own signature) are not merged into one.
+    new_block: bool = False
 
 
 class ProviderToolCallEvent(BaseModel):

@@ -148,7 +148,7 @@ async def canonicalize_provider_stream(
             if independent_channels:
                 active_index = channel_indices.get("thinking")
                 active_kind = "thinking" if active_index is not None else None
-            if active_kind != "thinking":
+            if active_kind != "thinking" or event.new_block:
                 if not independent_channels:
                     async for end_event in _end_active_block(partial, active_index):
                         yield end_event
@@ -163,6 +163,8 @@ async def canonicalize_provider_stream(
             assert active_index is not None
             block = partial.content[active_index]
             assert isinstance(block, ThinkingContent)
+            if not event.delta:
+                continue
             block.thinking += event.delta
             yield ThinkingDeltaEvent(
                 content_index=active_index,
