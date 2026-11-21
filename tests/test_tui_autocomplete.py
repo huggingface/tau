@@ -390,7 +390,7 @@ def test_logout_argument_completion_uses_available_providers() -> None:
     assert [item.display for item in state.items] == ["openai", "openrouter"]
 
 
-def test_thinking_argument_completion_uses_available_modes() -> None:
+def test_unregistered_thinking_command_has_no_argument_completions() -> None:
     state = build_completion_state(
         "/thinking h",
         command_registry=create_default_command_registry(),

@@ -34,9 +34,8 @@ It returns `None` when the model has no configurable thinking levels (which
 disables the thinking parameter entirely).
 
 Both startup call sites now pass the resolved level instead of the raw global
-default. Explicit in-session choices (`/think xhigh`, the thinking picker, or
-cycling with Shift+Tab) still validate strictly and show an error listing the
-available modes — the fallback only applies to the implicit startup default.
+default. An explicit `--thinking` level is still validated against the selected
+model. In the TUI, Shift+Tab cycles through the model's supported levels.
 
 ## Mapping to Pi's design
 
