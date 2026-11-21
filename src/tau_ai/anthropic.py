@@ -216,8 +216,7 @@ class AnthropicProvider:
                         yield ProviderResponseStartEvent(model=model)
                         stream_error: dict[str, JSONValue] | None = None
                         content_parts: list[str] = []
-                        thinking_parts: list[str] = []
-                        thinking_signature: str | None = None
+                        thinking_blocks: dict[int, _AnthropicThinkingBuilder] = {}
                         tool_builders: dict[int, _AnthropicToolBuilder] = {}
                         finish_reason: str | None = None
                         usage: Usage | None = None
@@ -243,7 +242,19 @@ class AnthropicProvider:
                                     usage = _usage_from_message_start(message.get("usage"))
                             elif event_type == "content_block_start":
                                 block = chunk.get("content_block")
-                                if isinstance(block, Mapping) and block.get("type") == "tool_use":
+                                if isinstance(block, Mapping) and block.get("type") == (
+                                    "redacted_thinking"
+                                ):
+                                    # Redacted thinking is encrypted and must be sent back
+                                    # unchanged, so keep its opaque data for replay.
+                                    index = int(chunk.get("index", 0))
+                                    thinking_blocks[index] = _AnthropicThinkingBuilder(
+                                        signature=_string_or_empty(block.get("data")),
+                                        redacted=True,
+                                    )
+                                    emitted_content = True
+                                    yield ProviderThinkingDeltaEvent(delta="", new_block=True)
+                                elif isinstance(block, Mapping) and block.get("type") == "tool_use":
                                     index = int(chunk.get("index", 0))
                                     builder = tool_builders.setdefault(
                                         index, _AnthropicToolBuilder()
@@ -266,14 +277,22 @@ class AnthropicProvider:
                                     thinking = _string_or_empty(delta.get("thinking"))
                                     if thinking:
                                         emitted_content = True
-                                        thinking_parts.append(thinking)
-                                        yield ProviderThinkingDeltaEvent(delta=thinking)
+                                        index = int(chunk.get("index", 0))
+                                        new_block = index not in thinking_blocks
+                                        thinking_blocks.setdefault(
+                                            index, _AnthropicThinkingBuilder()
+                                        ).parts.append(thinking)
+                                        yield ProviderThinkingDeltaEvent(
+                                            delta=thinking, new_block=new_block
+                                        )
                                 elif delta_type == "signature_delta":
                                     signature = _string_or_empty(delta.get("signature"))
                                     if signature:
-                                        thinking_signature = (
-                                            f"{thinking_signature or ''}{signature}"
+                                        index = int(chunk.get("index", 0))
+                                        builder = thinking_blocks.setdefault(
+                                            index, _AnthropicThinkingBuilder()
                                         )
+                                        builder.signature = f"{builder.signature or ''}{signature}"
                                 elif delta_type == "input_json_delta":
                                     index = int(chunk.get("index", 0))
                                     builder = tool_builders.setdefault(
@@ -330,14 +349,9 @@ class AnthropicProvider:
                             yield ProviderToolCallEvent(tool_call=tool_call)
 
                         content = assistant_content("".join(content_parts), tool_calls)
-                        if thinking_parts:
-                            content.insert(
-                                0,
-                                ThinkingContent(
-                                    thinking="".join(thinking_parts),
-                                    thinking_signature=thinking_signature,
-                                ),
-                            )
+                        content[:0] = [
+                            builder.build() for _index, builder in sorted(thinking_blocks.items())
+                        ]
                         yield ProviderResponseEndEvent(
                             message=AssistantMessage(
                                 content=content,
@@ -407,6 +421,20 @@ def _anthropic_stream_error_details(event: Mapping[str, JSONValue]) -> tuple[str
 def _retryable_anthropic_stream_error(error_type: str) -> bool:
     """Return whether an Anthropic SSE error is transient and safe to retry."""
     return error_type.lower() in _TRANSIENT_ANTHROPIC_STREAM_ERROR_TYPES
+
+
+class _AnthropicThinkingBuilder:
+    def __init__(self, *, signature: str | None = None, redacted: bool = False) -> None:
+        self.parts: list[str] = []
+        self.signature = signature
+        self.redacted = redacted
+
+    def build(self) -> ThinkingContent:
+        return ThinkingContent(
+            thinking="".join(self.parts),
+            thinking_signature=self.signature,
+            redacted=self.redacted,
+        )
 
 
 class _AnthropicToolBuilder:
@@ -636,6 +664,12 @@ def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[
                 # an OpenAI/Google signature as an Anthropic thinking block makes
                 # an otherwise portable model switch fail validation.
                 if message.api != "anthropic-messages":
+                    continue
+                if block.redacted:
+                    if block.thinking_signature is not None:
+                        content.append(
+                            {"type": "redacted_thinking", "data": block.thinking_signature}
+                        )
                     continue
                 thinking: dict[str, JSONValue] = {
                     "type": "thinking",
