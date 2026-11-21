@@ -488,9 +488,11 @@ class _ChatStreamParser:
         self._tool_call_builders: dict[int, _ToolCallBuilder] = {}
         self._finish_reason: str | None = None
         self._usage: Usage | None = None
+        self._saw_done = False
 
     def feed(self, event: str) -> tuple[list[ProviderEvent], bool]:
         if event == "[DONE]":
+            self._saw_done = True
             return [], True
 
         chunk = _loads_object(event)
@@ -544,6 +546,10 @@ class _ChatStreamParser:
         return events, False
 
     def finalize(self) -> list[ProviderEvent]:
+        # Some providers omit [DONE] but still send finish_reason; a stream with
+        # neither was cut off and must not be reported as a clean stop.
+        if self._finish_reason is None and not self._saw_done:
+            return [ProviderErrorEvent(message="Chat stream ended without finish_reason")]
         tool_calls = [
             builder.build(index) for index, builder in sorted(self._tool_call_builders.items())
         ]
@@ -583,6 +589,7 @@ class _ResponsesStreamParser:
         self._tool_call_builders: dict[str, _ResponsesToolCallBuilder] = {}
         self._status: str | None = None
         self._usage: Usage | None = None
+        self._completed = False
 
     def feed(self, event: str) -> tuple[list[ProviderEvent], bool]:
         # The Responses API has no [DONE] sentinel; it ends with a terminal
@@ -653,6 +660,7 @@ class _ResponsesStreamParser:
             )
 
         elif chunk_type in ("response.completed", "response.incomplete"):
+            self._completed = True
             self._status = _responses_finish_reason(chunk)
             self._usage = _usage_from_responses_event(chunk) or self._usage
             return [], True
@@ -670,6 +678,8 @@ class _ResponsesStreamParser:
         return [], False
 
     def finalize(self) -> list[ProviderEvent]:
+        if not self._completed:
+            return [ProviderErrorEvent(message="Responses stream ended without response.completed")]
         tool_calls = [
             builder.build(index)
             for index, builder in enumerate(_ordered_builders(self._tool_call_builders))
