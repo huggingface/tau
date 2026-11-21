@@ -328,10 +328,12 @@ def create_read_tool_definition(
 
         text = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         all_lines = text.split("\n")
+        # A trailing newline ends the last line; it does not start a new one.
+        total_lines = len(_split_lines_for_counting(text))
         start_line = 0 if offset is None or offset == 0 else offset - 1
-        if start_line >= len(all_lines):
+        if start_line > 0 and start_line >= total_lines:
             raise ToolInputError(
-                f"Offset {offset} is beyond end of file ({len(all_lines)} lines total)"
+                f"Offset {offset} is beyond end of file ({total_lines} lines total)"
             )
 
         user_limited_lines: int | None = None
@@ -359,17 +361,17 @@ def create_read_tool_definition(
             output = truncation.content
             if truncation.truncated_by == "lines":
                 output += (
-                    f"\n\n[Showing lines {start_display}-{end_display} of {len(all_lines)}. "
+                    f"\n\n[Showing lines {start_display}-{end_display} of {total_lines}. "
                     f"Use offset={next_offset} to continue.]"
                 )
             else:
                 output += (
-                    f"\n\n[Showing lines {start_display}-{end_display} of {len(all_lines)} "
+                    f"\n\n[Showing lines {start_display}-{end_display} of {total_lines} "
                     f"({format_size(DEFAULT_MAX_OUTPUT_BYTES)} limit). "
                     f"Use offset={next_offset} to continue.]"
                 )
-        elif user_limited_lines is not None and start_line + user_limited_lines < len(all_lines):
-            remaining = len(all_lines) - (start_line + user_limited_lines)
+        elif user_limited_lines is not None and start_line + user_limited_lines < total_lines:
+            remaining = total_lines - (start_line + user_limited_lines)
             next_offset = start_line + user_limited_lines + 1
             output = (
                 f"{truncation.content}\n\n[{remaining} more lines in file. "

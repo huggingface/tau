@@ -95,7 +95,7 @@ async def test_read_tool_reads_file_with_offset_and_limit(tmp_path: Path) -> Non
     result = await tool.execute("test-call", {"path": "notes.txt", "offset": 2, "limit": 1})
 
     assert result.text
-    assert result.text == "two\n\n[2 more lines in file. Use offset=3 to continue.]"
+    assert result.text == "two\n\n[1 more lines in file. Use offset=3 to continue.]"
     assert result.details is not None
     assert result.details["path"] == str(path)
     assert isinstance(result.details["truncation"], dict)
@@ -285,7 +285,39 @@ async def test_read_tool_treats_zero_offset_as_start_of_file(tmp_path: Path) -> 
     result = await tool.execute("test-call", {"path": "notes.txt", "offset": 0, "limit": 1})
 
     assert result.text
-    assert result.text == "one\n\n[3 more lines in file. Use offset=2 to continue.]"
+    assert result.text == "one\n\n[2 more lines in file. Use offset=2 to continue.]"
+
+
+@pytest.mark.anyio
+async def test_read_tool_does_not_count_trailing_newline_as_a_line(tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("one\ntwo\nthree\n")
+    tool = create_read_tool(cwd=tmp_path)
+
+    result = await tool.execute("test-call", {"path": "notes.txt", "limit": 3})
+
+    assert result.text == "one\ntwo\nthree"
+    with pytest.raises(ToolInputError, match=r"Offset 4 is beyond end of file \(3 lines total\)"):
+        await tool.execute("test-call", {"path": "notes.txt", "offset": 4})
+
+
+@pytest.mark.anyio
+async def test_read_tool_reports_line_total_without_trailing_newline(tmp_path: Path) -> None:
+    (tmp_path / "long.txt").write_text("x\n" * 2500)
+    tool = create_read_tool(cwd=tmp_path)
+
+    result = await tool.execute("test-call", {"path": "long.txt"})
+
+    assert result.text.endswith("[Showing lines 1-2000 of 2500. Use offset=2001 to continue.]")
+
+
+@pytest.mark.anyio
+async def test_read_tool_reads_empty_file(tmp_path: Path) -> None:
+    (tmp_path / "empty.txt").write_text("")
+    tool = create_read_tool(cwd=tmp_path)
+
+    result = await tool.execute("test-call", {"path": "empty.txt", "offset": 1})
+
+    assert result.text == ""
 
 
 @pytest.mark.anyio
