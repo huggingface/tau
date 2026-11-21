@@ -866,6 +866,58 @@ See [`examples/extensions/`](https://github.com/huggingface/tau/tree/main/exampl
   `tool_call` hook.
 - **`sidebar_status.py`** — adds and updates a host-framed sidebar section.
 - **`prompt_section.py`** — appends a labeled multi-line system-prompt section.
+- **`parallel_search.py`** — opt-in public web search through Parallel Unified
+  MCP, with source URLs available to the agent (requires `mcp==1.26.0`).
+
+### Search public documentation with Parallel
+
+When a coding task needs an external documentation reference, the
+`parallel_search.py` extension adds a `parallel_search` tool to an ordinary Tau
+session. It uses the official Python MCP client to call only `web_search` at
+`https://mcp.parallel.ai/mcp`. See [Parallel MCP setup](https://docs.parallel.ai/integrations/mcp/quickstart)
+for the server's available tools and access limits. This example uses keyless,
+rate-limited access; it does not read a Parallel key or sign into an account.
+
+From a Tau checkout, with your usual model provider already configured:
+
+```bash
+uv run --with mcp==1.26.0 tau --no-extensions \
+  -e examples/extensions/parallel_search.py \
+  -p "Search the public Python documentation for asyncio TaskGroup. Explain when to use it and cite original source URLs."
+```
+
+Omit `-p` and the prompt to use the same extension interactively. The explicit
+`-e` path selects this extension even with directory discovery disabled by
+`--no-extensions`. Tau's built-in coding tools remain available. Without `-e`
+(or installing the extension), this example adds no tool and makes no requests.
+
+Only authorize public documentation, release-note, or source-reference queries.
+The tool sends its `objective` and one to three short `search_queries`; it does
+not automatically attach files or the conversation. Those arguments still leave
+your machine: do not include private code, credentials, or personal data. Search
+results are untrusted source material. The tool's prompt guidelines ask the
+agent to cite the original URLs returned by the server and acknowledge missing
+evidence. Citation quality still depends on the agent's answer.
+
+Calls pass through Tau's normal `tool_call` and `tool_result` hooks. A call has a
+45-second overall timeout and honors cancellation. Transport failures and MCP
+tool errors become ordinary tool errors; an empty response is reported as
+`No search results returned.` There is no automatic fallback to another service.
+
+To install the example for future runs, install its dependency in the same
+environment as Tau, then install the reviewed extension file. For a uv tool
+installation:
+
+```bash
+uv tool install --with mcp==1.26.0 tau-ai
+tau install ./examples/extensions/parallel_search.py
+```
+
+The repository tests load both the checkout and packaged copies through
+`ExtensionRuntime`, exercise MCP over an HTTP test double, and pass a returned
+source URL through `CodingSession` to print-mode output using a deterministic
+provider. Run them with `uv run pytest tests/test_parallel_search_extension.py`.
+These tests do not require a Parallel key or a live model service.
 
 A larger, real-world extension lives in its own repository:
 [rian-dolphin/tau-subagents](https://github.com/rian-dolphin/tau-subagents)
