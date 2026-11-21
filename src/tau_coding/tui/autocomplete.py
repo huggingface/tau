@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import os
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -28,6 +29,23 @@ IGNORED_FILE_COMPLETION_DIRS = frozenset(
     }
 )
 MAX_FILE_COMPLETIONS = 50
+
+
+@dataclass(frozen=True, slots=True)
+class FileReferenceEntry:
+    """One workspace path in a file-reference snapshot.
+
+    ``relative`` is the POSIX-style path shown in the completion, ``search``
+    is its pre-lowered form for case-insensitive matching, and ``is_dir``
+    controls the trailing slash.
+    """
+
+    relative: str
+    search: str
+    is_dir: bool
+
+
+FileEntrySource = Sequence[FileReferenceEntry] | Callable[[], Sequence[FileReferenceEntry]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +121,19 @@ class CompletionState:
         )
 
 
+def preserve_completion_selection(
+    previous: CompletionState, current: CompletionState
+) -> CompletionState:
+    """Keep the previous selection when the rebuilt state still contains it."""
+    selected = previous.selected
+    if selected is None or not current.items:
+        return current
+    for index, item in enumerate(current.items):
+        if item.kind == selected.kind and item.display == selected.display:
+            return CompletionState(items=current.items, selected_index=index)
+    return current
+
+
 def build_completion_state(
     text: str,
     *,
@@ -117,15 +148,28 @@ def build_completion_state(
     session_ids: Sequence[str] = (),
     session_options: Sequence[CompletionOption] = (),
     cwd: Path | None = None,
+    file_entries: FileEntrySource | None = None,
 ) -> CompletionState:
-    """Build autocomplete suggestions for the current prompt text."""
+    """Build autocomplete suggestions for the current prompt text.
+
+    ``file_entries`` may be a cached snapshot or a callable that produces one.
+    Callables are only invoked when a workspace file reference needs them, so
+    unrelated prompt text never triggers a workspace scan.
+    """
     cursor = len(text) if cursor is None else max(0, min(cursor, len(text)))
     if not text.startswith("/") or text.startswith("//"):
         if cwd is not None:
             shell_completions = _shell_path_completions(text=text, cursor=cursor, cwd=cwd)
             if shell_completions is not None:
                 return CompletionState(shell_completions)
-            return CompletionState(_file_reference_completions(text=text, cursor=cursor, cwd=cwd))
+            return CompletionState(
+                _file_reference_completions(
+                    text=text,
+                    cursor=cursor,
+                    cwd=cwd,
+                    file_entries=file_entries,
+                )
+            )
         return CompletionState()
 
     token_end = _first_token_end(text)
@@ -136,7 +180,12 @@ def build_completion_state(
             # Skill arguments are prompt text, so @ file references stay available.
             if cwd is not None:
                 return CompletionState(
-                    _file_reference_completions(text=text, cursor=cursor, cwd=cwd)
+                    _file_reference_completions(
+                        text=text,
+                        cursor=cursor,
+                        cwd=cwd,
+                        file_entries=file_entries,
+                    )
                 )
             return CompletionState()
         return CompletionState(_skill_completions(token=token, token_end=token_end, skills=skills))
@@ -159,7 +208,14 @@ def build_completion_state(
 
     if has_argument_text and _matches_prompt_template_command(token, prompt_templates):
         if cwd is not None:
-            return CompletionState(_file_reference_completions(text=text, cursor=cursor, cwd=cwd))
+            return CompletionState(
+                _file_reference_completions(
+                    text=text,
+                    cursor=cursor,
+                    cwd=cwd,
+                    file_entries=file_entries,
+                )
+            )
         return CompletionState()
 
     if has_argument_text and _matches_registered_command(token, command_registry):
@@ -175,7 +231,13 @@ def build_completion_state(
     )
 
 
-def _file_reference_completions(*, text: str, cursor: int, cwd: Path) -> tuple[CompletionItem, ...]:
+def _file_reference_completions(
+    *,
+    text: str,
+    cursor: int,
+    cwd: Path,
+    file_entries: FileEntrySource | None = None,
+) -> tuple[CompletionItem, ...]:
     token = _active_file_reference_token(text, cursor)
     if token is None:
         return ()
@@ -192,12 +254,12 @@ def _file_reference_completions(*, text: str, cursor: int, cwd: Path) -> tuple[C
     if external_completions is not None:
         return external_completions
 
+    needle = _unescape_file_reference_path(prefix).lower()
     suggestions: list[CompletionItem] = []
-    for path in _iter_file_reference_paths(cwd):
-        relative = path.relative_to(cwd).as_posix()
-        if prefix.lower() not in relative.lower():
+    for entry in _resolve_file_entries(cwd, file_entries):
+        if needle not in entry.search:
             continue
-        display = f"@{relative}{'/' if path.is_dir() else ''}"
+        display = f"@{_escape_file_reference_path(entry.relative)}{'/' if entry.is_dir else ''}"
         if display == existing:
             continue
         suggestions.append(
@@ -215,37 +277,116 @@ def _file_reference_completions(*, text: str, cursor: int, cwd: Path) -> tuple[C
     return tuple(suggestions)
 
 
+def _unescape_file_reference_path(value: str) -> str:
+    result: list[str] = []
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char == "\\" and index + 1 < len(value):
+            result.append(value[index + 1])
+            index += 2
+            continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def _escape_file_reference_path(value: str) -> str:
+    return value.replace("\\", "\\\\").replace(" ", "\\ ").replace("\t", "\\\t")
+
+
+def _normalize_home_prefix(prefix: str) -> str:
+    if prefix == "~":
+        return prefix
+    rest = prefix[2:] if prefix.startswith("~/") else prefix[1:]
+    parts = [part for part in rest.split("/") if part not in ("", ".")]
+    normalized = "~/" + "/".join(parts)
+    if prefix.endswith("/") and not normalized.endswith("/"):
+        normalized += "/"
+    return normalized
+
+
 def _external_file_reference_completions(
     *, prefix: str, existing: str, start: int, end: int, cwd: Path
 ) -> tuple[CompletionItem, ...] | None:
-    if prefix == ".." or prefix.endswith("/.."):
-        target = cwd / prefix
-        if not target.is_dir():
+    raw_prefix = _unescape_file_reference_path(prefix)
+
+    if raw_prefix == "~" or raw_prefix.startswith("~/"):
+        home_prefix = _normalize_home_prefix(raw_prefix)
+        if home_prefix == "~":
+            if not Path.home().is_dir():
+                return ()
+            return _prefix_completion(prefix=home_prefix, existing=existing, start=start, end=end)
+        if home_prefix.endswith("/.."):
+            return _prefix_completion(prefix=home_prefix, existing=existing, start=start, end=end)
+        parent_text, name_prefix = home_prefix.rsplit("/", 1)
+        relative_parent = parent_text[2:] if parent_text.startswith("~/") else ""
+        if any(part in IGNORED_FILE_COMPLETION_DIRS for part in Path(relative_parent).parts):
             return ()
-        display = f"@{prefix}/"
-        if display == existing:
+        parent_dir = Path.home() / relative_parent
+        if not parent_dir.is_dir():
             return ()
-        return (
-            CompletionItem(
-                display=display,
-                replacement=display,
-                start=start,
-                end=end,
-                kind=CompletionKind.FILE_REFERENCE,
-                description="File reference",
-            ),
+        return _directory_file_reference_completions(
+            parent_dir=parent_dir,
+            parent_text=parent_text,
+            name_prefix=name_prefix,
+            existing=existing,
+            start=start,
+            end=end,
         )
 
-    if not prefix.startswith("../"):
-        return None
+    if raw_prefix == ".." or raw_prefix.endswith("/.."):
+        target = cwd / raw_prefix
+        if not target.is_dir():
+            return ()
+        return _prefix_completion(prefix=raw_prefix, existing=existing, start=start, end=end)
 
-    parent_text, name_prefix = prefix.rsplit("/", 1)
-    if any(part in IGNORED_FILE_COMPLETION_DIRS for part in Path(parent_text).parts):
-        return ()
-    parent_dir = cwd / parent_text
-    if not parent_dir.is_dir():
-        return ()
+    if raw_prefix.startswith("../"):
+        parent_text, name_prefix = raw_prefix.rsplit("/", 1)
+        if any(part in IGNORED_FILE_COMPLETION_DIRS for part in Path(parent_text).parts):
+            return ()
+        parent_dir = cwd / parent_text
+        if not parent_dir.is_dir():
+            return ()
+        return _directory_file_reference_completions(
+            parent_dir=parent_dir,
+            parent_text=parent_text,
+            name_prefix=name_prefix,
+            existing=existing,
+            start=start,
+            end=end,
+        )
 
+    return None
+
+
+def _prefix_completion(
+    *, prefix: str, existing: str, start: int, end: int
+) -> tuple[CompletionItem, ...]:
+    display = f"@{_escape_file_reference_path(prefix)}/"
+    if display == existing:
+        return ()
+    return (
+        CompletionItem(
+            display=display,
+            replacement=display,
+            start=start,
+            end=end,
+            kind=CompletionKind.FILE_REFERENCE,
+            description="File reference",
+        ),
+    )
+
+
+def _directory_file_reference_completions(
+    *,
+    parent_dir: Path,
+    parent_text: str,
+    name_prefix: str,
+    existing: str,
+    start: int,
+    end: int,
+) -> tuple[CompletionItem, ...]:
     try:
         children = sorted(parent_dir.iterdir(), key=lambda path: path.name.lower())
     except OSError:
@@ -257,7 +398,10 @@ def _external_file_reference_completions(
             continue
         if not child.name.lower().startswith(name_prefix.lower()):
             continue
-        display = f"@{parent_text}/{child.name}{'/' if child.is_dir() else ''}"
+        display = (
+            f"@{_escape_file_reference_path(f'{parent_text}/{child.name}')}"
+            f"{'/' if child.is_dir() else ''}"
+        )
         if display == existing:
             continue
         suggestions.append(
@@ -275,35 +419,138 @@ def _external_file_reference_completions(
     return tuple(suggestions)
 
 
+def _is_escaped(text: str, index: int) -> bool:
+    backslashes = 0
+    index -= 1
+    while index >= 0 and text[index] == "\\":
+        backslashes += 1
+        index -= 1
+    return backslashes % 2 == 1
+
+
+def _active_token_start(text: str, cursor: int) -> int:
+    index = cursor - 1
+    while index >= 0:
+        if text[index].isspace() and not _is_escaped(text, index):
+            return index + 1
+        index -= 1
+    return 0
+
+
 def _active_file_reference_token(text: str, cursor: int) -> tuple[int, int] | None:
-    token_start = max(text.rfind(" ", 0, cursor), text.rfind("\n", 0, cursor)) + 1
+    token_start = _active_token_start(text, cursor)
     at_index = text.rfind("@", token_start, cursor)
     if at_index == -1:
         return None
     end = cursor
-    while end < len(text) and not text[end].isspace():
+    while end < len(text):
+        char = text[end]
+        if char == "\\":
+            end += 2
+            continue
+        if char.isspace():
+            break
         end += 1
-    return at_index, end
+    return at_index, min(end, len(text))
 
 
-def _iter_file_reference_paths(cwd: Path) -> tuple[Path, ...]:
-    if not cwd.exists() or not cwd.is_dir():
-        return ()
-    paths: list[Path] = []
-    stack = [cwd]
+def active_workspace_file_reference(text: str, cursor: int) -> bool:
+    """Return whether the caret is in an @ token that needs the workspace index.
+
+    Shell command path completion and external ``../`` or ``~/`` references
+    read their own directories, so they do not need a workspace snapshot.
+    """
+    if _shell_command_prefix_span(text) is not None:
+        return False
+    token = _active_file_reference_token(text, cursor)
+    if token is None:
+        return False
+    prefix = _unescape_file_reference_path(text[token[0] + 1 : cursor])
+    if prefix == "~" or prefix.startswith("~/"):
+        return False
+    return prefix != ".." and not prefix.startswith("../")
+
+
+def _resolve_file_entries(
+    cwd: Path, file_entries: FileEntrySource | None
+) -> Sequence[FileReferenceEntry]:
+    if file_entries is None:
+        return iter_file_reference_entries(cwd)
+    if isinstance(file_entries, Sequence):
+        return file_entries
+    return file_entries()
+
+
+def scan_file_reference_entries(
+    cwd: Path,
+) -> tuple[tuple[FileReferenceEntry, ...], bool]:
+    """Walk ``cwd`` once and report whether every directory was readable.
+
+    Uses ``os.scandir`` and tracks relative paths directly so the walker does
+    not create a ``Path`` or call ``relative_to`` for every child. Symlinked
+    directories are followed, and ancestor inodes are tracked per traversal
+    branch so cycles stop without hiding a real directory reachable through an
+    alias. A missing root or an unreadable nested directory returns
+    ``complete=False`` so callers can keep their previous snapshot.
+    """
+    if not cwd.is_dir():
+        return (), False
+
+    entries: list[FileReferenceEntry] = []
+    complete = True
+    ancestors: tuple[tuple[int, int], ...] = ()
+    try:
+        root_stat = cwd.stat()
+    except OSError:
+        pass
+    else:
+        ancestors = ((root_stat.st_dev, root_stat.st_ino),)
+
+    stack: list[tuple[str, str, tuple[tuple[int, int], ...]]] = [(str(cwd), "", ancestors)]
     while stack:
-        directory = stack.pop()
+        directory, relative_dir, ancestors = stack.pop()
         try:
-            children = sorted(directory.iterdir(), key=lambda path: path.name.lower())
+            with os.scandir(directory) as iterator:
+                children = sorted(iterator, key=lambda child: child.name.lower())
         except OSError:
+            if not relative_dir:
+                raise
+            complete = False
             continue
         for child in children:
-            if _is_ignored_file_completion_path(child, cwd=cwd):
+            if child.name in IGNORED_FILE_COMPLETION_DIRS:
                 continue
-            paths.append(child)
-            if child.is_dir():
-                stack.append(child)
-    return tuple(paths)
+            relative = f"{relative_dir}/{child.name}" if relative_dir else child.name
+            try:
+                is_dir = child.is_dir(follow_symlinks=True)
+            except OSError:
+                complete = False
+                is_dir = False
+            entries.append(
+                FileReferenceEntry(
+                    relative=relative,
+                    search=relative.lower(),
+                    is_dir=is_dir,
+                )
+            )
+            if not is_dir:
+                continue
+            try:
+                child_stat = child.stat(follow_symlinks=True)
+            except OSError:
+                complete = False
+                continue
+            key = (child_stat.st_dev, child_stat.st_ino)
+            if key in ancestors:
+                continue
+            stack.append((child.path, relative, (*ancestors, key)))
+    return tuple(entries), complete
+
+
+def iter_file_reference_entries(cwd: Path) -> tuple[FileReferenceEntry, ...]:
+    """Return the readable entries from one workspace walk."""
+    entries, _complete = scan_file_reference_entries(cwd)
+    return entries
 
 
 def _is_ignored_file_completion_path(path: Path, *, cwd: Path) -> bool:

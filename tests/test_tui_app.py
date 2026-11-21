@@ -159,6 +159,7 @@ from tau_coding.tui.config import (
     TuiTheme,
     tui_settings_path,
 )
+from tau_coding.tui.file_index import FileReferenceIndex
 from tau_coding.tui.local_backends import LocalBackendScreen, LocalConfirmScreen
 from tau_coding.tui.state import ChatItem, TuiState
 from tau_coding.tui.terminal_notification import TerminalNotificationController
@@ -8092,6 +8093,33 @@ async def test_tui_app_accepts_file_reference_completion(tmp_path: Path) -> None
         await pilot.press("tab")
 
         assert prompt.value == "inspect @src/main.py"
+
+
+@pytest.mark.anyio
+async def test_tui_file_index_refresh_updates_initially_empty_search(tmp_path: Path) -> None:
+    session = FakeSession()
+    session.cwd = tmp_path
+    app = TauTuiApp(session)
+    app._file_index.close()
+    app._file_index = FileReferenceIndex(tmp_path, start_thread=lambda target: target())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "read @new"
+        await pilot.pause()
+        prompt.cursor_position = len("read @new")
+        app._completion_state = app._build_completion_state(
+            prompt.value, cursor=prompt.cursor_position
+        )
+        assert app._completion_state.items == ()
+
+        (tmp_path / "new.py").write_text("", encoding="utf-8")
+        app._file_index.invalidate()
+        app._file_index.refresh()
+        app._rebuild_completions_after_file_index_refresh()
+        await pilot.pause()
+
+        assert [item.display for item in app._completion_state.items] == ["@new.py"]
 
 
 @pytest.mark.anyio
