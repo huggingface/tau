@@ -323,6 +323,12 @@ class AnthropicProvider:
                                 return
                             continue
 
+                        if finish_reason is None:
+                            yield ProviderErrorEvent(
+                                message="Anthropic stream ended without stop_reason"
+                            )
+                            return
+
                         tool_calls = [
                             builder.build(index) for index, builder in sorted(tool_builders.items())
                         ]

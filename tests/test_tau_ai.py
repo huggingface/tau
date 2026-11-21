@@ -3977,3 +3977,55 @@ async def test_github_copilot_anthropic_sends_vision_header() -> None:
         )
 
     assert requests[0].headers["Copilot-Vision-Request"] == "true"
+
+
+async def _stream_openai_compatible(body: str, *, api: str | None = None) -> list[object]:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    options: dict[str, str] = {} if api is None else {"api": api}
+    config = OpenAICompatibleConfig(
+        api_key="test-key", base_url="https://example.test/v1", **options
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(config, client=client)
+        return await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="",
+                messages=[UserMessage(content="hi")],
+                tools=[],
+            )
+        )
+
+
+@pytest.mark.anyio
+async def test_chat_stream_errors_when_stream_ends_without_finish_reason() -> None:
+    events = await _stream_openai_compatible(
+        'data: {"choices":[{"index":0,"delta":{"content":"first half"}}]}\n\n'
+    )
+
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "Chat stream ended without finish_reason"
+
+
+@pytest.mark.anyio
+async def test_chat_stream_accepts_finish_reason_without_done_sentinel() -> None:
+    events = await _stream_openai_compatible(
+        'data: {"choices":[{"index":0,"delta":{"content":"ok"}}]}\n\n'
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+    )
+
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.text == "ok"
+
+
+@pytest.mark.anyio
+async def test_responses_api_errors_when_stream_ends_without_completed_event() -> None:
+    events = await _stream_openai_compatible(
+        'data: {"type":"response.output_text.delta","delta":"partial"}\n\n',
+        api="openai-responses",
+    )
+
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "Responses stream ended without response.completed"
