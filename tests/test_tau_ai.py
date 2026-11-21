@@ -699,6 +699,43 @@ async def test_google_provider_sends_system_instruction_at_top_level() -> None:
 
 
 @pytest.mark.anyio
+async def test_google_provider_parses_usage_metadata() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"candidates":[{"content":{"parts":[{"text":"hi"}]},'
+                '"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100,'
+                '"cachedContentTokenCount":40,"candidatesTokenCount":5,'
+                '"thoughtsTokenCount":7,"totalTokenCount":112}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="",
+                messages=[UserMessage(content="hi")],
+                tools=[],
+            )
+        )
+
+    usage = events[-1].message.usage
+    assert (usage.input, usage.output, usage.cache_read) == (60, 12, 40)
+    assert usage.reasoning == 7
+    assert usage.total_tokens == 112
+
+
+@pytest.mark.anyio
 async def test_google_provider_round_trips_thought_signature() -> None:
     requests: list[httpx.Request] = []
 
