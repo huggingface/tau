@@ -421,6 +421,50 @@ multi-line titles are ignored with a resource diagnostic. Registrations are
 source-owned, so failed setup, `/reload`, and generation retirement remove them
 along with the extension's other contributions.
 
+#### Final submissions and terminating tools
+
+A custom tool can submit the final answer and skip the automatic follow-up model
+response by returning `terminate=True`:
+
+```python
+return AgentToolResult(
+    content="Results submitted.",
+    details={"summary": "All checks passed", "actionItems": ["Ship it"]},
+    terminate=True,
+)
+```
+
+Validate and accept the submission before returning this flag. If submission
+fails, raise a tool error instead so the model can correct it. The caller can
+consume structured values from the result's `details` rather than parsing another
+assistant response. This avoids an unnecessary model call just to say "submitted."
+
+This follows Pi's **batch** rule: every final tool result in the assistant's batch
+must explicitly set `terminate=True`. All sibling tools still finish; mixed
+terminating/non-terminating batches continue normally. Only final results after
+tool-result hooks count, not progress updates. Queued steering or follow-up
+messages can still trigger another response. Normal result/message/turn/run events
+are emitted, with no synthetic cancellation. `terminate` is runtime-only metadata;
+it is not stored on the transcript's `ToolResultMessage`.
+
+There is no dedicated built-in `terminate` or `finish_turn` tool. Name your tool
+for its purpose, such as `submit_results`. See
+[`structured_output.py`](https://github.com/huggingface/tau/blob/main/examples/extensions/structured_output.py)
+for a complete example:
+
+```bash
+tau -e examples/extensions/structured_output.py
+```
+
+Ask Tau to "Summarize this repository and submit a structured output." The example
+returns `headline`, `summary`, and `actionItems` in `details` and renders them as
+ordinary tool-result text; it does not write an external file. Call it alone as
+the final action to avoid the mixed-batch continuation rule.
+
+For stricter host-controlled stopping, the portable harness also accepts a
+[`finish_turn` callback](/internals/agent-loop/#host-controlled-turn-finalization).
+That callback is a harness configuration API, not an extension registration API.
+
 ### Commands
 
 `register_command(name, handler, *, description, usage, aliases)` adds a
@@ -817,6 +861,7 @@ See [`examples/extensions/`](https://github.com/huggingface/tau/tree/main/exampl
 
 - **`ask_user_question.py`** — lets the agent ask one multiple-choice question through the host UI.
 - **`hello_tool.py`** — minimal custom tool.
+- **`structured_output.py`** — validated final submission with `terminate=True`.
 - **`permission_gate.py`** — blocks dangerous bash commands with the
   `tool_call` hook.
 - **`sidebar_status.py`** — adds and updates a host-framed sidebar section.

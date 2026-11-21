@@ -130,9 +130,14 @@ fallback. The model cache contains only parsed account/model metadata (no OAuth
 tokens), is scoped to the saved Codex account ID, and is never written to
 `catalog.toml`, `providers.json`, or the models.dev cache.
 
-Starting or resuming a live-only Codex model discovers the account inventory
-before validating the selection. This requires successful discovery; offline
-startup remains available for static models. If a later refresh omits the active
+Selecting a live-only Codex model through `/model` or Ctrl+P/Shift+Ctrl+P and
+sending a message saves its provider/model ID as the default in `providers.json`.
+This saves only the preference, not the account-specific inventory or metadata.
+Starting, resuming, or restoring that default validates it against an
+account-matched cache or authenticated discovery. Offline startup works for
+static models and live-only models in the matching account's cache. If the saved
+model is unavailable, Tau reports an error rather than silently starting a
+different model. If a later refresh omits the active
 model, Tau preserves its runtime metadata without adding it back to the picker.
 Resume restores the transcript's saved model selection. If an older session
 restores a stale selection, resume it and explicitly choose the intended model
@@ -376,6 +381,14 @@ Both pickers open from the current snapshot without waiting for provider setting
 to reload. A background refresh that omits the active model leaves its existing
 runtime working, but does not offer that model as a new selection. Even an empty
 catalog does not prevent the picker from opening when the active model is stale.
+
+A `/model` (or Ctrl+P/Shift+Ctrl+P) selection applies immediately to the session
+and is previewed in the status bar until your next message, when Tau commits it.
+Committed selections are also saved as the provider's **default model** in
+`~/.tau/providers.json`, so brand-new sessions start with the model you last
+chose. Launching with `tau -m <model>` overrides the default for that run only;
+it does not change the saved default. To edit defaults by hand, see
+[configuration](/reference/configuration/).
 
 Tau validates the selected model against the active provider's configured model
 list before creating or refreshing a runtime provider. This prevents accidental

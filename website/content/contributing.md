@@ -74,6 +74,12 @@ at the same custom domain. Code blocks on documentation pages include a
 keyboard-focusable **Copy** button. Copy success or clipboard failures are also
 announced to assistive technology.
 
+The site follows the operating system's light/dark preference on first visit; the
+navbar toggle lets readers override it and stores the choice in `localStorage`.
+Theme colours live in `website/assets/css/main.css` as custom properties, and
+canvas illustrations read the `--canvas-*` variables so they switch too. The
+inline script in `Base.astro` applies the theme before paint to avoid a flash.
+
 ## Documentation expectations
 
 Each substantial phase should leave beginner-friendly notes in `dev-notes/`

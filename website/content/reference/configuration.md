@@ -152,7 +152,9 @@ Tau separates provider metadata from runtime preferences:
 - `src/tau_coding/data/catalog.toml` ships the built-in provider/model catalog.
 - `~/.tau/catalog.toml` optionally adds personal providers or overlays built-ins.
 - `~/.tau/providers.json` stores runtime preferences such as the default provider,
-  default model, scoped models, headers, and timeout/retry settings.
+  default model, scoped models, headers, and timeout/retry settings. Tau updates
+  the default model automatically when a committed interactive `/model` selection
+  finishes its preview at the next message.
 
 The built-in llama.cpp backend stores only its normalized endpoint and safe
 server-reported model snapshot at `~/.tau/state/extensions/llama.cpp.json`.

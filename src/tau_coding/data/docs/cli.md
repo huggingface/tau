@@ -5,6 +5,19 @@ TUI. `tau` opens the TUI by default. Print mode is selected with `-p/--print` or
 `--mode` and uses the same staged session/provider preparation as the TUI. The
 CLI entry point is `tau_coding.cli:app`.
 
+Interactive startup requires terminal stdin and stdout. With redirected input
+or output (including `/dev/null` or an exhausted pipe), Tau exits with an error
+before preparing a session or starting Textual. Use `--print` or
+`--mode text|json|transcript` for scripts and pipelines, or `--mode rpc` for JSONL
+RPC. Utility commands and help do not require a terminal.
+
+`tau --help` shows CLI help. The exact two-argument form `tau WORD --help` also
+shows that same general help, including for an unsupported command word such as
+`skills`; it never starts the TUI. This is not command-specific help or a new
+`skills` subcommand. Quote literal prompt text (`tau "skills --help"`) or use
+`tau -- skills --help` to bypass this convenience. Longer prompts and prompts
+following print-mode flags retain their literal help tokens.
+
 ## Local inference
 
 `/local` and `/sidebar` are interactive-only. `/local` opens the provider-neutral
