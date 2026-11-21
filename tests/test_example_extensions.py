@@ -7,9 +7,12 @@ mocking the extension API, these load the real files through the real
 for how extension authors can test their own extensions.
 """
 
-from collections.abc import Sequence
+import json
+import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
+import httpx
 import pytest
 
 from tau_agent.messages import TextContent
@@ -224,3 +227,118 @@ async def test_permission_gate_ignores_other_tools(tmp_path: Path) -> None:
 
     assert result.text == "ran"
     assert len(executed) == 1
+
+
+# -- keenable_search.py ---------------------------------------------------------
+
+
+def _keenable_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> tuple[AgentTool, list[httpx.Request]]:
+    runtime = _runtime_with_examples(tmp_path, "keenable_search.py")
+    # Each load creates a fresh synthetic module; patch the newest one.
+    module = [
+        mod
+        for name, mod in sys.modules.items()
+        if name.startswith("tau_extension_") and hasattr(mod, "KEYLESS_URL")
+    ][-1]
+    seen: list[httpx.Request] = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return handler(request)
+
+    def factory(**kwargs: object) -> httpx.AsyncClient:
+        assert kwargs["follow_redirects"] is False
+        return httpx.AsyncClient(transport=httpx.MockTransport(record))
+
+    monkeypatch.setattr(module, "_client_factory", factory)
+    return runtime.compose_tools([])[0], seen
+
+
+async def test_keenable_search_keyless_sends_title_and_formats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("KEENABLE_API_KEY", raising=False)
+    payload = {
+        "results": [
+            {"title": "Tau", "url": "https://example.com/tau", "snippet": "A coding agent."},
+            {"title": "No URL", "snippet": "dropped"},
+            {"title": "", "url": "https://example.com/b", "description": "fallback"},
+        ]
+    }
+    tool, seen = _keenable_runtime(
+        tmp_path, monkeypatch, lambda r: httpx.Response(200, json=payload)
+    )
+
+    result = await tool.execute("test-call", {"query": "tau agent", "max_results": 50})
+
+    assert tool.name == "web_search"
+    request = seen[0]
+    assert str(request.url) == "https://api.keenable.ai/v1/search/public"
+    assert request.headers["X-Keenable-Title"] == "Tau"
+    assert "X-API-Key" not in request.headers
+    assert json.loads(request.content) == {"query": "tau agent", "max_results": 10}
+    assert result.text == (
+        "[1] Tau\nhttps://example.com/tau\nA coding agent.\n\n"
+        "[2] https://example.com/b\nhttps://example.com/b\nfallback"
+    )
+    assert result.details == {"results": ["https://example.com/tau", "https://example.com/b"]}
+
+
+async def test_keenable_search_uses_key_when_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KEENABLE_API_KEY", "secret")
+    tool, seen = _keenable_runtime(
+        tmp_path, monkeypatch, lambda r: httpx.Response(200, json={"results": []})
+    )
+
+    result = await tool.execute("test-call", {"query": "q"})
+
+    assert str(seen[0].url) == "https://api.keenable.ai/v1/search"
+    assert seen[0].headers["X-API-Key"] == "secret"
+    assert "X-Keenable-Title" not in seen[0].headers
+    assert result.text == "No web results for: q"
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (429, "Keenable rate limit reached. Try again later or set KEENABLE_API_KEY."),
+        (500, "Keenable search failed: HTTP 500."),
+        (307, "Keenable search failed: HTTP 307."),
+    ],
+)
+async def test_keenable_search_reports_http_errors_without_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int, expected: str
+) -> None:
+    monkeypatch.delenv("KEENABLE_API_KEY", raising=False)
+    tool, _ = _keenable_runtime(
+        tmp_path,
+        monkeypatch,
+        lambda r: httpx.Response(
+            status, text="raw upstream body", headers={"location": "https://other.example"}
+        ),
+    )
+
+    result = await tool.execute("test-call", {"query": "q"})
+
+    assert result.text == expected
+    assert result.details == {"error": expected}
+
+
+async def test_keenable_search_timeout_and_empty_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    tool, seen = _keenable_runtime(tmp_path, monkeypatch, boom)
+
+    assert (await tool.execute("test-call", {"query": "q"})).text == "Keenable search timed out."
+    empty = await tool.execute("test-call", {"query": "  "})
+    assert empty.text == "web_search needs a non-empty query."
+    assert len(seen) == 1
