@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.4.12",
+    "date": "2026-11-21",
+    "sections": {
+      "New": [
+        "Add a light/dark theme to the documentation website with OS preference detection, a persistent navbar toggle, dark code highlighting, and theme-aware illustrations."
+      ],
+      "Changed": [
+        "Add the local inference guide to the documentation sidebar."
+      ]
+    }
+  },
+  {
     "version": "0.4.11",
     "date": "2026-11-13",
     "sections": {
