@@ -49,6 +49,10 @@ AfterToolCall = Callable[
     [ToolCall, AgentToolResult, bool],
     Awaitable[tuple[AgentToolResult, bool]],
 ]
+TransformContext = Callable[
+    [list[AgentMessage], CancellationToken | None],
+    Awaitable[list[AgentMessage]] | list[AgentMessage],
+]
 
 
 async def run_agent_loop(
@@ -68,8 +72,23 @@ async def run_agent_loop(
     before_tool_call: BeforeToolCall | None = None,
     after_tool_call: AfterToolCall | None = None,
     finish_turn: FinishTurn | None = None,
+    transform_context: TransformContext | None = None,
 ) -> AsyncIterator[AgentEvent]:
-    """Run the provider/tool loop and emit Pi-compatible agent events."""
+    """Run the provider/tool loop and emit Pi-compatible agent events.
+
+    Args:
+        transform_context: Optional session-owned hook applied to the request
+            payload before every provider call. It receives a fresh copy of the
+            replayable context (never the loop's durable history) plus the
+            active cancellation token, and returns the replacement payload. A
+            returned awaitable is awaited. The hook may compact, reorder, or
+            annotate the request context, but mutating the input list has no
+            effect on durable history: the loop always continues from its own
+            message list. Exceptions from the hook propagate to the caller —
+            hooks that must not lose a turn (for example best-effort
+            compaction) are expected to catch their own failures and return
+            the original context.
+    """
     new_messages = list(prompts)
     if prompts:
         messages.extend(prompts)
@@ -143,11 +162,14 @@ async def run_agent_loop(
             # normal await cleanly, so consume the assistant sub-generator and
             # retain its final message through the terminal event.
             assistant = None
+            request_messages = await _apply_transform_context(
+                transform_context, _provider_context(messages), signal
+            )
             async for event in _assistant_events(
                 provider=provider,
                 model=model,
                 system=system,
-                messages=_provider_context(messages),
+                messages=request_messages,
                 tools=tools,
                 signal=signal,
                 session_id=session_id,
@@ -272,6 +294,25 @@ def _provider_context(messages: list[AgentMessage]) -> list[AgentMessage]:
         )
     )
     return list(repair_tool_history(replayable).messages)
+
+
+async def _apply_transform_context(
+    transform_context: TransformContext | None,
+    request_messages: list[AgentMessage],
+    signal: CancellationToken | None,
+) -> list[AgentMessage]:
+    """Apply the optional session transform to one request payload.
+
+    The hook always receives a fresh copy, so in-place mutation of its input
+    cannot reach durable loop history. Both plain and awaitable returns are
+    accepted, mirroring the harness's other session-owned hooks.
+    """
+    if transform_context is None:
+        return request_messages
+    transformed = transform_context(list(request_messages), signal)
+    if isawaitable(transformed):
+        return list(await transformed)
+    return list(transformed)
 
 
 async def _assistant_events(

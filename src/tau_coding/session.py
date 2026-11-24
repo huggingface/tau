@@ -22,7 +22,7 @@ from tau_agent.messages import (
     message_text,
     sum_usage,
 )
-from tau_agent.provider import ModelProvider
+from tau_agent.provider import CancellationToken, ModelProvider
 from tau_agent.provider_events import AssistantDoneEvent, AssistantErrorEvent, TextDeltaEvent
 from tau_agent.session import (
     BranchSummaryEntry,
@@ -60,8 +60,10 @@ from tau_coding.context_window import (
     ContextUsageEstimate,
     auto_compaction_threshold_for_context_window,
     build_compaction_summary_prompt,
+    estimate_context_tokens,
     estimate_context_usage,
     estimate_message_tokens,
+    last_applicable_provider_usage,
     summarize_messages_for_compaction,
 )
 from tau_coding.credentials import FileCredentialStore, credentials_path
@@ -335,6 +337,24 @@ class _PendingMessageWrite:
 
 
 @dataclass(frozen=True, slots=True)
+class _MidturnPlan:
+    """Keep-recent boundary for one mid-run payload compaction."""
+
+    first_compact_index: int
+    first_kept_index: int
+    messages_to_summarize: tuple[AgentMessage, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _MidturnSummary:
+    """Cached mid-run summary reused across requests of one over-threshold run."""
+
+    message: UserMessage
+    first_compact_index: int
+    first_kept_index: int
+
+
+@dataclass(frozen=True, slots=True)
 class CodingSessionConfig:
     """Configuration for a persistent coding session."""
 
@@ -488,6 +508,9 @@ class CodingSession:
             None
         )
         self._owned_providers: list[ClosableModelProvider] = []
+        # Mid-run request transform state (issue #805): one cached summary per
+        # over-threshold episode; never durable, see _transform_request_context.
+        self._midturn_summary: _MidturnSummary | None = None
         self._close_task: asyncio.Task[None] | None = None
         self._diagnostic_logger = AgentCallDiagnosticLogger.from_paths(self._resource_paths.paths)
         self._credential_store = FileCredentialStore(
@@ -757,6 +780,8 @@ class CodingSession:
             ),
             messages=state.messages,
         )
+        # The mid-turn transform needs the bound session (state, threshold,
+        # compaction machinery), which only exists after cls(...) below.
         if previous_runtime is not None:
             extension_runtime.set_ui_bridge(previous_runtime.ui)
         session = cls(
@@ -783,6 +808,7 @@ class CodingSession:
             # Ownership starts before any repair/discovery work so every
             # failure path has exactly one closer for the candidate.
             session._owned_providers.append(config.provider)  # type: ignore[arg-type]
+        harness.config.transform_context = session._transform_request_context
         if startup_catalog is not None and config.provider_name == "openai-codex":
             session._persist_codex_model_catalog(
                 config.provider,
@@ -3889,6 +3915,153 @@ class CodingSession:
                 exc=exc,
             )
             return False
+
+    async def _transform_request_context(
+        self,
+        messages: list[AgentMessage],
+        signal: CancellationToken | None,
+    ) -> list[AgentMessage]:
+        """Mid-run request transform: compact when the payload crosses the threshold.
+
+        Boundaries (`_try_auto_compact`) only check before a prompt and after a
+        turn, so a single run of tool calls can grow past the threshold
+        unchecked — and local OpenAI-compatible servers truncate silently
+        instead of raising a context-overflow error, so the overflow-recovery
+        path never fires (issue #805). This hook closes that gap: before every
+        provider request it measures the payload and, over threshold, replaces
+        the compacted prefix with a summary for that request.
+
+        Contract:
+        - Request-scoped, Pi-style: the summary replaces only the payload sent
+          for this request. Durable history is never rewritten here — the
+          session entries do not yet contain the running turn, so a durable
+          ``CompactionEntry`` cannot be written mid-run; the existing boundary
+          compaction materializes it after the turn as before.
+        - The summary is generated once per over-threshold episode and reused
+          for subsequent requests of the same run; the cache is dropped as
+          soon as a request measures under threshold again.
+        - At most one compaction per request. If the compacted context is
+          still over threshold it is sent as-is; the existing overflow
+          handling owns what happens next.
+        - The composed payload never splits an assistant tool call from its
+          results: the kept window's boundary walks back to the earliest
+          dangling call (see ``_plan_payload_compaction``). When no clean
+          boundary exists the original payload is kept.
+        - Cancellation is honoured: a cancelled run keeps its original context.
+        - Any failure is best-effort: the original context is returned and the
+          turn continues, matching boundary behaviour.
+        """
+        threshold = self.auto_compact_token_threshold
+        if not self._auto_compact_enabled or threshold is None or threshold <= 0:
+            return messages
+        if len(messages) < 2:
+            return messages
+        if signal is not None and signal.is_cancelled():
+            return messages
+        tokens = self._request_context_tokens(messages)
+        if tokens <= threshold:
+            self._midturn_summary = None
+            return messages
+        cached = self._midturn_summary
+        if cached is not None and cached.first_compact_index < len(messages):
+            composed = self._compose_summarized_request(messages, cached)
+            if composed is not None:
+                return composed
+            self._midturn_summary = None
+        plan = self._plan_payload_compaction(messages)
+        if plan is None:
+            return messages
+        try:
+            generated = await self._generate_compaction_summary(plan.messages_to_summarize)
+        except Exception:  # noqa: BLE001 - compaction is best effort mid-run
+            return messages
+        summary = UserMessage(content=f"Previous conversation summary:\n{generated.text}")
+        self._midturn_summary = _MidturnSummary(
+            message=summary,
+            first_compact_index=plan.first_compact_index,
+            first_kept_index=plan.first_kept_index,
+        )
+        return self._compose_summarized_request(messages, self._midturn_summary) or messages
+
+    def _plan_payload_compaction(self, messages: list[AgentMessage]) -> _MidturnPlan | None:
+        """Pick a keep-recent boundary on the request payload itself.
+
+        A run contains exactly one ``user`` message (the prompt that started
+        it), so unlike the session-row paths there is no user anchor to keep
+        to. The boundary is instead chosen so that no ``toolResult`` appears
+        in the kept window without its assistant tool call: whenever a kept
+        result's call would be summarized, the boundary walks back to include
+        that call, and the call's own ancestors with it, until the split is
+        clean. A boundary that would summarize nothing (index 0) means there
+        is no compactable prefix and the payload is sent unchanged.
+        """
+        keep_recent = DEFAULT_COMPACTION_KEEP_RECENT_TOKENS
+        if keep_recent <= 0 or len(messages) < 3:
+            return None
+        accumulated = 0
+        boundary: int | None = None
+        for index in range(len(messages) - 1, -1, -1):
+            accumulated += estimate_message_tokens(messages[index])
+            if accumulated >= keep_recent:
+                boundary = index
+                break
+        if boundary is None or boundary <= 0:
+            return None
+        call_indexes = {
+            call.id: index
+            for index, message in enumerate(messages)
+            if isinstance(message, AssistantMessage)
+            for call in message.tool_calls
+        }
+        changed = True
+        while changed and boundary > 0:
+            changed = False
+            for index in range(boundary, len(messages)):
+                message = messages[index]
+                tool_call_id = getattr(message, "tool_call_id", None)
+                if tool_call_id is not None and call_indexes.get(tool_call_id, index) < boundary:
+                    boundary = call_indexes[tool_call_id]
+                    changed = True
+                    break
+        if boundary <= 0:
+            return None
+        return _MidturnPlan(
+            first_compact_index=0,
+            first_kept_index=boundary,
+            messages_to_summarize=tuple(messages[:boundary]),
+        )
+
+    def _compose_summarized_request(
+        self,
+        messages: list[AgentMessage],
+        cached: _MidturnSummary,
+    ) -> list[AgentMessage] | None:
+        """Compose ``[summary] + kept window`` from the cached mid-run summary.
+
+        Returns ``None`` when the cached boundary is no longer usable (payload
+        shrank below it).
+        """
+        if cached.first_kept_index > len(messages):
+            return None
+        return [cached.message, *messages[cached.first_kept_index :]]
+
+    def _request_context_tokens(self, messages: list[AgentMessage]) -> int:
+        """Measure one request payload: provider-reported usage first, estimator second.
+
+        The provider-reported number from the last applicable assistant
+        response is the truthful size on OpenAI-compatible servers that report
+        usage; the estimator is the only signal available when they do not
+        report (the silent-truncation case). Both are already in use by the
+        boundary checks, so no new measurement is introduced here.
+        """
+        usage = last_applicable_provider_usage(tuple(messages))
+        if usage is not None:
+            return usage[1]
+        return estimate_context_tokens(
+            system=self._harness.config.system,
+            messages=tuple(messages),
+            tools=tuple(self._harness.config.tools),
+        )
 
     async def _try_overflow_compact(
         self,
