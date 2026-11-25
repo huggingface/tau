@@ -110,6 +110,15 @@ class _CatalogProvider(BaseModel):
     thinking_parameter: ThinkingParameter | None = None
     removed_models: tuple[_NonEmptyString, ...] = ()
     auth_methods: tuple[AuthMethod, ...] = ("api_key",)
+    default_inference_provider: (
+        Annotated[
+            str,
+            StringConstraints(
+                strict=True, strip_whitespace=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+            ),
+        ]
+        | None
+    ) = None
 
 
 class _CatalogFile(BaseModel):
@@ -477,6 +486,14 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
             f"{prefix}.thinking_default: {provider.thinking_default!r} is not in thinking_levels"
         )
 
+    if provider.default_inference_provider is not None:
+        if provider.name != "huggingface" or provider.kind != "openai-compatible":
+            raise CatalogError(
+                f"{prefix}.default_inference_provider: only supported for the huggingface provider"
+            )
+        if provider.default_inference_provider in {"fastest", "cheapest", "preferred"}:
+            raise CatalogError(f"{prefix}.default_inference_provider: must be an explicit provider")
+
     for model, catalog_metadata in provider.model_metadata.items():
         _validate_cost_tiers(
             catalog_metadata.cost_tiers,
@@ -513,6 +530,7 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
         thinking_parameter=provider.thinking_parameter,
         removed_models=provider.removed_models,
         auth_methods=provider.auth_methods,
+        default_inference_provider=provider.default_inference_provider,
     )
 
 
@@ -655,6 +673,8 @@ def _raw_provider_from_entry(entry: ProviderCatalogEntry) -> dict[str, Any]:
         raw["removed_models"] = list(entry.removed_models)
     if entry.auth_methods != ("api_key",):
         raw["auth_methods"] = list(entry.auth_methods)
+    if entry.default_inference_provider is not None:
+        raw["default_inference_provider"] = entry.default_inference_provider
     return raw
 
 
@@ -726,6 +746,7 @@ def _catalog_to_toml(raw: dict[str, Any]) -> str:
             "thinking_parameter",
             "removed_models",
             "auth_methods",
+            "default_inference_provider",
         ):
             if key in provider:
                 lines.append(f"{key} = {_toml_value(provider[key])}")
