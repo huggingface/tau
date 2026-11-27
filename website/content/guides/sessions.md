@@ -88,7 +88,16 @@ The active branch tip is the last session entry written. Plain **Enter**
 navigation is in-memory only: quitting before another action and reopening will
 return to the last non-legacy-leaf entry in file order. Your next message or
 state change uses the selected point as its parent, making the new branch the
-active persisted tip. **S** writes its branch summary immediately, so summarized
+active persisted tip — but what the selected point becomes depends on the kind
+of entry you selected:
+
+- **User message** — its text is copied into the prompt editor so you can
+  revise it, and the new message becomes a *sibling* of the original: it is
+  attached to the original message's parent, not to the message itself.
+- **Assistant message** — the session continues from that response, and the
+  next message becomes a *child* of the selected assistant message.
+
+**S** writes its branch summary immediately, so summarized
 navigation survives a restart even before another message.
 
 ## Recovering older sessions
